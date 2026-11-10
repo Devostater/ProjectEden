@@ -1,0 +1,5 @@
+node_modules/
+*.nova-bak
+*.forge-bak
+.DS_Store
+Thumbs.db
