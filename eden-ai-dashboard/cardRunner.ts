@@ -35,6 +35,8 @@ function modelQueue(agent: Agent): string[] {
 
 // Ask one teammate something directly, using their own AI first and other connected ones after.
 // Card work passes respectBudget so it stops at the daily budget; direct requests do not.
+import { isOffline, localModelFor, localModels, kindFor } from './offline';
+
 export async function askTeammate(
   agent: Agent,
   system: string,
@@ -44,7 +46,11 @@ export async function askTeammate(
   const wanted = agent.model || defaultModel();
   const wantedProvider = providerFor(wanted);
   // `onlyModels` pins the AI (free-only rooms use Gemini only, never a paid fallback).
-  const queue = opts.onlyModels
+  // Offline: the local model that suits this teammate's job first, then any other model on this PC.
+  const offlineFirst = localModelFor(kindFor(wanted, agent.role));
+  const queue = isOffline()
+    ? [...new Set([offlineFirst, ...localModels()].filter(Boolean) as string[])]
+    : opts.onlyModels
     ? opts.onlyModels
     : opts.respectBudget
     ? modelQueue(agent)
@@ -225,7 +231,17 @@ function tick(getStore: () => RunnerStore, save: () => void) {
     }
     if (!card) continue;
 
-    if (!modelQueue(agent).length) {
+    // Offline: Aura runs through Claude, so its cards wait for the internet (they start by themselves after).
+    if (isOffline() && agent.model?.startsWith('aura')) {
+      hold(card, 'Waiting for internet: Aura needs it. Starts by itself when you are back online.');
+      continue;
+    }
+    if (card.runState === 'waiting' && card.runMessage?.startsWith('Waiting for internet')) {
+      card.runState = undefined;
+      card.runMessage = undefined;
+      changed = true;
+    }
+    if (!isOffline() && !modelQueue(agent).length) {
       hold(card, "Waiting: no connected AI has messages left in today's budget.");
       continue;
     }

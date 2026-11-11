@@ -16,6 +16,7 @@ import type { Express, Request } from 'express';
 import { logActivity, recentActivity } from './activity';
 import { cliSignedIn } from './providers';
 import { pcBusy, onBusyChange } from './busy';
+import { isOffline, onOfflineChange } from './offline';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STORE = path.join(APP_DIR, '.eden-updates.json');
@@ -377,8 +378,8 @@ function startNext() {
   const next = jobs.find((j) => j.status === 'queued');
   if (!next) return;
   // PC busy mode: queued updates wait until the PC has room (they start by themselves then).
-  if (pcBusy()) {
-    if (!waitingForRoom) logActivity('info', 'Code updates are waiting: the PC is busy right now.');
+  if (pcBusy() || isOffline()) {
+    if (!waitingForRoom) logActivity('info', isOffline() ? 'Code updates are waiting for the internet (Claude Code needs it).' : 'Code updates are waiting: the PC is busy right now.');
     waitingForRoom = true;
     return;
   }
@@ -555,6 +556,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
   startNext(); // updates still waiting when the hub was last closed carry on
   registerIdeaRoutes(app, guard);
   onBusyChange((isBusy) => !isBusy && startNext());
+  onOfflineChange((off) => !off && startNext());
 
   app.get('/api/backup', (req, res) => {
     if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
@@ -863,7 +865,7 @@ function registerIdeaRoutes(app: Express, guard: (req: Request) => string) {
     const set = ideaSet(cb.id);
     // Refresh by itself when the ideas are a day old (only while someone is looking at the page).
     const stale = !set.at || Date.now() - new Date(set.at).getTime() > IDEAS_MAX_AGE;
-    if (req.query.auto && stale && !set.running && !set.error && cliSignedIn('anthropic')) generateIdeas(cb);
+    if (req.query.auto && stale && !set.running && !set.error && !isOffline() && cliSignedIn('anthropic')) generateIdeas(cb);
     const { dismissed, ...rest } = set;
     res.json({ ...rest, running: ideaSet(cb.id).running });
   });

@@ -22,3 +22,4 @@ coverage/
 .eden-logs/
 .eden-aura-mcp.json
 .eden-busy.json
+.eden-offline.json

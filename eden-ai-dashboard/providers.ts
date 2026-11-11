@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { realLimits, type RealLimit } from './realLimits';
 import { extraModels, extraConnected, freeFallbacks, callExtra } from './extraAI';
 import { pcBusy } from './busy';
+import { isOffline, localModelFor, kindFor } from './offline';
 import { auraInstalled, auraRunning, auraCliArgs, auraSystemNote, isAuraModel } from './aura';
 
 export type ProviderId = 'lyra' | 'anthropic' | 'google' | 'openai' | 'extra';
@@ -253,7 +254,16 @@ function toMessages(req: GenerateRequest): ChatMessage[] {
 }
 
 export async function generate(req: GenerateRequest): Promise<GenerateResult> {
-  const model = req.model || defaultModel();
+  let model = req.model || defaultModel();
+  // Offline mode: anything bound for a cloud AI goes to a model on this PC that suits the job instead.
+  if (isOffline() && !(model.startsWith('x:') && localModelFor('general') && isLocalModel(model))) {
+    if (isAuraModel(model)) throw new Error('Aura needs the internet (it runs through Claude). This waits until you are back online.');
+    if (!model.startsWith('lyra')) {
+      const local = localModelFor(kindFor(model));
+      if (!local) throw new Error('Offline, and no AI on this PC is running. Start Ollama (it runs local models), then try again.');
+      model = local;
+    }
+  }
   if (!(model.startsWith('x:') ? /^x:[\w.\-]+:[\w.\-:/@]+$/ : /^[\w.\-]+$/).test(model)) throw new Error(`Invalid model id: ${model}`);
   const provider = providerFor(model);
   const mode = providerMode(provider);
@@ -271,6 +281,8 @@ export async function generate(req: GenerateRequest): Promise<GenerateResult> {
     throw err;
   }
 }
+
+const isLocalModel = (id: string) => /^x:(ollama|lmstudio):/.test(id);
 
 function dispatch(provider: ProviderId, mode: ProviderMode, model: string, req: GenerateRequest): Promise<GenerateResult> {
   if (provider === 'lyra') return callLyra(req);

@@ -15,6 +15,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { pcBusy } from './busy';
+import { isOffline } from './offline';
 
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-ai.json');
 
@@ -218,7 +219,8 @@ export function freeFallbacks(max = 6): string[] {
   const now = Date.now();
   const cloud = extraModels().filter((m) => m.free && !m.local);
   // Models on this PC need 3+ GB of free memory to load; skip them when memory is short so the PC doesn't lag.
-  const local = !pcBusy() && os.freemem() > 3 * 1024 ** 3 ? extraModels().filter((m) => m.free && m.local) : [];
+  // Offline, models on this PC are the only option, so they are used even when memory is tight.
+  const local = isOffline() || (!pcBusy() && os.freemem() > 3 * 1024 ** 3) ? extraModels().filter((m) => m.free && m.local) : [];
   // Prefer general chat models over code-only ones, and bigger "flash/pro/gemma" families on AI Studio.
   // Models that answered a test go first; newest versions before older ones; code-only and previews last.
   const version = (id: string) => Number(id.match(/(\d+(?:\.\d+)?)/)?.[1] || 0);

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { UsageBar, useProviderUsage } from './UsageBars.tsx';
 import { CheckCircle2, Circle, Save, Loader2, RefreshCw, ChevronDown, LogIn, Power, Archive } from 'lucide-react';
+import { OfflineCard } from './Offline.tsx';
 import { BackupsCard } from './BackupsCard.tsx';
 import { FreeAIs } from './FreeAIs.tsx';
 
@@ -325,6 +326,8 @@ export const SettingsView: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
           );
         })}
       </div>
+
+      <OfflineCard />
 
       <FreeAIs />
 

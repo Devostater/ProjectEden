@@ -11,6 +11,7 @@ import { NexusView } from './components/NexusView.tsx';
 import { UpdatesView } from './components/UpdatesView.tsx';
 import { DevicesView } from './components/DevicesView.tsx';
 import { BusyBanner } from './components/BusyBanner.tsx';
+import { OfflineBanner } from './components/Offline.tsx';
 import { RemoteView } from './components/RemoteView.tsx';
 import { MobileNav } from './components/MobileNav.tsx';
 import { useNexusRooms } from './nexusRooms.ts';
@@ -159,6 +160,7 @@ export default function App() {
         )}
 
         <main className="relative z-10 min-h-0 flex-1 overflow-y-auto">
+          <OfflineBanner />
           <BusyBanner />
           {activeTab === 'home' && (
             <HomeView

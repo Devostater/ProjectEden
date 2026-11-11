@@ -14,6 +14,7 @@ import { registerControlRoutes } from './control';
 import { registerUpdateRoutes } from './updates';
 import { registerRestartRoutes } from './restart';
 import { registerBusyRoutes } from './busy';
+import { registerOfflineRoutes } from './offline';
 import { registerBackupRoutes } from './backup';
 import { registerDeviceRoutes } from './devices';
 import { registerTeamReformRoutes } from './teamReform';
@@ -469,6 +470,7 @@ async function startServer() {
   });
   registerRestartRoutes(app);
   registerBusyRoutes(app);
+  registerOfflineRoutes(app);
   if (!process.env.EDEN_DEVICE_HUB) registerBackupRoutes(app);
   registerControlRoutes(app, () => ({ cards: runningCards(), rooms: runningRooms() }));
   registerNexusRoutes(app, () => store, () => saveStore(store));
