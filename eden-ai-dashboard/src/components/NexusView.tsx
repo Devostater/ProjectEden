@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Send, Square, Trash2, Loader2, KanbanSquare, Network } from 'lucide-react';
+import { Send, Square, Trash2, Loader2, KanbanSquare, Settings2, ChevronLeft, Leaf } from 'lucide-react';
+import { RoomList, RoomDialog } from './NexusRooms.tsx';
+import type { NexusRoomsApi } from '../nexusRooms.ts';
 import type { Agent, Project } from '../types/index.ts';
 import { Formatted } from './ChatView.tsx';
 
@@ -25,6 +27,8 @@ interface NexusViewProps {
   projects: Project[];
   ownerName?: string;
   onMakeCards: (projectId: string, goal: string) => void; // hand a plan to a project's "Plan with Chief"
+  roomsApi: NexusRoomsApi;
+  newRoomRequest?: number; // bumped by the sidebar's "New room"
 }
 
 const DEPTH_KEY = 'eden_nexus_depth';
@@ -36,7 +40,12 @@ const STARTERS = [
   'Our last release sold poorly. What went wrong and what do we change?',
 ];
 
-export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerName, onMakeCards }) => {
+export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerName, onMakeCards, roomsApi, newRoomRequest }) => {
+  const rooms = roomsApi.rooms;
+  const roomId = roomsApi.activeId;
+  const [roomDialog, setRoomDialog] = useState<'new' | 'edit' | null>(null);
+  const [showList, setShowList] = useState(false); // phone only: the room list and a room take turns on screen
+  const roomRef = useRef(roomId);
   const [messages, setMessages] = useState<NexusMessage[]>([]);
   const [state, setState] = useState<NexusState>({ running: false, speaking: '', turnsLeft: 0 });
   const [depths, setDepths] = useState<Record<string, number>>({ quick: 4, normal: 8, deep: 14 });
@@ -57,9 +66,36 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  const loadRooms = roomsApi.refresh;
+
+  const openRoom = (id: string, fromList = true) => {
+    roomsApi.setActiveId(id);
+    if (fromList) setShowList(false);
+  };
+
+  // Whenever the open room changes (here or from the sidebar), start that room's conversation fresh.
+  useEffect(() => {
+    roomRef.current = roomId;
+    latest.current = 0;
+    setMessages([]);
+    setConfirmClear(false);
+    setPlanFor(null);
+    setError('');
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId]);
+
+  // The sidebar's "New room" opens the form here.
+  useEffect(() => {
+    if (newRoomRequest) setRoomDialog('new');
+  }, [newRoomRequest]);
+
   const load = async () => {
+    const forRoom = roomRef.current;
+    if (!forRoom) return;
     try {
-      const d = await fetch(`/api/nexus?since=${latest.current}`).then((r) => r.json());
+      const d = await fetch(`/api/nexus?room=${encodeURIComponent(forRoom)}&since=${latest.current}`).then((r) => r.json());
+      if (forRoom !== roomRef.current) return; // switched rooms while this was loading
       if (d.messages.length) {
         latest.current = d.latest;
         setMessages((m) => [...m, ...d.messages]);
@@ -74,8 +110,12 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
+    let n = 0;
     const tick = async () => {
-      if (document.visibilityState === 'visible') await load();
+      if (document.visibilityState === 'visible') {
+        await load();
+        if (n++ % 3 === 0) await loadRooms();
+      }
       if (alive) timer = setTimeout(tick, runningRef.current ? 1500 : 5000);
     };
     tick();
@@ -95,25 +135,27 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
     setError('');
     setInput('');
     try {
-      const res = await fetch('/api/nexus/message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: body, depth }) });
+      const res = await fetch('/api/nexus/message', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: body, depth, room: roomId }) });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'Could not send.');
       runningRef.current = true;
       await load();
+      loadRooms();
     } catch (err: any) {
       setError(err.message);
       setInput(body);
     }
   };
 
-  const stop = () => fetch('/api/nexus/stop', { method: 'POST' }).then(load);
+  const stop = () => fetch('/api/nexus/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ room: roomId }) }).then(load);
 
   const clear = async () => {
     setConfirmClear(false);
-    const res = await fetch('/api/nexus/clear', { method: 'POST' });
+    const res = await fetch('/api/nexus/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ room: roomId }) });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) return setError(d.error || 'Could not clear the room.');
     setMessages([]);
+    loadRooms();
   };
 
   const pickDepth = (d: string) => {
@@ -125,19 +167,36 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
 
   const agentOf = (m: NexusMessage) => agents.find((a) => a.id === m.authorId) || agents.find((a) => a.name === m.author);
   const speaker = agents.find((a) => a.name === state.speaking);
+  const room = rooms.find((r) => r.id === roomId);
+  const inRoom = room ? (room.memberIds.map((id) => agents.find((a) => a.id === id)).filter(Boolean) as Agent[]) : [];
+  const facilitator = ['agent-synthesizer', 'agent-deputy'].map((id) => inRoom.find((a) => a.id === id)).find(Boolean) || inRoom[0];
 
   return (
-    <div className="flex h-full flex-col p-4">
-      <section className="flex min-h-0 flex-1 flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+    <div className="flex h-full gap-4 p-3 sm:p-4">
+      <aside className={`${showList ? 'flex' : 'hidden'} w-full shrink-0 flex-col rounded-xl border border-slate-200 bg-white md:hidden dark:border-slate-800 dark:bg-slate-900`}>
+        <RoomList rooms={rooms} activeId={roomId} agents={agents} onOpen={(id) => openRoom(id)} onNew={() => setRoomDialog('new')} onChanged={loadRooms} />
+      </aside>
+      <section className={`${showList ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-1 flex-col rounded-xl border border-slate-200 bg-white md:flex dark:border-slate-800 dark:bg-slate-900`}>
         {/* Who is in the room */}
         <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-          <Network className="h-5 w-5 text-indigo-500" />
+          <button onClick={() => setShowList(true)} aria-label="All rooms" className="-ml-1 rounded p-1 text-slate-500 md:hidden">
+            <ChevronLeft className="h-5 w-5" />
+          </button>
           <div className="min-w-0 flex-1">
-            <h1 className="font-semibold text-slate-900 dark:text-white">Nexus</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Your team talks things through here. Watch, or join in at any time.</p>
+            <h1 className="flex items-center gap-2 truncate font-semibold text-slate-900 dark:text-white">
+              {room?.name || 'Nexus'}
+              {room?.freeOnly && (
+                <span className="flex items-center gap-0.5 rounded bg-emerald-500/10 px-1.5 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                  <Leaf className="h-3 w-3" /> Free only
+                </span>
+              )}
+            </h1>
+            <p className="truncate text-sm text-slate-500 dark:text-slate-400">
+              {inRoom.length} in the room{facilitator ? ` · ${facilitator.name} leads` : ''}
+            </p>
           </div>
-          <div className="flex -space-x-1.5" aria-label={`${agents.length} teammates in the room`}>
-            {agents.slice(0, 8).map((a) => (
+          <div className="hidden -space-x-1.5 sm:flex" aria-label={`${inRoom.length} teammates in the room`}>
+            {inRoom.slice(0, 8).map((a) => (
               <span
                 key={a.id}
                 title={`${a.name} · ${a.role}`}
@@ -147,8 +206,13 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
                 {a.avatar || a.name.slice(0, 2).toUpperCase()}
               </span>
             ))}
-            {agents.length > 8 && <span className="flex h-7 items-center pl-3 text-xs text-slate-500">+{agents.length - 8}</span>}
+            {inRoom.length > 8 && <span className="flex h-7 items-center pl-3 text-xs text-slate-500">+{inRoom.length - 8}</span>}
           </div>
+          {room && (
+            <button onClick={() => setRoomDialog('edit')} aria-label="Room settings" title="Who's in the room, free only" className="rounded-md p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">
+              <Settings2 className="h-4 w-4" />
+            </button>
+          )}
           {messages.length > 0 &&
             (confirmClear ? (
               <span className="flex items-center gap-1 text-sm">
@@ -166,8 +230,8 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4" aria-live="polite">
           {messages.length === 0 && !state.running && (
             <div className="mx-auto mt-10 max-w-lg text-center text-slate-500 dark:text-slate-400">
-              <p className="text-base text-slate-700 dark:text-slate-200">Put a question or a goal to the whole team.</p>
-              <p className="mt-1 text-sm">Chief brings in the right people, they answer each other, and Chief finishes with a plan.</p>
+              <p className="text-base text-slate-700 dark:text-slate-200">Put a question or a goal to this room.</p>
+              <p className="mt-1 text-sm">{facilitator?.name || 'The lead'} brings in the right people, they answer each other, and {facilitator?.name || 'the lead'} finishes with a plan.</p>
               <div className="mt-5 space-y-2">
                 {STARTERS.map((s) => (
                   <button
@@ -311,6 +375,26 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
           </div>
         </div>
       </section>
+      {roomDialog && (
+        <RoomDialog
+          room={roomDialog === 'edit' ? room || null : null}
+          agents={agents}
+          canDelete={rooms.length > 1}
+          onClose={() => setRoomDialog(null)}
+          onSaved={(id) => {
+            const wasNew = roomDialog === 'new';
+            setRoomDialog(null);
+            loadRooms();
+            if (wasNew) openRoom(id);
+          }}
+          onDeleted={() => {
+            setRoomDialog(null);
+            roomsApi.setActiveId('');
+            loadRooms();
+            setShowList(true);
+          }}
+        />
+      )}
     </div>
   );
 };

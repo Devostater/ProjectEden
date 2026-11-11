@@ -10,3 +10,5 @@ coverage/
 
 # Runtime data (your projects, cards, team and Nexus room). Changes constantly; not source code.
 .nexusflow-store.json
+.eden-pairing.json
+.eden-control.json

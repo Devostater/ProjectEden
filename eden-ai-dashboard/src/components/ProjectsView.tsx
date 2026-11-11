@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, RotateCcw, Bot, AlertTriangle, Sparkles, Link2 } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
-import type { Agent, Card, CardColumn, Project } from '../types/index.ts';
+import { WorkstreamTabs, WorkstreamDialog } from './Workstreams.tsx';
+import type { Agent, Branch, Card, CardColumn, Project } from '../types/index.ts';
 import { COLUMNS, type ProjectsApi } from '../projectsStore.ts';
 
 interface ProjectsViewProps {
@@ -170,6 +171,7 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
   const [priority, setPriority] = useState(card.priority);
   const [note, setNote] = useState('');
   const [dependsOn, setDependsOn] = useState<string[]>(card.dependsOn || []);
+  const [branchId, setBranchId] = useState(card.branchId || project.branches?.[0]?.id || '');
   const siblings = api.cards.filter((c) => c.projectId === card.projectId && c.id !== card.id);
   const assignee = agents.find((a) => a.id === assigneeId);
   const inReview = card.column === 'review';
@@ -189,7 +191,7 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
   const save = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!title.trim()) return;
-    await api.saveCard({ id: card.id, title, details, assigneeId, column, priority, dependsOn, note: note.trim() || undefined });
+    await api.saveCard({ id: card.id, title, details, assigneeId, column, priority, dependsOn, branchId, note: note.trim() || undefined });
     onClose();
   };
 
@@ -282,6 +284,16 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
           </select>
         </div>
       </div>
+      {(project.branches || []).length > 1 && (
+        <div>
+          <label htmlFor="cd-branch" className={labelClass}>Workstream</label>
+          <select id="cd-branch" value={branchId} onChange={(e) => setBranchId(e.target.value)} className={inputClass}>
+            {(project.branches || []).map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div>
         <label htmlFor="cd-waits" className={labelClass}>Waits for</label>
         {dependsOn.length > 0 && (
@@ -432,7 +444,7 @@ interface PlannedCard {
   include: boolean;
 }
 
-const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi; initialGoal?: string; onClose: () => void }> = ({ project, agents, api, initialGoal, onClose }) => {
+const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi; initialGoal?: string; branchId?: string; onClose: () => void }> = ({ project, agents, api, initialGoal, branchId, onClose }) => {
   const [goal, setGoal] = useState(initialGoal || project.goal || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -469,7 +481,7 @@ const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi
     for (const [i, c] of (plan || []).entries()) {
       if (!c.include) continue;
       const dependsOn = (c.waitsFor || []).map((j) => created[j]).filter(Boolean);
-      const saved = await api.saveCard({ projectId: project.id, title: c.title, details: c.details, assigneeId: c.assigneeId || undefined, priority: c.priority, column, dependsOn });
+      const saved = await api.saveCard({ projectId: project.id, title: c.title, details: c.details, assigneeId: c.assigneeId || undefined, priority: c.priority, column, dependsOn, branchId: branchId || undefined });
       if (saved) created[i] = saved.id;
     }
     setBusy(false);
@@ -597,6 +609,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
   const [overColumn, setOverColumn] = useState<CardColumn | null>(null);
   const [planOpen, setPlanOpen] = useState(false);
   const [whoFilter, setWhoFilter] = useState('');
+  const [branchFilter, setBranchFilter] = useState(''); // '' = all workstreams
+  const [branchDialog, setBranchDialog] = useState<{ branch: Branch | null } | null>(null);
   const [planGoal, setPlanGoal] = useState('');
 
   // A plan sent over from Nexus opens the planning form with its text ready.
@@ -616,7 +630,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
     const title = newTitle.trim();
     setNewTitle('');
     if (!title || !active) return setAddingIn(null);
-    await api.saveCard({ projectId: active.id, title, column });
+    await api.saveCard({ projectId: active.id, title, column, branchId: branchFilter || undefined });
   };
 
   if (!projects.length) {
@@ -642,6 +656,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
             onClick={() => {
               api.setActiveId(p.id);
               setWhoFilter('');
+              setBranchFilter('');
             }}
             aria-pressed={p.id === active?.id}
             className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm ${
@@ -711,12 +726,13 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
             </p>
           )}
 
-          <TeamStrip cards={cards} agents={agents} filter={whoFilter} onFilter={setWhoFilter} />
+          <WorkstreamTabs project={active} cards={cards} agents={agents} selected={branchFilter} onSelect={setBranchFilter} onEdit={(branch) => setBranchDialog({ branch })} />
+          <TeamStrip cards={branchFilter ? cards.filter((c) => c.branchId === branchFilter) : cards} agents={agents} filter={whoFilter} onFilter={setWhoFilter} />
 
           {/* Board */}
           <div className="mt-4 flex min-h-0 flex-1 gap-3 overflow-x-auto pb-2">
             {COLUMNS.map((col) => {
-              const colCards = cards.filter((c) => c.column === col.id && (!whoFilter || c.assigneeId === whoFilter)).sort((a, b) => a.order - b.order);
+              const colCards = cards.filter((c) => c.column === col.id && (!whoFilter || c.assigneeId === whoFilter) && (!branchFilter || c.branchId === branchFilter)).sort((a, b) => a.order - b.order);
               return (
                 <div
                   key={col.id}
@@ -798,6 +814,14 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
                           }`}
                         >
                           <span className="block text-sm text-slate-900 dark:text-white">{card.title}</span>
+                          {!branchFilter && (active.branches || []).length > 1 && (() => {
+                            const b = (active.branches || []).find((x) => x.id === card.branchId);
+                            return b ? (
+                              <span className="mt-1 flex items-center gap-1 text-[11px] text-slate-500">
+                                <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: b.color }} /> {b.name}
+                              </span>
+                            ) : null;
+                          })()}
                           {card.runState === 'running' && (
                             <span className="mt-2 flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400">
                               <Loader2 className="h-3 w-3 animate-spin" /> {who ? who.name : 'A teammate'} is working…
@@ -855,7 +879,20 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
         </>
       )}
 
-      {planOpen && active && <PlanDialog key={`${active.id}-${planGoal.length}`} project={active} agents={agents} api={api} initialGoal={planGoal} onClose={() => setPlanOpen(false)} />}
+      {planOpen && active && <PlanDialog key={`${active.id}-${planGoal.length}`} project={active} agents={agents} api={api} initialGoal={planGoal} branchId={branchFilter} onClose={() => setPlanOpen(false)} />}
+      {branchDialog && active && (
+        <WorkstreamDialog
+          project={active}
+          branch={branchDialog.branch}
+          agents={agents}
+          onClose={() => setBranchDialog(null)}
+          onSaved={(id) => {
+            setBranchDialog(null);
+            api.refresh();
+            setBranchFilter(id);
+          }}
+        />
+      )}
       {projectDialog && <ProjectDialog project={projectDialog === 'edit' ? active || null : null} api={api} onClose={() => setProjectDialog(null)} />}
       {openCard && active && <CardDialog key={openCard.id} card={openCard} project={active} agents={agents} api={api} onAsk={onAsk} onClose={() => setOpenCardId(null)} />}
     </div>

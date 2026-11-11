@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox } from 'lucide-react';
 import type { Agent, Card, Project } from '../types/index.ts';
 import { FlowTab, WorkloadTab, ProgressTab } from './ProjectVisuals.tsx';
+import { ReviewTab, type ReviewProps } from './ReviewTab.tsx';
 
-type PanelTab = 'flow' | 'workload' | 'progress' | 'activity' | 'terminal';
+type PanelTab = 'flow' | 'workload' | 'progress' | 'review' | 'activity' | 'terminal';
 const PROJECT_TABS: PanelTab[] = ['flow', 'workload', 'progress'];
-const ALL_TABS: PanelTab[] = [...PROJECT_TABS, 'activity', 'terminal'];
+const ALL_TABS: PanelTab[] = [...PROJECT_TABS, 'review', 'activity', 'terminal'];
 
 // Set while the Projects page is open: adds the Flow, Workload and Progress tabs for that project.
 export interface PanelProject {
@@ -57,7 +58,7 @@ const KIND_STYLE: Record<ActivityEntry['kind'], string> = {
 
 const folderName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
-export const BottomPanel: React.FC<{ onOpenPreferences: () => void; project?: PanelProject | null }> = ({ onOpenPreferences, project }) => {
+export const BottomPanel: React.FC<{ onOpenPreferences: () => void; project?: PanelProject | null; review: ReviewProps }> = ({ onOpenPreferences, project, review }) => {
   const [open, setOpen] = useState(() => read(OPEN_KEY, '0') === '1');
   const [savedTab, setTab] = useState<PanelTab>(() => {
     const saved = read(TAB_KEY, 'activity') as PanelTab;
@@ -65,6 +66,11 @@ export const BottomPanel: React.FC<{ onOpenPreferences: () => void; project?: Pa
   });
   // Project tabs only exist on the Projects page; elsewhere fall back to Activity.
   const tab: PanelTab = PROJECT_TABS.includes(savedTab) && !project ? 'activity' : savedTab;
+
+  const [maximized, setMaximized] = useState(false);
+  // Flow graph zoom: 'fit' scales the whole graph to the panel.
+  const [zoom, setZoom] = useState<number | 'fit'>('fit');
+  const zoomBy = (delta: number) => setZoom((z) => Math.max(0.4, Math.min(2, Math.round(((z === 'fit' ? 1 : z) + delta) * 10) / 10)));
 
   // Height: drag the top edge, or focus it and use the arrow keys.
   const [height, setHeight] = useState(() => Math.max(MIN_HEIGHT, Number(read(HEIGHT_KEY, '256')) || 256));
@@ -76,6 +82,7 @@ export const BottomPanel: React.FC<{ onOpenPreferences: () => void; project?: Pa
   };
   const startDrag = (e: React.PointerEvent) => {
     e.preventDefault();
+    setMaximized(false);
     const move = (ev: PointerEvent) => setHeight(clampHeight(window.innerHeight - ev.clientY));
     const stop = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', move);
@@ -199,22 +206,27 @@ export const BottomPanel: React.FC<{ onOpenPreferences: () => void; project?: Pa
     setOpen(!open);
   };
 
-  const tabButton = (id: PanelTab, label: string, Icon: React.ElementType, dot = false) => (
+  const toolClass =
+    'flex h-9 min-w-9 items-center justify-center rounded-lg px-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white';
+
+  const tabButton = (id: PanelTab, label: React.ReactNode, Icon: React.ElementType, dot = false) => (
     <button
       key={id}
       onClick={() => pick(id)}
       aria-pressed={open && tab === id}
-      className={`relative flex h-full shrink-0 items-center gap-1.5 border-b-2 px-3 text-sm ${
-        open && tab === id ? 'border-indigo-500 text-slate-900 dark:text-white' : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
+      className={`relative flex shrink-0 items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors ${
+        open && tab === id
+          ? 'bg-indigo-600 text-white shadow-sm'
+          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white'
       }`}
     >
       <Icon className="h-4 w-4" /> {label}
-      {dot && <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" aria-label="New activity" />}
+      {dot && <span className="h-2 w-2 rounded-full bg-indigo-500 ring-2 ring-white dark:ring-slate-900" aria-label="New activity" />}
     </button>
   );
 
   return (
-    <div className="relative z-[5] flex shrink-0 flex-col border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900" style={{ height: open ? height : '2.25rem' }}>
+    <div className="relative z-[5] hidden shrink-0 flex-col md:flex border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900" style={{ height: open ? (maximized ? '75dvh' : height) : '3.25rem' }}>
       {open && (
         <div
           role="separator"
@@ -230,28 +242,71 @@ export const BottomPanel: React.FC<{ onOpenPreferences: () => void; project?: Pa
           className="absolute -top-1 left-0 right-0 z-10 h-2 cursor-row-resize hover:bg-indigo-500/40 focus:bg-indigo-500/40 focus:outline-none"
         />
       )}
-      <div className="flex h-9 shrink-0 items-center overflow-x-auto border-b border-slate-200 pl-1 pr-2 dark:border-slate-800">
+      <div className="flex h-[3.25rem] shrink-0 items-center border-b border-slate-200 px-2 dark:border-slate-800">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         {project && tabButton('flow', 'Flow', Workflow)}
         {project && tabButton('workload', 'Workload', Users)}
         {project && tabButton('progress', 'Progress', TrendingUp)}
-        {project && <span className="mx-1 h-4 w-px shrink-0 bg-slate-200 dark:bg-slate-700" />}
+        {project && <span className="mx-1.5 h-6 w-px shrink-0 bg-slate-200 dark:bg-slate-700" />}
+        {tabButton(
+          'review',
+          <>
+            Review
+            {review.cards.length > 0 && (
+              <span className={`rounded-full px-1.5 text-xs font-semibold tabular-nums ${open && tab === 'review' ? 'bg-white/25 text-white' : 'bg-amber-500 text-white'}`}>{review.cards.length}</span>
+            )}
+          </>,
+          Inbox
+        )}
         {tabButton('activity', 'Activity', Activity, unread)}
         {tabButton('terminal', 'Terminal', TerminalSquare)}
-        <div className="ml-auto flex items-center gap-1">
-          {open && tab === 'terminal' && lines.length > 0 && (
-            <button onClick={() => setLines([])} aria-label="Clear terminal" title="Clear" className="rounded p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">
-              <Trash2 className="h-4 w-4" />
+        </div>
+        <div className="flex shrink-0 items-center gap-1 border-l border-slate-200 pl-2 dark:border-slate-800">
+          {open && tab === 'flow' && (
+            <>
+              <button onClick={() => zoomBy(-0.2)} aria-label="Zoom out" title="Zoom out" className={toolClass}>
+                <ZoomOut className="h-4 w-4" />
+              </button>
+              <span className="w-12 text-center text-xs tabular-nums text-slate-500 dark:text-slate-400">{zoom === 'fit' ? 'Fit' : `${Math.round(zoom * 100)}%`}</span>
+              <button onClick={() => zoomBy(0.2)} aria-label="Zoom in" title="Zoom in" className={toolClass}>
+                <ZoomIn className="h-4 w-4" />
+              </button>
+              <button onClick={() => setZoom('fit')} aria-pressed={zoom === 'fit'} title="Fit the whole graph" className={`${toolClass} gap-1.5 px-2.5 text-sm`}>
+                <Scan className="h-4 w-4" /> Fit
+              </button>
+              <span className="mx-1 h-6 w-px bg-slate-200 dark:bg-slate-700" />
+            </>
+          )}
+          {open && tab === 'activity' && entries.length > 0 && (
+            <button onClick={() => setEntries([])} title="Clear the log on this screen" className={`${toolClass} gap-1.5 px-2.5 text-sm`}>
+              <Trash2 className="h-4 w-4" /> Clear
             </button>
           )}
-          <button onClick={toggle} aria-expanded={open} aria-label={open ? 'Collapse panel' : 'Expand panel'} title={open ? 'Collapse' : 'Expand'} className="rounded p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">
-            {open ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+          {open && tab === 'terminal' && lines.length > 0 && (
+            <button onClick={() => setLines([])} title="Clear the terminal" className={`${toolClass} gap-1.5 px-2.5 text-sm`}>
+              <Trash2 className="h-4 w-4" /> Clear
+            </button>
+          )}
+          {open && (
+            <button onClick={() => setMaximized(!maximized)} aria-pressed={maximized} aria-label={maximized ? 'Restore panel size' : 'Make panel bigger'} title={maximized ? 'Restore size' : 'Make bigger'} className={toolClass}>
+              {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </button>
+          )}
+          <button onClick={toggle} aria-expanded={open} aria-label={open ? 'Collapse panel' : 'Expand panel'} title={open ? 'Collapse' : 'Expand'} className={toolClass}>
+            {open ? <ChevronDown className="h-5 w-5" /> : <ChevronUp className="h-5 w-5" />}
           </button>
         </div>
       </div>
 
+      {open && tab === 'review' && (
+        <div className="min-h-0 flex-1">
+          <ReviewTab {...review} />
+        </div>
+      )}
+
       {open && project && PROJECT_TABS.includes(tab) && (
         <div className="min-h-0 flex-1">
-          {tab === 'flow' && <FlowTab {...project} />}
+          {tab === 'flow' && <FlowTab {...project} zoom={zoom} />}
           {tab === 'workload' && <WorkloadTab {...project} />}
           {tab === 'progress' && <ProgressTab {...project} />}
         </div>

@@ -220,13 +220,17 @@ await test('nexus: the room answers, rejects empty messages and can be stopped',
 
 if (LIVE) {
   await test('live: a quick Nexus discussion has several speakers and ends with a plan', async () => {
-    const before = (await call('GET', '/api/nexus')).data.latest;
-    const sent = await call('POST', '/api/nexus/message', { text: 'Quick one: should a tiny studio launch its first game on Steam or itch.io first?', depth: 'quick' });
+    // A temporary room with everyone, so the test never writes into your own rooms.
+    const everyone = (await call('GET', '/api/workspace')).data.agents.map((a) => a.id);
+    const firstRoom = (await call('POST', '/api/nexus/rooms', { name: 'Smoke Discussion', memberIds: everyone })).data.room.id;
+    const before = 0;
+    try {
+    const sent = await call('POST', '/api/nexus/message', { room: firstRoom, text: 'Quick one: should a tiny studio launch its first game on Steam or itch.io first?', depth: 'quick' });
     expect(sent.status === 200, `status ${sent.status}: ${sent.data?.error}`);
     let room;
     for (let i = 0; i < 60; i++) {
       await new Promise((r) => setTimeout(r, 2000));
-      room = (await call('GET', `/api/nexus?since=${before}`)).data;
+      room = (await call('GET', `/api/nexus?room=${firstRoom}&since=${before}`)).data;
       if (!room.state.running) break;
     }
     expect(!room.state.running, 'the discussion was still running after two minutes');
@@ -236,8 +240,79 @@ if (LIVE) {
     expect(said.some((m) => m.kind === 'plan'), 'no wrap-up plan');
     for (const m of said) expect(!/^\s*(NEXT|ASK|DONE)\b/im.test(m.text), `a stage direction leaked into ${m.author}'s message`);
     console.log(`        ${said.map((m) => m.author + (m.kind === 'plan' ? ' (plan)' : '')).join(' → ')}`);
+    } finally {
+      await call('DELETE', `/api/nexus/rooms/${firstRoom}`);
+    }
   });
 }
+
+await test('nexus rooms: create with members, pin, reorder, rename, delete', async () => {
+  const made = await call('POST', '/api/nexus/rooms', { name: 'Smoke Room', memberIds: ['agent-deputy', 'agent-research', 'agent-nobody'], freeOnly: true });
+  expect(made.status === 200, `create failed (${made.status}): ${made.data?.error}`);
+  const id = made.data.room.id;
+  try {
+    expect(made.data.room.memberIds.length === 2, `unknown teammate kept: ${made.data.room.memberIds}`);
+    expect(made.data.room.freeOnly === true, 'free-only not saved');
+    expect((await call('POST', '/api/nexus/rooms', { name: 'Empty', memberIds: [] })).status === 400, 'a room with nobody in it was accepted');
+    const pinned = await call('POST', '/api/nexus/rooms', { id, pinned: true, name: 'Smoke Room 2' });
+    expect(pinned.data.room.pinned && pinned.data.room.name === 'Smoke Room 2', 'pin or rename did not stick');
+    const all = (await call('GET', '/api/nexus/rooms')).data.rooms;
+    const ids = all.map((r) => r.id).reverse();
+    await call('POST', '/api/nexus/rooms/order', { ids });
+    const after = (await call('GET', '/api/nexus/rooms')).data.rooms;
+    expect(after.find((r) => r.id === ids[0]).order === 0, 'order not saved');
+    const room = await call('GET', `/api/nexus?room=${id}`);
+    expect(room.data.room.id === id && room.data.messages.length === 0, 'room conversation not separate');
+  } finally {
+    const gone = await call('DELETE', `/api/nexus/rooms/${id}`);
+    expect(gone.status === 200, `delete failed (${gone.status})`);
+  }
+});
+
+if (LIVE) {
+  await test('live: a free-only room is answered by Gemini only', async () => {
+    const made = await call('POST', '/api/nexus/rooms', { name: 'Smoke Free Room', memberIds: ['agent-synthesizer', 'agent-builder'], freeOnly: true });
+    const id = made.data.room.id;
+    try {
+      await call('POST', '/api/nexus/message', { room: id, text: 'In one line each: best free tool for pixel art?', depth: 'quick' });
+      let d;
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        d = (await call('GET', `/api/nexus?room=${id}`)).data;
+        if (!d.state.running) break;
+      }
+      const said = d.messages.filter((m) => m.role === 'agent');
+      expect(said.length >= 1, `nobody answered: ${d.messages.map((m) => m.text).join(' | ')}`);
+      for (const m of said) expect(m.via === 'free Gemini', `${m.author} was answered by "${m.via || 'their own AI'}"`);
+      console.log(`        ${said.map((m) => `${m.author} (${m.via})`).join(' → ')}`);
+    } finally {
+      await call('DELETE', `/api/nexus/rooms/${id}`);
+    }
+  });
+}
+
+await test('pause AI: pausing stops new Nexus replies and card work, resuming restores them', async () => {
+  const before = (await call('GET', '/api/ai/pause')).data;
+  expect(typeof before.paused === 'boolean' && typeof before.running.cards === 'number', 'pause status not readable');
+  const made = await call('POST', '/api/projects', { name: 'Smoke Pause Project' });
+  const pid = made.data.project.id;
+  const room = (await call('POST', '/api/nexus/rooms', { name: 'Smoke Pause Room', memberIds: ['agent-deputy'] })).data.room.id;
+  try {
+    expect((await call('POST', '/api/ai/pause', { paused: true })).data.paused === true, 'did not pause');
+    const card = (await call('POST', '/api/cards', { projectId: pid, title: 'Should not run', assigneeId: 'agent-deputy', column: 'ready' })).data.card;
+    const sent = await call('POST', '/api/nexus/message', { room, text: 'Anyone there?' });
+    expect(sent.data.paused === true, 'a discussion started while paused');
+    await new Promise((r) => setTimeout(r, 6000));
+    const after = (await call('GET', '/api/projects')).data.cards.find((c) => c.id === card.id);
+    expect(after.column === 'ready' && !after.runState, `card ran while paused (${after.column})`);
+    const msgs = (await call('GET', `/api/nexus?room=${room}`)).data.messages;
+    expect(!msgs.some((m) => m.role === 'agent'), 'a teammate replied while paused');
+  } finally {
+    await call('POST', '/api/ai/pause', { paused: before.paused });
+    await call('DELETE', `/api/projects/${pid}`);
+    await call('DELETE', `/api/nexus/rooms/${room}`);
+  }
+});
 
 await test('chat rejects an empty request', async () => {
   const { status } = await call('POST', '/api/chat', {});
@@ -344,6 +419,51 @@ await test('dependencies: a Ready card is held until what it waits for is Done',
     await call('DELETE', `/api/projects/${pid}`);
   }
 });
+
+await test('workstreams: a project starts with Main; add, rename and delete one', async () => {
+  const made = await call('POST', '/api/projects', { name: 'Smoke Branch Project' });
+  const pid = made.data.project.id;
+  try {
+    await call('POST', '/api/projects', { id: pid, autoRun: false });
+    expect(made.data.project.branches?.length === 1 && made.data.project.branches[0].name === 'Main', 'no Main workstream');
+    const added = await call('POST', `/api/projects/${pid}/branches`, { name: 'Marketing', memberIds: ['agent-marketing', 'agent-nobody'] });
+    expect(added.status === 200, `add failed (${added.status}): ${added.data?.error}`);
+    const mk = added.data.project.branches.find((b) => b.name === 'Marketing');
+    expect(mk.memberIds.length === 1, 'unknown teammate kept as a member');
+    expect((await call('POST', `/api/projects/${pid}/branches`, { name: 'marketing' })).status === 400, 'duplicate name accepted');
+    const card = (await call('POST', '/api/cards', { projectId: pid, title: 'Store copy', branchId: mk.id })).data.card;
+    expect(card.branchId === mk.id, 'card not in the workstream');
+    expect((await call('POST', '/api/cards', { projectId: pid, title: 'x', branchId: 'branch-nope' })).status === 400, 'unknown workstream accepted');
+    const gone = await call('DELETE', `/api/projects/${pid}/branches/${mk.id}`);
+    expect(gone.status === 200, `delete failed (${gone.status})`);
+    const moved = (await call('GET', '/api/projects')).data.cards.find((c) => c.id === card.id);
+    expect(moved.branchId === 'branch-main', `card was not moved back to Main (${moved.branchId})`);
+    expect((await call('DELETE', `/api/projects/${pid}/branches/branch-main`)).status === 400, 'the last workstream was deleted');
+  } finally {
+    await call('DELETE', `/api/projects/${pid}`);
+  }
+});
+
+if (LIVE) {
+  await test('live: an idle member picks up unassigned work in another workstream', async () => {
+    const made = await call('POST', '/api/projects', { name: 'Smoke Roaming Project' });
+    const pid = made.data.project.id;
+    try {
+      const b = (await call('POST', `/api/projects/${pid}/branches`, { name: 'Side work', memberIds: ['agent-deputy'] })).data.project.branches.find((x) => x.name === 'Side work');
+      const card = (await call('POST', '/api/cards', { projectId: pid, title: 'Name one cozy game genre in two words', branchId: b.id, column: 'ready' })).data.card;
+      let current;
+      for (let i = 0; i < 45; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        current = (await call('GET', '/api/projects')).data.cards.find((c) => c.id === card.id);
+        if (current.column === 'review' || current.runState === 'failed') break;
+      }
+      expect(current.assigneeId === 'agent-deputy', `nobody claimed it (assignee "${current.assigneeId}")`);
+      expect(current.column === 'review', `card ended in ${current.column}`);
+    } finally {
+      await call('DELETE', `/api/projects/${pid}`);
+    }
+  });
+}
 
 await test('planning: an empty request is rejected', async () => {
   const { data } = await call('GET', '/api/projects');

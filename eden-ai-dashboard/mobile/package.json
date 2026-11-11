@@ -1,0 +1,15 @@
+{
+  "name": "eden-hub-mobile",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Android app for Eden AI Hub: connects to the hub running on your computer.",
+  "scripts": {
+    "sync": "cap sync android",
+    "build:apk": "cap sync android && cd android && gradlew.bat assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.3",
+    "@capacitor/cli": "^6.2.3",
+    "@capacitor/core": "^6.2.3"
+  }
+}

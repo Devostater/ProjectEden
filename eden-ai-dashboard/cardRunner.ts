@@ -3,6 +3,7 @@
 import { generate, providerFor, providerUnavailable, fallbackModels, providerLabel, providerUsage, defaultModel, type ProviderId } from './providers';
 import type { Agent, Project, Card } from './src/types/index';
 import { logActivity } from './activity';
+import { aiPaused } from './control';
 
 interface RunnerStore {
   agents: Agent[];
@@ -38,11 +39,14 @@ export async function askTeammate(
   agent: Agent,
   system: string,
   prompt: string,
-  opts: { respectBudget?: boolean; maxTokens?: number } = {}
+  opts: { respectBudget?: boolean; maxTokens?: number; onlyModels?: string[] } = {}
 ): Promise<{ text: string; provider: ProviderId; tokens: number; via?: string }> {
   const wanted = agent.model || defaultModel();
   const wantedProvider = providerFor(wanted);
-  const queue = opts.respectBudget
+  // `onlyModels` pins the AI (free-only rooms use Gemini only, never a paid fallback).
+  const queue = opts.onlyModels
+    ? opts.onlyModels
+    : opts.respectBudget
     ? modelQueue(agent)
     : [...(providerUnavailable(wantedProvider) ? [] : [wanted]), ...fallbackModels(wantedProvider)];
   let lastError = 'No AI is available right now. Set one up in Account → Connections.';
@@ -146,55 +150,94 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
   save();
 }
 
+// The scheduler. Each teammate works on one card at a time. When their card moves on (to Review, or
+// it is waiting for something), they are free again and take, in order:
+//   1. their own next Ready card, preferring the workstream they last worked in;
+//   2. an unassigned Ready card in any workstream they are a member of, which they then own.
+// So a teammate waiting on you in one workstream keeps busy in another until their next card is back.
+const lastBranch = new Map<string, string>(); // teammate id -> workstream they last worked in
+
+export const runningCards = () => running.size;
+
 function tick(getStore: () => RunnerStore, save: () => void) {
+  if (aiPaused()) return; // Pause AI: start nothing new
   const store = getStore();
   const projects = store.projects || [];
+  const all = store.cards || [];
   const rank = { high: 0, normal: 1, low: 2 } as const;
-  const waiting = (store.cards || [])
-    .filter((c) => c.column === 'ready' && c.assigneeId && !running.has(c.id))
-    .filter((c) => {
-      const p = projects.find((p) => p.id === c.projectId);
-      return p && p.status === 'active' && p.autoRun !== false;
-    })
-    .sort((a, b) => rank[a.priority] - rank[b.priority] || a.order - b.order);
+  const runnable = (c: Card) => {
+    const p = projects.find((p) => p.id === c.projectId);
+    return c.column === 'ready' && !running.has(c.id) && !!p && p.status === 'active' && p.autoRun !== false;
+  };
+  const byPriority = (a: Card, b: Card) => rank[a.priority] - rank[b.priority] || a.order - b.order;
+  const blockersOf = (c: Card) => (c.dependsOn || []).map((id) => all.find((x) => x.id === id)).filter((x) => x && x.column !== 'done') as Card[];
+  const branchName = (c: Card) => projects.find((p) => p.id === c.projectId)?.branches?.find((b) => b.id === c.branchId)?.name || '';
 
   let changed = false;
-  for (const card of waiting) {
-    const agent = store.agents.find((a) => a.id === card.assigneeId);
-    if (!agent) continue;
-    // Hold the card until everything it waits for is Done.
-    const blockers = (card.dependsOn || []).map((id) => (store.cards || []).find((c) => c.id === id)).filter((c) => c && c.column !== 'done') as Card[];
-    if (blockers.length) {
-      const message = `Waiting for: ${blockers.map((c) => c.title).join(', ')}`.slice(0, 220);
-      if (card.runState !== 'waiting' || card.runMessage !== message) {
-        card.runState = 'waiting';
-        card.runMessage = message;
-        changed = true;
-      }
-      continue;
+  const hold = (card: Card, message: string) => {
+    if (card.runState !== 'waiting' || card.runMessage !== message) {
+      card.runState = 'waiting';
+      card.runMessage = message;
+      changed = true;
     }
-    if (!modelQueue(agent).length) {
-      // Nothing can answer: hold the card where it is and say why. It is retried on every tick.
-      const message = 'Waiting: no connected AI has messages left in today\'s budget.';
-      if (card.runState !== 'waiting' || card.runMessage !== message) {
-        card.runState = 'waiting';
-        card.runMessage = message;
-        changed = true;
-      }
-      continue;
+  };
+
+  // Mark cards that can't start yet, so the board says why.
+  const candidates = all.filter(runnable);
+  for (const card of candidates) {
+    const blockers = blockersOf(card);
+    if (blockers.length) hold(card, `Waiting for: ${blockers.map((c) => c.title).join(', ')}`.slice(0, 220));
+    else if (card.runState === 'waiting' && card.runMessage?.startsWith('Waiting for:')) {
+      card.runState = undefined;
+      card.runMessage = undefined;
+      changed = true;
     }
+  }
+  const startable = candidates.filter((c) => !blockersOf(c).length).sort(byPriority);
+
+  const busy = new Set(all.filter((c) => c.runState === 'running' && c.assigneeId).map((c) => c.assigneeId!));
+  for (const agent of store.agents) {
     if (running.size >= MAX_AT_ONCE) break;
+    if (busy.has(agent.id)) continue;
+
+    const mine = startable.filter((c) => c.assigneeId === agent.id);
+    const preferred = lastBranch.get(agent.id);
+    let card: Card | undefined = mine.find((c) => c.branchId === preferred) || mine[0];
+    let claimed = false;
+    if (!card) {
+      // Nothing of their own: pick up unassigned work in a workstream they belong to.
+      card = startable.find((c) => {
+        if (c.assigneeId) return false;
+        const branch = projects.find((p) => p.id === c.projectId)?.branches?.find((b) => b.id === c.branchId);
+        return !!branch?.memberIds.includes(agent.id);
+      });
+      claimed = !!card;
+    }
+    if (!card) continue;
+
+    if (!modelQueue(agent).length) {
+      hold(card, "Waiting: no connected AI has messages left in today's budget.");
+      continue;
+    }
+    if (claimed) {
+      card.assigneeId = agent.id;
+      startable.splice(startable.indexOf(card), 1);
+    }
+    busy.add(agent.id);
     running.add(card.id);
+    if (card.branchId) lastBranch.set(agent.id, card.branchId);
     card.column = 'doing';
     card.runState = 'running';
     card.runMessage = undefined;
     card.runStartedAt = now();
     card.updatedAt = now();
     changed = true;
-    logActivity('work', `${agent.name} started "${card.title}" (${projects.find((p) => p.id === card.projectId)?.name || 'project'}).`);
-    work(card.id, getStore, save)
+    const where = [projects.find((p) => p.id === card!.projectId)?.name, branchName(card)].filter(Boolean).join(' · ');
+    logActivity('work', `${agent.name} ${claimed ? 'picked up' : 'started'} "${card.title}" (${where}).`);
+    const cardId = card.id;
+    work(cardId, getStore, save)
       .catch((err) => console.error('Card runner error:', err))
-      .finally(() => running.delete(card.id));
+      .finally(() => running.delete(cardId));
   }
   if (changed) save();
 }

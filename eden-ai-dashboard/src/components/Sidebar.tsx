@@ -1,7 +1,11 @@
 import React, { useState } from 'react';
 import { LayoutDashboard, KanbanSquare, Network, MessagesSquare, Users, GitBranch, FolderGit2, Hexagon, ChevronDown, Plus, Trash2, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { UsageBars } from './UsageBars.tsx';
+import { PauseAI } from './PauseAI.tsx';
 import type { ChatThreads } from '../chatThreads.ts';
+import type { NexusRoomsApi } from '../nexusRooms.ts';
+import { RoomList } from './NexusRooms.tsx';
+import type { Agent } from '../types/index.ts';
 
 export type AppTab = 'home' | 'projects' | 'nexus' | 'chat' | 'my-ai' | 'pipelines' | 'files' | 'settings';
 
@@ -9,7 +13,12 @@ interface SidebarProps {
   activeTab: AppTab;
   setActiveTab: (tab: AppTab) => void;
   chat: ChatThreads;
+  rooms: NexusRoomsApi;
+  agents: Agent[];
+  onNewRoom: () => void;
   profile: { name: string; studio: string };
+  mobileOpen?: boolean; // phone: the sidebar is a drawer
+  onCloseMobile?: () => void;
 }
 
 const NAV: { id: AppTab; label: string; icon: React.ElementType }[] = [
@@ -31,9 +40,15 @@ const itemClass = (active: boolean, collapsed = false) =>
       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white'
   }`;
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, chat, profile }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab: pick, chat, rooms, agents, onNewRoom, profile, mobileOpen = false, onCloseMobile }) => {
+  // On a phone, choosing anything also closes the drawer.
+  const setActiveTab = (t: AppTab) => {
+    pick(t);
+    onCloseMobile?.();
+  };
   const [chatsOpen, setChatsOpen] = useState(true);
-  const [collapsed, setCollapsed] = useState(() => {
+  const [roomsOpen, setRoomsOpen] = useState(true);
+  const [collapsedSetting, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(COLLAPSED_KEY) === '1';
     } catch {
@@ -41,8 +56,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, chat,
     }
   });
 
+  const collapsed = collapsedSetting && !mobileOpen;
   const toggleCollapsed = () => {
-    const next = !collapsed;
+    const next = !collapsedSetting;
     setCollapsed(next);
     try {
       localStorage.setItem(COLLAPSED_KEY, next ? '1' : '0');
@@ -69,9 +85,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, chat,
   const initial = (profile.name || profile.studio || 'A').trim().charAt(0).toUpperCase();
 
   return (
+    <>
+    {mobileOpen && <div className="fixed inset-0 z-40 bg-black/50 md:hidden" onClick={onCloseMobile} aria-hidden="true" />}
     <aside
-      className={`sticky top-0 flex h-screen shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-150 dark:border-slate-800 dark:bg-slate-900 ${
-        collapsed ? 'w-14' : 'w-56'
+      className={`${mobileOpen ? 'fixed inset-y-0 left-0 z-50 flex shadow-xl' : 'hidden'} md:sticky md:top-0 md:z-auto md:flex md:shadow-none h-screen shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-150 dark:border-slate-800 dark:bg-slate-900 ${
+        collapsed && !mobileOpen ? 'w-14' : 'w-64 md:w-56'
       }`}
     >
       <div className={`flex items-center border-b border-slate-200 dark:border-slate-800 ${collapsed ? 'flex-col gap-2 px-2 py-3' : 'gap-2 py-3 pl-4 pr-2'}`}>
@@ -95,7 +113,49 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, chat,
       <nav className={`flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto ${collapsed ? 'p-2' : 'p-3'}`}>
         {navButton(NAV[0])}
         {navButton(NAV[1])}
-        {navButton(NAV[2])}
+
+        {collapsed ? (
+          navButton(NAV[2])
+        ) : (
+          <>
+            {/* Nexus, with its rooms as a dropdown underneath */}
+            <div className={itemClass(activeTab === 'nexus') + ' !p-0'}>
+              <button onClick={() => setActiveTab('nexus')} aria-current={activeTab === 'nexus' ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-3 text-left">
+                <Network className="h-4 w-4 shrink-0" />
+                <span className="truncate">Nexus</span>
+                {rooms.rooms.some((r) => r.running) && <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-emerald-400" aria-label="A discussion is running" />}
+              </button>
+              <button onClick={() => setRoomsOpen(!roomsOpen)} aria-expanded={roomsOpen} aria-label={roomsOpen ? 'Hide rooms' : 'Show rooms'} className="rounded-lg px-3 py-2.5">
+                <ChevronDown className={`h-4 w-4 transition-transform ${roomsOpen ? '' : '-rotate-90'}`} />
+              </button>
+            </div>
+            {roomsOpen && (
+              <div className="mb-1 ml-5 space-y-0.5 border-l border-slate-200 pl-1 dark:border-slate-800">
+                <button
+                  onClick={() => {
+                    setActiveTab('nexus');
+                    onNewRoom();
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-indigo-600 hover:bg-slate-100 dark:text-indigo-400 dark:hover:bg-slate-800"
+                >
+                  <Plus className="h-3.5 w-3.5" /> New room
+                </button>
+                <RoomList
+                  compact
+                  rooms={rooms.rooms}
+                  activeId={activeTab === 'nexus' ? rooms.activeId : ''}
+                  agents={agents}
+                  onOpen={(id) => {
+                    rooms.setActiveId(id);
+                    setActiveTab('nexus');
+                  }}
+                  onNew={onNewRoom}
+                  onChanged={rooms.refresh}
+                />
+              </div>
+            )}
+          </>
+        )}
 
         {collapsed ? (
           navButton(NAV[3])
@@ -163,6 +223,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, chat,
       </nav>
 
       <div className={`border-t border-slate-200 dark:border-slate-800 ${collapsed ? 'p-2' : 'p-3'}`}>
+        <PauseAI compact={collapsed} />
         {!collapsed && <UsageBars />}
         <button
           onClick={() => setActiveTab('settings')}
@@ -187,5 +248,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, chat,
         </button>
       </div>
     </aside>
+    </>
   );
 };

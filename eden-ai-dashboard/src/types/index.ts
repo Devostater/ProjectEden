@@ -109,6 +109,15 @@ export interface TelemetrySummary {
 // ---- Projects and boards ----
 export type CardColumn = 'todo' | 'ready' | 'doing' | 'review' | 'done';
 
+// A workstream inside a project, e.g. "Build" or "Marketing". Its members are the teammates who
+// pick up its unassigned Ready cards whenever they have nothing else to do.
+export interface Branch {
+  id: string;
+  name: string;
+  color: string;
+  memberIds: string[];
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -117,6 +126,7 @@ export interface Project {
   status: 'active' | 'paused' | 'done';
   repo?: string; // "owner/name" on GitHub
   autoRun?: boolean; // AI picks up assigned cards in Ready (on unless set to false)
+  branches?: Branch[]; // workstreams; every project has at least "Main"
   createdAt: string;
   updatedAt: string;
 }
@@ -137,6 +147,7 @@ export interface Card {
   details: string;
   column: CardColumn;
   assigneeId?: string; // a teammate's id
+  branchId?: string; // the workstream it belongs to (Main if missing)
   priority: 'low' | 'normal' | 'high';
   order: number; // position within its column, lowest first
   notes: CardNote[];

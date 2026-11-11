@@ -1,6 +1,6 @@
 // Visual tabs for a project, shown in the bottom panel: Flow (cards and what waits for what),
 // Workload (cards per teammate) and Progress (how the project is moving).
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { Agent, Card, CardColumn, Project } from '../types/index.ts';
 
 // One colour per card state, defined in index.css for light and dark. The four hues were checked for
@@ -43,7 +43,17 @@ const GAP_Y = 12;
 const PAD = 12;
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
 
-export const FlowTab: React.FC<VisualProps> = ({ cards, agents, onOpenCard }) => {
+export const FlowTab: React.FC<VisualProps & { zoom?: number | 'fit' }> = ({ cards, agents, onOpenCard, zoom = 1 }) => {
+  // Size of the visible area, so "Fit" can scale the graph to it.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setBox({ w: entry.contentRect.width, h: entry.contentRect.height }));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const layout = useMemo(() => {
     const byId = new Map(cards.map((c) => [c.id, c]));
     const depsOf = (c: Card) => (c.dependsOn || []).filter((d) => byId.has(d));
@@ -84,6 +94,8 @@ export const FlowTab: React.FC<VisualProps> = ({ cards, agents, onOpenCard }) =>
     return { pos, edges, width, height, looseTop, hasLinked: linked.length > 0, hasLoose: loose.length > 0 };
   }, [cards]);
 
+  const scale = zoom === 'fit' ? (box.w && box.h ? Math.max(0.4, Math.min(1.5, box.w / layout.width, box.h / layout.height)) : 1) : zoom;
+
   if (!cards.length) return <Empty>No cards yet. Add some on the board, or let Chief plan the work, and they appear here as a graph.</Empty>;
 
   return (
@@ -92,8 +104,12 @@ export const FlowTab: React.FC<VisualProps> = ({ cards, agents, onOpenCard }) =>
         <Legend cards={cards} />
         <span className="text-xs text-slate-400">An arrow means the card on the right waits for the one on the left. Click a card to open it.</span>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
-        <svg width={layout.width} height={layout.height} role="group" aria-label="Cards in this project and what they wait for" className="block">
+      <div ref={boxRef} className="min-h-0 flex-1 overflow-auto">
+        <svg
+          width={layout.width * scale}
+          height={layout.height * scale}
+          viewBox={`0 0 ${layout.width} ${layout.height}`}
+          role="group" aria-label="Cards in this project and what they wait for" className="block">
           <defs>
             <marker id="flow-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
               <path d="M0 0 L8 4 L0 8 z" fill="var(--flow-line)" />

@@ -46,6 +46,61 @@ const Code = ({ children }: { children: string }) => (
   <code className="block rounded-md bg-slate-100 px-3 py-2 font-mono text-xs text-slate-800 dark:bg-slate-950 dark:text-slate-200">{children}</code>
 );
 
+// Pairing a phone: the code and the addresses the Android app (or a phone browser) connects to.
+// Only the computer running the hub can see this; on a phone it shows nothing.
+const PhoneCard: React.FC = () => {
+  const [info, setInfo] = useState<{ code: string; addresses: string[] } | null>(null);
+  const [confirm, setConfirm] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/pairing')
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setInfo)
+      .catch(() => {});
+  }, []);
+
+  if (!info) return null;
+  const reset = async () => {
+    setConfirm(false);
+    const d = await fetch('/api/pairing/reset', { method: 'POST' }).then((r) => r.json());
+    setInfo(d);
+  };
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Your phone</h2>
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Open the Eden AI Hub app on your phone, on the same Wi-Fi as this computer, and enter these.</p>
+      <div className="mt-3 space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <div>
+          <div className="text-xs text-slate-500">Hub address</div>
+          {info.addresses.length ? (
+            info.addresses.map((a) => (
+              <div key={a} className="font-mono text-base text-slate-900 dark:text-white">{a}</div>
+            ))
+          ) : (
+            <div className="text-sm text-amber-600">This computer isn't on a network right now.</div>
+          )}
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">Pairing code</div>
+          <div className="font-mono text-2xl tracking-[0.3em] text-slate-900 dark:text-white">{info.code}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-sm dark:border-slate-800">
+          {confirm ? (
+            <>
+              <span className="text-slate-600 dark:text-slate-300">Make a new code? Paired phones will need the new one.</span>
+              <button onClick={reset} className="rounded-md bg-red-600 px-2.5 py-1 font-medium text-white hover:bg-red-500">New code</button>
+              <button onClick={() => setConfirm(false)} className="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Keep</button>
+            </>
+          ) : (
+            <button onClick={() => setConfirm(true)} className="text-slate-500 hover:underline">Make a new code (signs out paired phones)</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const SettingsView: React.FC<{ onSaved?: () => void }> = ({ onSaved }) => {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const usage = useProviderUsage();
@@ -210,6 +265,8 @@ export const SettingsView: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
           );
         })}
       </div>
+
+      <PhoneCard />
 
       <div>
         <h2 className="text-lg font-semibold text-slate-900 dark:text-white">GitHub</h2>

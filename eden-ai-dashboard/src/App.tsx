@@ -8,6 +8,8 @@ import { ChatView, type ChatDraft } from './components/ChatView.tsx';
 import { AccountView, type AccountTab } from './components/AccountView.tsx';
 import { BottomPanel } from './components/BottomPanel.tsx';
 import { NexusView } from './components/NexusView.tsx';
+import { MobileNav } from './components/MobileNav.tsx';
+import { useNexusRooms } from './nexusRooms.ts';
 import type { Agent, DAGPipeline, HostedFile } from './types/index.ts';
 import { useChatThreads } from './chatThreads.ts';
 import { useProjects } from './projectsStore.ts';
@@ -22,6 +24,9 @@ export default function App() {
   const [files, setFiles] = useState<HostedFile[]>([]);
 
   const chat = useChatThreads();
+  const [drawer, setDrawer] = useState(false);
+  const nexusRooms = useNexusRooms();
+  const [newRoomRequest, setNewRoomRequest] = useState(0);
   const [accountTab, setAccountTab] = useState<AccountTab>('account');
   const [profile, setProfile] = useState({ name: '', studio: '' });
 
@@ -98,10 +103,10 @@ export default function App() {
   const mention = (agent: Agent) => `@${agent.name.split(' ')[0]} `;
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-100 font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} chat={chat} profile={profile} />
+    <div className="flex h-[100dvh] w-screen overflow-hidden bg-slate-100 font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100">
+      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} chat={chat} rooms={nexusRooms} agents={agents} onNewRoom={() => setNewRoomRequest((n) => n + 1)} profile={profile} mobileOpen={drawer} onCloseMobile={() => setDrawer(false)} />
 
-      <div className="relative flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="relative flex h-[100dvh] min-w-0 flex-1 flex-col overflow-hidden">
         <div className="eden-bg" aria-hidden="true">
           <div className="eden-grid" />
         </div>
@@ -129,6 +134,8 @@ export default function App() {
 
           {activeTab === 'nexus' && (
             <NexusView
+              roomsApi={nexusRooms}
+              newRoomRequest={newRoomRequest}
               agents={agents}
               projects={projectsApi.projects}
               ownerName={profile.name}
@@ -190,8 +197,21 @@ export default function App() {
           )}
         </main>
 
+        <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} onMore={() => setDrawer(true)} />
+
         <BottomPanel
           onOpenPreferences={() => openAccount('preferences')}
+          review={{
+            cards: projectsApi.cards.filter((c) => c.column === 'review'),
+            projects: projectsApi.projects,
+            agents,
+            onApprove: (id) => projectsApi.saveCard({ id, column: 'done' }),
+            onOpen: (card) => {
+              projectsApi.setActiveId(card.projectId);
+              projectsApi.setOpenCardId(card.id);
+              setActiveTab('projects');
+            },
+          }}
           project={
             activeTab === 'projects' && projectsApi.active
               ? {

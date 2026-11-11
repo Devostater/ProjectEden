@@ -3,12 +3,14 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import { generate, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel } from './providers';
 import { registerSettingsRoutes } from './settings';
+import { registerPairing } from './pairing';
 import { registerProjectRoutes, ensureProjects } from './projects';
-import { startCardRunner, askTeammate } from './cardRunner';
+import { startCardRunner, askTeammate, runningCards } from './cardRunner';
 import { registerPlannerRoutes } from './planner';
 import { registerActivityRoutes, logActivity } from './activity';
 import { registerTerminalRoutes } from './terminal';
-import { registerNexusRoutes, type NexusMessage } from './nexus';
+import { registerNexusRoutes, runningRooms, type NexusData } from './nexus';
+import { registerControlRoutes } from './control';
 import type { Project, Card } from './src/types/index';
 import { parseRepo, githubFetch, githubError, githubStatus } from './github';
 import dotenv from 'dotenv';
@@ -52,7 +54,7 @@ interface WorkspaceStore {
   teamVersion?: number;
   projects?: Project[];
   cards?: Card[];
-  nexus?: { seq: number; messages: NexusMessage[] };
+  nexus?: NexusData;
 }
 
 // Starter team for the AI business hub. Mixed providers on purpose: heavy reasoning on Claude Opus,
@@ -338,6 +340,7 @@ async function fetchGitHubRepoSummary(repoTarget: string): Promise<{
 
 async function startServer() {
   const app = express();
+  registerPairing(app); // must come first: guards every route for devices other than this computer
   const PORT = 3000;
 
   app.use(express.json({ limit: '5mb' }));
@@ -444,6 +447,7 @@ async function startServer() {
   registerPlannerRoutes(app, () => store);
   registerActivityRoutes(app);
   registerTerminalRoutes(app);
+  registerControlRoutes(app, () => ({ cards: runningCards(), rooms: runningRooms() }));
   registerNexusRoutes(app, () => store, () => saveStore(store));
   logActivity('info', 'Hub started.');
   startCardRunner(() => store, () => saveStore(store));
