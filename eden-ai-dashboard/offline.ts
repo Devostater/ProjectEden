@@ -8,6 +8,7 @@
 //   - work that only works online waits and starts by itself when the internet is back: code updates
 //     (Claude Code), update suggestions, and Aura (it runs through Claude)
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
@@ -18,10 +19,46 @@ const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-offl
 export type OfflineMode = 'auto' | 'on' | 'off';
 
 let mode: OfflineMode = 'auto';
+// Local first (online too): everyday work runs on this PC's AI; only hard work and failed answers use the cloud.
+let localFirst = false;
 try {
-  const m = JSON.parse(fs.readFileSync(FILE, 'utf-8')).mode;
-  if (m === 'on' || m === 'off' || m === 'auto') mode = m;
+  const saved = JSON.parse(fs.readFileSync(FILE, 'utf-8'));
+  if (saved.mode === 'on' || saved.mode === 'off' || saved.mode === 'auto') mode = saved.mode;
+  localFirst = !!saved.localFirst;
 } catch {}
+const saveSettings = () => {
+  try {
+    fs.writeFileSync(FILE, JSON.stringify({ mode, localFirst }), 'utf-8');
+  } catch {}
+};
+export const isLocalFirst = () => localFirst;
+
+// How much work ran on this PC vs the cloud, per day (last 30 days), so the savings show.
+const SPLIT_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-split.json');
+let split: Record<string, { local: number; cloud: number }> = {};
+try {
+  split = JSON.parse(fs.readFileSync(SPLIT_FILE, 'utf-8'));
+} catch {}
+let splitTimer: ReturnType<typeof setTimeout> | null = null;
+export function recordSplit(local: boolean) {
+  const day = new Date().toISOString().slice(0, 10);
+  const d = (split[day] ||= { local: 0, cloud: 0 });
+  d[local ? 'local' : 'cloud']++;
+  if (splitTimer) return;
+  splitTimer = setTimeout(() => {
+    splitTimer = null;
+    for (const k of Object.keys(split).sort().slice(0, -30)) delete split[k];
+    try {
+      fs.writeFileSync(SPLIT_FILE, JSON.stringify(split), 'utf-8');
+    } catch {}
+  }, 5000);
+}
+function splitSummary(days: number) {
+  const keys = Object.keys(split).sort().slice(-days);
+  const local = keys.reduce((n, k) => n + split[k].local, 0);
+  const cloud = keys.reduce((n, k) => n + split[k].cloud, 0);
+  return { local, cloud, localPercent: local + cloud ? Math.round((local / (local + cloud)) * 100) : 0 };
+}
 
 let internetUp = true;
 let fails = 0;
@@ -64,8 +101,9 @@ export type JobKind = 'code' | 'general' | 'quick';
 
 // Best first. Sized for a 6 GB graphics card: these fit on it, so they answer quickly.
 const PREFER: Record<JobKind, RegExp[]> = {
+  // gpt-oss-20b (when downloaded) is much stronger; it is only picked when memory allows (see localModelFor).
   code: [/qwen2\.5-coder:7b/, /coder:7b|coder:6\.7b|coder:8b/, /coder/, /qwen3\.5:4b/],
-  general: [/qwen3\.5:4b/, /qwen3:8b/, /llama3\.[12]:8b|gemma3:4b|gemma3n/, /qwen|llama|gemma|mistral|phi/],
+  general: [/gpt-oss:20b/, /qwen3\.5:4b/, /qwen3:8b/, /llama3\.[12]:8b|gemma3:4b|gemma3n/, /qwen|llama|gemma|mistral|phi/],
   quick: [/qwen3\.5:4b/, /:(1|1\.5|2|3|4)b/, /qwen|llama|gemma|phi/],
 };
 
@@ -75,8 +113,11 @@ export function localModels(): string[] {
     .map((m) => m.id);
 }
 
+// Models that need lots of memory (they run partly from the PC's memory, not just the graphics card).
+const HEAVY = /gpt-oss:20b|:14b|:20b|:3\db|:70b/;
 export function localModelFor(kind: JobKind): string | null {
-  const list = localModels();
+  const roomy = os.freemem() > 9 * 1024 ** 3;
+  const list = localModels().filter((id) => roomy || !HEAVY.test(id));
   if (!list.length) return null;
   for (const re of PREFER[kind]) {
     const hit = list.find((id) => re.test(id));
@@ -97,8 +138,12 @@ export const offlineStatus = () => ({
   internetUp,
   offline: isOffline(),
   changedAt: changedAt ? new Date(changedAt).toISOString() : undefined,
+  localFirst,
   models: { general: localModelFor('general'), code: localModelFor('code'), quick: localModelFor('quick') },
   localCount: localModels().length,
+  hasGptOss: localModels().some((id) => /gpt-oss/.test(id)),
+  today: splitSummary(1),
+  week: splitSummary(7),
 });
 
 function isLocal(req: Request) {
@@ -110,13 +155,17 @@ export function registerOfflineRoutes(app: Express) {
   app.get('/api/offline', (_req, res) => res.json(offlineStatus()));
   app.post('/api/offline', (req, res) => {
     if (!isLocal(req)) return res.status(403).json({ error: 'Only from this computer.' });
+    if (typeof req.body?.localFirst === 'boolean') {
+      localFirst = req.body.localFirst;
+      saveSettings();
+      logActivity('info', `Local first turned ${localFirst ? 'on: everyday work runs on this PC' : 'off'}.`);
+      if (req.body.mode === undefined) return res.json(offlineStatus());
+    }
     const next = req.body?.mode;
     if (next !== 'auto' && next !== 'on' && next !== 'off') return res.status(400).json({ error: 'Pick auto, on or off.' });
     const before = isOffline();
     mode = next;
-    try {
-      fs.writeFileSync(FILE, JSON.stringify({ mode }), 'utf-8');
-    } catch {}
+    saveSettings();
     logActivity('info', `Offline mode set to ${mode === 'auto' ? 'automatic' : mode === 'on' ? 'always offline' : 'never'}.`);
     if (before !== isOffline()) {
       changedAt = Date.now();

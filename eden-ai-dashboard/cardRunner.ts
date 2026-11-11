@@ -58,7 +58,7 @@ export async function askTeammate(
   let lastError = 'No AI is available right now. Set one up in Account → Connections.';
   for (const model of queue) {
     try {
-      const r = await generate({ model, system, prompt, maxTokens: opts.maxTokens ?? 8000 });
+      const r = await generate({ model, system, prompt, role: agent.role, maxTokens: opts.maxTokens ?? 8000 });
       if (r.text.trim()) {
         agent.totalRuns += 1;
         agent.totalTokens += r.tokens || 0;
@@ -111,7 +111,7 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
   const wantedProvider = providerFor(agent.model || defaultModel());
   for (const model of modelQueue(agent)) {
     try {
-      const r = await generate({ model, system: systemFor(agent), prompt: buildPrompt(project, card, getStore().cards || []), maxTokens: 8000 });
+      const r = await generate({ model, system: systemFor(agent), prompt: buildPrompt(project, card, getStore().cards || []), role: agent.role, hard: card.priority === 'high', maxTokens: 8000 });
       if (r.text.trim()) {
         agent.totalRuns += 1;
         agent.totalTokens += r.tokens || 0;
