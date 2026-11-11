@@ -25,3 +25,4 @@ coverage/
 .eden-offline.json
 .eden-split.json
 .eden-knowledge.json
+.eden-team-devices.json
