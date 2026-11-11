@@ -314,6 +314,54 @@ await test('pause AI: pausing stops new Nexus replies and card work, resuming re
   }
 });
 
+await test('traceability: a card keeps where it came from', async () => {
+  const made = await call('POST', '/api/projects', { name: 'Smoke Trace Project' });
+  const pid = made.data.project.id;
+  try {
+    await call('POST', '/api/projects', { id: pid, autoRun: false });
+    const card = (await call('POST', '/api/cards', { projectId: pid, title: 'From a plan', source: { kind: 'nexus', roomId: 'room-general', roomName: 'General', messageSeq: 5 } })).data.card;
+    expect(card.source?.kind === 'nexus' && card.source.roomId === 'room-general' && card.source.messageSeq === 5 && card.source.at, `source not saved: ${JSON.stringify(card.source)}`);
+    const edited = (await call('POST', '/api/cards', { id: card.id, title: 'Renamed', source: { kind: 'plan' } })).data.card;
+    expect(edited.source.kind === 'nexus', 'the source changed after creation');
+    const odd = (await call('POST', '/api/cards', { projectId: pid, title: 'x', source: { kind: 'hack' } })).data.card;
+    expect(!odd.source, 'an unknown source kind was accepted');
+  } finally {
+    await call('DELETE', `/api/projects/${pid}`);
+  }
+});
+
+await test('lines: cards made in one go keep a shared run id', async () => {
+  const made = await call('POST', '/api/projects', { name: 'Smoke Lines Project' });
+  const pid = made.data.project.id;
+  try {
+    await call('POST', '/api/projects', { id: pid, autoRun: false });
+    const a = (await call('POST', '/api/cards', { projectId: pid, title: 'A', source: { kind: 'plan', label: 'Store page', runId: 'run-test1' } })).data.card;
+    const b = (await call('POST', '/api/cards', { projectId: pid, title: 'B', source: { kind: 'plan', label: 'Store page', runId: 'run-test1' } })).data.card;
+    expect(a.source.runId === 'run-test1' && b.source.runId === 'run-test1', 'run id not saved');
+  } finally {
+    await call('DELETE', `/api/projects/${pid}`);
+  }
+});
+
+await test('queue: a card queued for later is not started until its time', async () => {
+  if ((await call('GET', '/api/ai/pause')).data.paused) return console.log('        (skipped: the AI is paused)');
+  const made = await call('POST', '/api/projects', { name: 'Smoke Queue Project' });
+  const pid = made.data.project.id;
+  try {
+    const later = new Date(Date.now() + 3600000).toISOString();
+    const card = (await call('POST', '/api/cards', { projectId: pid, title: 'Later', assigneeId: 'agent-deputy', column: 'ready', startAfter: later })).data.card;
+    expect(card.startAfter === later, 'start time not saved');
+    await new Promise((r) => setTimeout(r, 6000));
+    const after = (await call('GET', '/api/projects')).data.cards.find((c) => c.id === card.id);
+    expect(after.column === 'ready' && after.notes.length === 0, `queued card ran early (${after.column})`);
+    expect(/^Queued:/.test(after.runMessage || ''), `no queued note (${after.runMessage})`);
+    const cleared = (await call('POST', '/api/cards', { id: card.id, startAfter: '' })).data.card;
+    expect(!cleared.startAfter, 'start time could not be cleared');
+  } finally {
+    await call('DELETE', `/api/projects/${pid}`);
+  }
+});
+
 await test('chat rejects an empty request', async () => {
   const { status } = await call('POST', '/api/chat', {});
   expect(status === 400, `status ${status}`);
@@ -405,6 +453,7 @@ await test('dependencies: links are saved, loops are refused, and a deleted card
 });
 
 await test('dependencies: a Ready card is held until what it waits for is Done', async () => {
+  if ((await call('GET', '/api/ai/pause')).data.paused) return console.log('        (skipped: the AI is paused, so nothing is scheduled)');
   const made = await call('POST', '/api/projects', { name: 'Smoke Hold Project' });
   const pid = made.data.project.id;
   try {

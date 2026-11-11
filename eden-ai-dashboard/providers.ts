@@ -6,6 +6,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { realLimits, type RealLimit } from './realLimits';
 
 export type ProviderId = 'anthropic' | 'google' | 'openai';
 
@@ -54,10 +55,13 @@ export function cliInstalled(p: ProviderId, refresh = false): boolean {
 
 // Installed is not enough: the tool must also be signed in to your plan.
 const signedInCache: Partial<Record<ProviderId, boolean>> = {};
+const checkedAt: Partial<Record<ProviderId, number>> = {};
+const RECHECK_MS = 2 * 60 * 1000;
 
 export function cliSignedIn(p: ProviderId, refresh = false): boolean {
   if (!cliInstalled(p, refresh)) return false;
-  if (refresh || signedInCache[p] === undefined) {
+  if (refresh || signedInCache[p] === undefined || Date.now() - (checkedAt[p] || 0) > RECHECK_MS) {
+    checkedAt[p] = Date.now();
     const run = (cmd: string) => spawnSync(cmd, { shell: true, timeout: 20000, windowsHide: true, encoding: 'utf-8' });
     if (p === 'anthropic') {
       const r = run('claude auth status');
@@ -245,6 +249,7 @@ interface DayUsage {
   messages: number;
   tokens: number;
   limitNote?: string;
+  limitAt?: number; // when the plan said it was used up
 }
 
 const today = () => new Date().toLocaleDateString('en-CA'); // local YYYY-MM-DD
@@ -257,7 +262,7 @@ function dayUsage(p: ProviderId): DayUsage {
   const u = usage[p];
   if (!u || u.day !== today()) {
     // New day: counts reset, but a "plan used up" note stays until a call succeeds.
-    usage[p] = { day: today(), messages: 0, tokens: 0, limitNote: u?.limitNote };
+    usage[p] = { day: today(), messages: 0, tokens: 0, limitNote: u?.limitNote, limitAt: u?.limitAt };
   }
   return usage[p]!;
 }
@@ -273,6 +278,7 @@ function recordUsage(p: ProviderId, tokens: number) {
   u.messages += 1;
   u.tokens += tokens;
   delete u.limitNote;
+  delete u.limitAt;
   delete downUntil[p];
   saveUsage();
 }
@@ -282,8 +288,18 @@ function recordUsage(p: ProviderId, tokens: number) {
 const downUntil: Partial<Record<ProviderId, number>> = {};
 const DOWN_MS = 5 * 60 * 1000;
 
+const LIMIT_RETRY_MS = 60 * 60 * 1000;
+const limited = (p: ProviderId) => {
+  if (p !== 'google') {
+    const real = realLimits()[p];
+    if (real.limited) return true; // the plan itself says it's used up, until its reset time
+  }
+  const u = dayUsage(p);
+  return !!u.limitNote && Date.now() - (u.limitAt || 0) < LIMIT_RETRY_MS; // otherwise try again once an hour
+};
+
 export function providerUnavailable(p: ProviderId): boolean {
-  return providerMode(p) === 'off' || !!dayUsage(p).limitNote || (downUntil[p] || 0) > Date.now();
+  return providerMode(p) === 'off' || limited(p) || (downUntil[p] || 0) > Date.now();
 }
 
 export function clearUnavailable() {
@@ -306,11 +322,12 @@ export function fallbackModels(exclude: ProviderId): string[] {
 }
 
 function recordFailure(p: ProviderId, message: string) {
-  if (/log ?in|logged|sign ?in|auth|unauthor|\b401\b|\b403\b|api key|usage limit|quota|credit balance/i.test(message)) {
+  if (/log ?in|logged|sign ?in|auth|unauthor|\b401\b|\b403\b|api key|usage limit|hit your .{0,20}limit|quota|credit balance/i.test(message)) {
     downUntil[p] = Date.now() + DOWN_MS;
   }
-  if (!/usage limit|quota|rate.?limit|\b429\b|credit balance/i.test(message)) return;
+  if (!/usage limit|hit your .{0,20}limit|quota|rate.?limit|\b429\b|credit balance/i.test(message)) return;
   dayUsage(p).limitNote = message.replace(/\s+/g, ' ').slice(0, 220);
+  dayUsage(p).limitAt = Date.now();
   saveUsage();
 }
 
@@ -321,7 +338,12 @@ const LIMIT_ENV: Record<ProviderId, string> = {
 };
 const DEFAULT_DAILY_LIMIT = 100;
 
-export function providerUsage() {
+export function providerUsage(refresh = false) {
+  const real = realLimits(refresh);
+  if (refresh) {
+    for (const p of ['anthropic', 'openai'] as ProviderId[]) cliSignedIn(p, true);
+    clearUnavailable();
+  }
   const names: Record<ProviderId, string> = { anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT' };
   return (['anthropic', 'google', 'openai'] as ProviderId[]).map((p) => {
     const u = dayUsage(p);
@@ -334,6 +356,8 @@ export function providerUsage() {
       tokens: u.tokens,
       limit,
       limitNote: u.limitNote || '',
+      // What the plan itself reports, when the tool records it (ChatGPT: percent used; Claude: limit hits).
+      real: p === 'google' ? ({ source: 'none', checkedAt: Date.now() } as RealLimit) : real[p],
     };
   });
 }

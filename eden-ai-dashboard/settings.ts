@@ -91,8 +91,8 @@ export function registerSettingsRoutes(app: Express) {
     }
   });
 
-  app.get('/api/provider-usage', (_req, res) => {
-    res.json({ usage: providerUsage() });
+  app.get('/api/provider-usage', (req, res) => {
+    res.json({ usage: providerUsage(req.query.refresh === '1') });
   });
 
   app.get('/api/settings', (req, res) => {

@@ -12,3 +12,4 @@ coverage/
 .nexusflow-store.json
 .eden-pairing.json
 .eden-control.json
+.eden-updates.json

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowRight, ChevronDown, GitBranch, FileText, GripVertical, Plus, Send } from 'lucide-react';
 import type { Agent, Card, DAGPipeline, HostedFile, Project } from '../types/index.ts';
-import { UsageBar, useProviderUsage } from './UsageBars.tsx';
+import { UsageBar, useProviderUsage, RefreshUsageButton } from './UsageBars.tsx';
 
 interface HomeViewProps {
   agents: Agent[];
@@ -176,11 +176,14 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
       ),
     },
     ai: {
-      title: 'Your AI today',
+      title: 'Your AI',
       action: 'Connect',
       onAction: () => onOpen('settings'),
       body: (
         <div className="space-y-4">
+          <div className="-mt-2 flex justify-end">
+            <RefreshUsageButton label />
+          </div>
           {usage.map((u) => (
             <UsageBar key={u.provider} u={u} />
           ))}

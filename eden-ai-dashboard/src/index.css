@@ -185,3 +185,8 @@
 @media (prefers-reduced-motion: reduce) {
   .flow-node-running rect:first-of-type { animation: none; }
 }
+
+/* ---- Readability: lift the faintest grey text so labels stay legible on both themes. ---- */
+html:not(.dark) .text-slate-400 { color: #64748b; } /* slate-500: about 4.8:1 on white */
+.dark .text-slate-500 { color: #94a3b8; } /* slate-400: about 6.9:1 on the dark panels */
+.dark .text-slate-400 { color: #cbd5e1; } /* slate-300 */

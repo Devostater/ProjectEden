@@ -1,6 +1,50 @@
 import React, { useEffect, useState } from 'react';
 import { User, Plug, SlidersHorizontal, Sun, Moon, Save, Loader2 } from 'lucide-react';
 import { SettingsView } from './SettingsView.tsx';
+import { useInstallApp } from '../installApp.ts';
+import { Download, CheckCircle2 } from 'lucide-react';
+
+// Install the hub as its own app window (Chrome or Edge), with its own icon in the Start menu or dock.
+const InstallCard: React.FC = () => {
+  const app = useInstallApp();
+  const [result, setResult] = useState('');
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+      <div className="flex items-start gap-4">
+        <img src="/icon-192.png" alt="" className="h-12 w-12 shrink-0 rounded-xl" />
+        <div className="min-w-0 flex-1">
+          <h2 className="font-semibold text-slate-900 dark:text-white">Install as an app</h2>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+            {app.installed
+              ? 'You are using the installed app.'
+              : 'Open the hub in its own window with its own icon, like any other program. Needs Chrome or Edge.'}
+          </p>
+        </div>
+        {app.installed ? (
+          <span className="flex shrink-0 items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="h-4 w-4" /> Installed
+          </span>
+        ) : app.canPrompt ? (
+          <button
+            onClick={async () => setResult((await app.install()) ? 'Installed. Look for Eden AI Hub in your Start menu.' : '')}
+            className="flex shrink-0 items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500"
+          >
+            <Download className="h-4 w-4" /> Install
+          </button>
+        ) : null}
+      </div>
+      {!app.installed && !app.canPrompt && (
+        <p className="mt-3 border-t border-slate-100 pt-3 text-sm text-slate-600 dark:border-slate-800 dark:text-slate-300">
+          {app.secure
+            ? 'In Chrome or Edge, click the install icon at the right end of the address bar, or open the browser menu and choose "Install Eden AI Hub". If it is already installed, open it from your Start menu.'
+            : 'Installing needs the hub opened at http://localhost:3000 on this computer. On your phone, use the Android app instead, or Chrome\'s menu → "Add to Home screen".'}
+        </p>
+      )}
+      {result && <p role="status" className="mt-3 text-sm text-emerald-600 dark:text-emerald-400">{result}</p>}
+    </section>
+  );
+};
+
 
 export type AccountTab = 'account' | 'connections' | 'preferences';
 
@@ -122,6 +166,7 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
 
       {tab === 'preferences' && (
         <div className="space-y-4">
+          <InstallCard />
           <section className={cardClass}>
             <h2 className="font-semibold text-slate-900 dark:text-white">Appearance</h2>
             <div className="mt-3 grid grid-cols-2 gap-2">

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Send, Square, Trash2, Loader2, KanbanSquare, Settings2, ChevronLeft, Leaf } from 'lucide-react';
 import { RoomList, RoomDialog } from './NexusRooms.tsx';
 import type { NexusRoomsApi } from '../nexusRooms.ts';
-import type { Agent, Project } from '../types/index.ts';
+import type { Agent, Card, Project } from '../types/index.ts';
 import { Formatted } from './ChatView.tsx';
 
 interface NexusMessage {
@@ -26,7 +26,10 @@ interface NexusViewProps {
   agents: Agent[];
   projects: Project[];
   ownerName?: string;
-  onMakeCards: (projectId: string, goal: string) => void; // hand a plan to a project's "Plan with Chief"
+  onMakeCards: (projectId: string, goal: string, source: { roomId: string; roomName: string; messageSeq: number }) => void; // hand a plan to a project's "Plan with Chief"
+  cards: Card[]; // to show which cards came from each plan
+  onOpenCard: (card: Card) => void;
+  focus?: { roomId: string; seq: number; n: number } | null; // scroll to and highlight this message
   roomsApi: NexusRoomsApi;
   newRoomRequest?: number; // bumped by the sidebar's "New room"
 }
@@ -40,7 +43,7 @@ const STARTERS = [
   'Our last release sold poorly. What went wrong and what do we change?',
 ];
 
-export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerName, onMakeCards, roomsApi, newRoomRequest }) => {
+export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerName, onMakeCards, roomsApi, newRoomRequest, cards, onOpenCard, focus }) => {
   const rooms = roomsApi.rooms;
   const roomId = roomsApi.activeId;
   const [roomDialog, setRoomDialog] = useState<'new' | 'edit' | null>(null);
@@ -60,7 +63,8 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
   const [input, setInput] = useState('');
   const [error, setError] = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
-  const [planFor, setPlanFor] = useState<number | null>(null); // message whose "make cards" picker is open
+  const [planFor, setPlanFor] = useState<number | null>(null);
+  const [highlight, setHighlight] = useState<number | null>(null); // message whose "make cards" picker is open
   const latest = useRef(0);
   const runningRef = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
@@ -84,6 +88,25 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
+
+  // Coming from a card: open its room, then scroll to and highlight the plan it was made from.
+  useEffect(() => {
+    if (!focus) return;
+    if (focus.roomId !== roomId) roomsApi.setActiveId(focus.roomId);
+    setHighlight(focus.seq);
+    setShowList(false);
+    let tries = 0;
+    const timer = setInterval(() => {
+      const el = document.getElementById(`nexus-msg-${focus.seq}`);
+      if (el || ++tries > 20) {
+        clearInterval(timer);
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => setHighlight(null), 4000);
+      }
+    }, 250);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus?.n]);
 
   // The sidebar's "New room" opens the form here.
   useEffect(() => {
@@ -126,7 +149,7 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
   }, []);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    if (highlight === null) endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages.length, state.speaking]);
 
   const send = async (text = input) => {
@@ -270,7 +293,7 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
             const a = agentOf(m);
             const isPlan = m.kind === 'plan';
             return (
-              <div key={m.seq} className="flex gap-3">
+              <div key={m.seq} id={`nexus-msg-${m.seq}`} className={`flex gap-3 rounded-xl transition-shadow ${highlight === m.seq ? 'ring-2 ring-amber-400 ring-offset-4 ring-offset-white dark:ring-offset-slate-900' : ''}`}>
                 <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white" style={{ backgroundColor: a?.color || '#64748b' }}>
                   {a?.avatar || m.author.slice(0, 2).toUpperCase()}
                 </span>
@@ -286,20 +309,43 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
                   </div>
                   <Formatted text={m.text} />
                   {m.via && <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">Answered with {m.via}.</p>}
+                  {isPlan && (() => {
+                    const made = cards.filter((c) => c.source?.kind === 'nexus' && c.source.roomId === roomId && c.source.messageSeq === m.seq);
+                    if (!made.length) return null;
+                    return (
+                      <div className="mt-3 border-t border-indigo-200 pt-3 dark:border-indigo-500/30">
+                        <div className="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+                          {made.length} card{made.length === 1 ? '' : 's'} made from this plan
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {made.map((c) => {
+                            const p = projects.find((x) => x.id === c.projectId);
+                            return (
+                              <button key={c.id} onClick={() => onOpenCard(c)} title={`${p?.name || ''} · ${c.column}`} className="flex max-w-full items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:border-indigo-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200">
+                                <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: p?.color }} />
+                                <span className="truncate">{c.title}</span>
+                                <span className="shrink-0 text-slate-400">{c.column === 'done' ? '✓' : c.column === 'review' ? 'review' : ''}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {isPlan && projects.length > 0 && (
                     <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-indigo-200 pt-3 dark:border-indigo-500/30">
                       {planFor === m.seq ? (
                         <>
                           <span className="text-sm text-slate-600 dark:text-slate-300">Which project?</span>
                           {projects.map((p) => (
-                            <button key={p.id} onClick={() => onMakeCards(p.id, m.text)} className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-sm text-slate-800 hover:border-indigo-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+                            <button key={p.id} onClick={() => onMakeCards(p.id, m.text, { roomId, roomName: room?.name || '', messageSeq: m.seq })} className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-sm text-slate-800 hover:border-indigo-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
                               <span className="h-2 w-2 rounded-full" style={{ backgroundColor: p.color }} /> {p.name}
                             </button>
                           ))}
                           <button onClick={() => setPlanFor(null)} className="text-sm text-slate-500 hover:underline">Cancel</button>
                         </>
                       ) : (
-                        <button onClick={() => (projects.length === 1 ? onMakeCards(projects[0].id, m.text) : setPlanFor(m.seq))} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500">
+                        <button onClick={() => (projects.length === 1 ? onMakeCards(projects[0].id, m.text, { roomId, roomName: room?.name || '', messageSeq: m.seq }) : setPlanFor(m.seq))} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500">
                           <KanbanSquare className="h-4 w-4" /> Turn this plan into cards
                         </button>
                       )}

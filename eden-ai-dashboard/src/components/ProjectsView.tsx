@@ -1,14 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, RotateCcw, Bot, AlertTriangle, Sparkles, Link2 } from 'lucide-react';
+import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, RotateCcw, Bot, AlertTriangle, Sparkles, Link2, Network, Clock } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
 import { WorkstreamTabs, WorkstreamDialog } from './Workstreams.tsx';
-import type { Agent, Branch, Card, CardColumn, Project } from '../types/index.ts';
+import { RunPicker } from './RunPicker.tsx';
+import { WhyWaiting } from './WhyWaiting.tsx';
+import { runsOf } from '../runs.ts';
+import type { Agent, Branch, Card, CardColumn, CardSource, Project } from '../types/index.ts';
 import { COLUMNS, type ProjectsApi } from '../projectsStore.ts';
 
 interface ProjectsViewProps {
   api: ProjectsApi;
   agents: Agent[];
   onAsk: (text: string) => void; // open Chat with this text ready to send
+  newProjectRequest?: number; // bumped by the sidebar's "New project"
+  onOpenSource?: (card: Card) => void; // jump to the Nexus message a card came from
+  onOpenBudgets?: () => void;
 }
 
 const COLORS = ['#6366F1', '#06B6D4', '#10B981', '#F97316', '#EC4899', '#8B5CF6', '#EAB308', '#F43F5E'];
@@ -155,13 +161,68 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
   );
 };
 
+
+// When to start: now, or queued for later. Quick choices plus an exact time.
+const nextAt = (hour: number, dayOffset = 0) => {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  d.setHours(hour, 0, 0, 0);
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+  return d.toISOString();
+};
+const toLocalInput = (iso?: string) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+export const whenLabel = (iso?: string) =>
+  iso ? new Date(iso).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'As soon as possible';
+
+const StartPicker: React.FC<{ value?: string; onChange: (iso: string | undefined) => void; id?: string }> = ({ value, onChange, id }) => {
+  const quick: { label: string; at: () => string | undefined }[] = [
+    { label: 'Now', at: () => undefined },
+    { label: 'In 1 hour', at: () => new Date(Date.now() + 3600000).toISOString() },
+    { label: 'Tonight 10 pm', at: () => nextAt(22) },
+    { label: 'Tomorrow 9 am', at: () => nextAt(9, 1) },
+  ];
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1.5">
+        {quick.map((q) => (
+          <button
+            key={q.label}
+            type="button"
+            onClick={() => onChange(q.at())}
+            className={`rounded-full border px-2.5 py-1 text-xs ${
+              (q.label === 'Now' && !value) ? 'border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300' : 'border-slate-300 text-slate-600 hover:border-indigo-400 dark:border-slate-700 dark:text-slate-300'
+            }`}
+          >
+            {q.label}
+          </button>
+        ))}
+        <input
+          id={id}
+          type="datetime-local"
+          value={toLocalInput(value)}
+          onChange={(e) => onChange(e.target.value ? new Date(e.target.value).toISOString() : undefined)}
+          aria-label="Exact start time"
+          className="rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+        />
+      </div>
+      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{value ? `Queued: the AI starts it ${whenLabel(value)} (if it's in Ready).` : 'Starts as soon as it is in Ready.'}</p>
+    </div>
+  );
+};
+
 // ---------------------------------------------------------------- card form
-const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api: ProjectsApi; onAsk: (text: string) => void; onClose: () => void }> = ({
+const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api: ProjectsApi; onAsk: (text: string) => void; onOpenSource?: (card: Card) => void; onClose: () => void }> = ({
   card,
   project,
   agents,
   api,
   onAsk,
+  onOpenSource,
   onClose,
 }) => {
   const [title, setTitle] = useState(card.title);
@@ -172,6 +233,7 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
   const [note, setNote] = useState('');
   const [dependsOn, setDependsOn] = useState<string[]>(card.dependsOn || []);
   const [branchId, setBranchId] = useState(card.branchId || project.branches?.[0]?.id || '');
+  const [startAfter, setStartAfter] = useState<string | undefined>(card.startAfter);
   const siblings = api.cards.filter((c) => c.projectId === card.projectId && c.id !== card.id);
   const assignee = agents.find((a) => a.id === assigneeId);
   const inReview = card.column === 'review';
@@ -191,7 +253,7 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
   const save = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!title.trim()) return;
-    await api.saveCard({ id: card.id, title, details, assigneeId, column, priority, dependsOn, branchId, note: note.trim() || undefined });
+    await api.saveCard({ id: card.id, title, details, assigneeId, column, priority, dependsOn, branchId, startAfter: startAfter || '', note: note.trim() || undefined });
     onClose();
   };
 
@@ -249,6 +311,24 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
         </>
       }
     >
+      {card.source && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-sm text-slate-700 dark:border-indigo-500/30 dark:bg-indigo-950/30 dark:text-slate-200">
+          {card.source.kind === 'nexus' ? <Network className="h-4 w-4 shrink-0 text-indigo-500" /> : <Sparkles className="h-4 w-4 shrink-0 text-indigo-500" />}
+          <span className="min-w-0 flex-1">
+            {card.source.kind === 'nexus' ? (
+              <>From the Nexus discussion in <b>{card.source.roomName || 'a room'}</b></>
+            ) : (
+              <>From a plan by Chief{card.source.label ? <>: <span className="italic">“{card.source.label}”</span></> : ''}</>
+            )}
+            <span className="text-slate-500"> · {new Date(card.source.at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
+          </span>
+          {card.source.kind === 'nexus' && card.source.roomId && onOpenSource && (
+            <button type="button" onClick={() => onOpenSource(card)} className="shrink-0 rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-500">
+              Open conversation
+            </button>
+          )}
+        </div>
+      )}
       <div>
         <label htmlFor="cd-title" className={labelClass}>Title</label>
         <input id="cd-title" required value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} />
@@ -294,6 +374,10 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
           </select>
         </div>
       )}
+      <div>
+        <label htmlFor="cd-start" className={labelClass}>When to start</label>
+        <StartPicker id="cd-start" value={startAfter} onChange={setStartAfter} />
+      </div>
       <div>
         <label htmlFor="cd-waits" className={labelClass}>Waits for</label>
         {dependsOn.length > 0 && (
@@ -414,7 +498,7 @@ const TeamStrip: React.FC<{ cards: Card[]; agents: Agent[]; filter: string; onFi
             onClick={() => onFilter(selected ? '' : a.id)}
             aria-pressed={selected}
             title={selected ? 'Show everyone\'s cards' : `Show only ${a.name}'s cards`}
-            className={`flex w-56 items-center gap-2.5 rounded-lg border bg-white p-2 text-left dark:bg-slate-900 ${
+            className={`flex w-64 items-start gap-2.5 rounded-lg border bg-white p-2.5 text-left dark:bg-slate-900 ${
               selected ? 'border-indigo-500 ring-1 ring-indigo-500' : 'border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700'
             }`}
           >
@@ -424,7 +508,7 @@ const TeamStrip: React.FC<{ cards: Card[]; agents: Agent[]; filter: string; onFi
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-medium text-slate-900 dark:text-white">{a.name}</span>
-              <span className={`flex items-center gap-1 text-xs ${tone}`}>{line}</span>
+              <span className={`mt-0.5 flex items-start gap-1 text-xs leading-snug ${tone} [&_.truncate]:line-clamp-2 [&_.truncate]:whitespace-normal`}>{line}</span>
             </span>
           </button>
         );
@@ -444,7 +528,7 @@ interface PlannedCard {
   include: boolean;
 }
 
-const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi; initialGoal?: string; branchId?: string; onClose: () => void }> = ({ project, agents, api, initialGoal, branchId, onClose }) => {
+const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi; initialGoal?: string; branchId?: string; source?: Omit<CardSource, 'at'>; onClose: () => void }> = ({ project, agents, api, initialGoal, branchId, source, onClose }) => {
   const [goal, setGoal] = useState(initialGoal || project.goal || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -474,14 +558,16 @@ const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi
   const update = (i: number, patch: Partial<PlannedCard>) => setPlan((p) => (p || []).map((c, j) => (j === i ? { ...c, ...patch } : c)));
 
   // Approved cards go to To do (you start them later) or straight to Ready (the AI starts now).
+  const [queueAt, setQueueAt] = useState<string | undefined>(undefined);
   const add = async (column: CardColumn) => {
     setBusy(true);
     // Created in plan order so each card can point at the earlier ones it waits for.
     const created: Record<number, string> = {};
+    const runId = `run-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     for (const [i, c] of (plan || []).entries()) {
       if (!c.include) continue;
       const dependsOn = (c.waitsFor || []).map((j) => created[j]).filter(Boolean);
-      const saved = await api.saveCard({ projectId: project.id, title: c.title, details: c.details, assigneeId: c.assigneeId || undefined, priority: c.priority, column, dependsOn, branchId: branchId || undefined });
+      const saved = await api.saveCard({ projectId: project.id, title: c.title, details: c.details, assigneeId: c.assigneeId || undefined, priority: c.priority, column, dependsOn, branchId: branchId || undefined, startAfter: queueAt, source: { ...(source || { kind: 'plan', label: goal.trim().slice(0, 160) }), runId } });
       if (saved) created[i] = saved.id;
     }
     setBusy(false);
@@ -520,7 +606,7 @@ const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi
               title={`Puts ${startable} assigned card${startable === 1 ? '' : 's'} in Ready. Each runs when the cards it waits for are done, one AI message each.`}
               className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
             >
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Approve and start
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {queueAt ? 'Approve and queue' : 'Approve and start'}
             </button>
           </>
         ) : (
@@ -553,6 +639,10 @@ const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi
       ) : (
         <>
           {summary && <p className="text-sm text-slate-700 dark:text-slate-300">{summary}</p>}
+          <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+            <div className="mb-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">When should the team start?</div>
+            <StartPicker value={queueAt} onChange={setQueueAt} />
+          </div>
           {via && <p className="text-xs text-slate-500">Planned with {via} because Chief's own AI isn't available right now.</p>}
           <ul className="space-y-2">
             {plan.map((c, i) => (
@@ -599,9 +689,12 @@ const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi
 };
 
 // ---------------------------------------------------------------- page
-export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }) => {
+export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, newProjectRequest, onOpenSource, onOpenBudgets }) => {
   const { projects, active } = api;
   const [projectDialog, setProjectDialog] = useState<'new' | 'edit' | null>(null);
+  useEffect(() => {
+    if (newProjectRequest) setProjectDialog('new');
+  }, [newProjectRequest]);
   const { openCardId, setOpenCardId } = api;
   const [addingIn, setAddingIn] = useState<CardColumn | null>(null);
   const [newTitle, setNewTitle] = useState('');
@@ -612,17 +705,21 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
   const [branchFilter, setBranchFilter] = useState(''); // '' = all workstreams
   const [branchDialog, setBranchDialog] = useState<{ branch: Branch | null } | null>(null);
   const [planGoal, setPlanGoal] = useState('');
+  const [planSource, setPlanSource] = useState<Omit<CardSource, 'at'> | undefined>(undefined);
 
   // A plan sent over from Nexus opens the planning form with its text ready.
   useEffect(() => {
     const request = api.planRequest;
     if (!request || !active || request.projectId !== active.id) return;
     setPlanGoal(request.goal);
+    setPlanSource(request.source);
     setPlanOpen(true);
     api.setPlanRequest(null);
   }, [api.planRequest, active?.id]);
 
-  const cards = active ? api.cards.filter((c) => c.projectId === active.id) : [];
+  const allCards = active ? api.cards.filter((c) => c.projectId === active.id) : [];
+  const cards = allCards.filter(api.visible);
+  const runs = runsOf(allCards);
   const openCard = cards.find((c) => c.id === openCardId) || null;
   const autoRun = !!active && active.autoRun !== false && active.status === 'active';
 
@@ -697,6 +794,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
             <button
               onClick={() => {
                 setPlanGoal('');
+                setPlanSource(undefined);
                 setPlanOpen(true);
               }}
               className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
@@ -720,13 +818,36 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
             </button>
           </div>
 
+          <WhyWaiting
+            cards={cards}
+            autoRun={autoRun}
+            onTurnOnAutoRun={() => api.saveProject({ id: active.id, autoRun: true })}
+            onHandToAI={async (ids) => {
+              for (const id of ids) await api.saveCard({ id, column: 'ready' });
+            }}
+            onOpenBudgets={() => onOpenBudgets?.()}
+          />
+
           {api.error && (
             <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">
               {api.error}
             </p>
           )}
 
-          <WorkstreamTabs project={active} cards={cards} agents={agents} selected={branchFilter} onSelect={setBranchFilter} onEdit={(branch) => setBranchDialog({ branch })} />
+          <div className="flex flex-wrap items-center gap-x-3">
+            <div className="min-w-0 flex-1">
+              <WorkstreamTabs project={active} cards={cards} agents={agents} selected={branchFilter} onSelect={setBranchFilter} onEdit={(branch) => setBranchDialog({ branch })} />
+            </div>
+            <div className="mt-3">
+              <RunPicker runs={runs} selected={api.runFilterOf(active.id)} onChange={(sel) => api.setRunFilter(active.id, sel)} />
+            </div>
+          </div>
+          {api.runFilterOf(active.id) !== null && (
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              Showing {cards.length} of {allCards.length} cards.{' '}
+              <button onClick={() => api.setRunFilter(active.id, null)} className="text-indigo-600 hover:underline dark:text-indigo-400">Show all lines</button>
+            </p>
+          )}
           <TeamStrip cards={branchFilter ? cards.filter((c) => c.branchId === branchFilter) : cards} agents={agents} filter={whoFilter} onFilter={setWhoFilter} />
 
           {/* Board */}
@@ -750,7 +871,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
                     setDragId(null);
                     setOverColumn(null);
                   }}
-                  className={`flex min-w-[11rem] flex-1 basis-0 flex-col rounded-xl border p-2 ${
+                  className={`flex min-w-[15rem] flex-1 basis-0 flex-col rounded-xl border p-2 ${
                     overColumn === col.id ? 'border-indigo-400 bg-indigo-50/60 dark:bg-indigo-950/30' : 'border-slate-200 bg-white/70 dark:border-slate-800 dark:bg-slate-900/70'
                   }`}
                 >
@@ -813,7 +934,10 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
                             dragId === card.id ? 'opacity-40' : ''
                           }`}
                         >
-                          <span className="block text-sm text-slate-900 dark:text-white">{card.title}</span>
+                          <span className="block text-[15px] font-medium leading-snug text-slate-900 dark:text-white">
+                            {card.source?.kind === 'nexus' && <Network className="mr-1 inline h-3 w-3 -translate-y-px text-indigo-500" aria-label={`From Nexus: ${card.source.roomName || 'a room'}`} />}
+                            {card.title}
+                          </span>
                           {!branchFilter && (active.branches || []).length > 1 && (() => {
                             const b = (active.branches || []).find((x) => x.id === card.branchId);
                             return b ? (
@@ -827,7 +951,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
                               <Loader2 className="h-3 w-3 animate-spin" /> {who ? who.name : 'A teammate'} is working…
                             </span>
                           )}
-                          {card.runState === 'waiting' && (
+                          {card.startAfter && Date.parse(card.startAfter) > Date.now() && card.column !== 'done' && (
+                            <span className="mt-2 flex items-center gap-1.5 text-xs font-medium text-sky-700 dark:text-sky-300">
+                              <Clock className="h-3 w-3" /> Starts {whenLabel(card.startAfter)}
+                            </span>
+                          )}
+                          {card.runState === 'waiting' && !card.runMessage?.startsWith('Queued:') && (
                             <span className="mt-2 flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
                               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" /> {card.runMessage}
                             </span>
@@ -839,7 +968,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
                           )}
                           {card.runState !== 'waiting' && (card.dependsOn || []).some((d) => cards.some((c) => c.id === d && c.column !== 'done')) && (
                             <span className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
-                              <Link2 className="h-3 w-3" /> Waits for {(card.dependsOn || []).filter((d) => cards.some((c) => c.id === d && c.column !== 'done')).length} other card(s)
+                              <Link2 className="h-3 w-3" /> Waits for {(() => { const n = (card.dependsOn || []).filter((d) => cards.some((c) => c.id === d && c.column !== 'done')).length; return `${n} card${n === 1 ? '' : 's'}`; })()}
                             </span>
                           )}
                           {col.id === 'ready' && autoRun && !card.assigneeId && (
@@ -879,7 +1008,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
         </>
       )}
 
-      {planOpen && active && <PlanDialog key={`${active.id}-${planGoal.length}`} project={active} agents={agents} api={api} initialGoal={planGoal} branchId={branchFilter} onClose={() => setPlanOpen(false)} />}
+      {planOpen && active && <PlanDialog key={`${active.id}-${planGoal.length}`} project={active} agents={agents} api={api} initialGoal={planGoal} source={planSource} branchId={branchFilter} onClose={() => setPlanOpen(false)} />}
       {branchDialog && active && (
         <WorkstreamDialog
           project={active}
@@ -894,7 +1023,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk }
         />
       )}
       {projectDialog && <ProjectDialog project={projectDialog === 'edit' ? active || null : null} api={api} onClose={() => setProjectDialog(null)} />}
-      {openCard && active && <CardDialog key={openCard.id} card={openCard} project={active} agents={agents} api={api} onAsk={onAsk} onClose={() => setOpenCardId(null)} />}
+      {openCard && active && <CardDialog key={openCard.id} card={openCard} project={active} agents={agents} api={api} onAsk={onAsk} onOpenSource={(c) => { setOpenCardId(null); onOpenSource?.(c); }} onClose={() => setOpenCardId(null)} />}
     </div>
   );
 };

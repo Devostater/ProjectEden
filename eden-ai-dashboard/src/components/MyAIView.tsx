@@ -8,6 +8,7 @@ interface MyAIViewProps {
   onSaveAgent: (agent: Partial<Agent>) => Promise<void>;
   onDeleteAgent: (id: string) => Promise<void>;
   onSelectAgentForSwarm: (agentId: string) => void; // opens Chat addressed to this teammate
+  request?: { kind: 'new-teammate' | 'edit-teammate'; id?: string; n: number } | null; // from the sidebar
 }
 
 type ProviderId = 'anthropic' | 'google' | 'openai';
@@ -47,7 +48,7 @@ const defaultInstruction = (name: string, role: string) =>
 const inputClass =
   'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white';
 
-export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDeleteAgent, onSelectAgentForSwarm }) => {
+export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDeleteAgent, onSelectAgentForSwarm, request }) => {
   const usage = useProviderUsage();
   const usageOf = (p: ProviderId) => usage.find((u) => u.provider === p);
 
@@ -75,6 +76,17 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
     setShowMore(false);
     setOpen(true);
   };
+
+  // The sidebar's "Add teammate" or a teammate's name opens the form here.
+  useEffect(() => {
+    if (!request) return;
+    if (request.kind === 'new-teammate') openForm();
+    else {
+      const agent = agents.find((a) => a.id === request.id);
+      if (agent) openForm(agent);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request?.n]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

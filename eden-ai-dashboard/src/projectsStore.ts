@@ -1,6 +1,7 @@
 // Projects and cards, loaded from the server and shared by the Projects page, sidebar and Dashboard.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Project, Card, CardColumn } from './types/index.ts';
+import type { Project, Card, CardColumn, CardSource } from './types/index.ts';
+import { runKey } from './runs.ts';
 
 export const COLUMNS: { id: CardColumn; label: string; hint: string }[] = [
   { id: 'todo', label: 'To do', hint: 'Ideas and work not started' },
@@ -28,8 +29,31 @@ export function useProjects() {
   const [error, setError] = useState('');
   const [openCardId, setOpenCardId] = useState<string | null>(null); // the card whose form is open
   // A plan handed over from Nexus: opens "Plan with Chief" on that project with this text filled in.
-  const [planRequest, setPlanRequest] = useState<{ projectId: string; goal: string } | null>(null);
+  const [planRequest, setPlanRequest] = useState<{ projectId: string; goal: string; source?: Omit<CardSource, 'at'> } | null>(null);
   const lastSeen = useRef('');
+  // Which lines (runs) are shown, per project. null = all. Remembered on this device.
+  const [runFilters, setRunFilters] = useState<Record<string, string[] | null>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('eden_run_filters') || '{}');
+    } catch {
+      return {};
+    }
+  });
+  const setRunFilter = (projectId: string, selected: string[] | null) => {
+    setRunFilters((all) => {
+      const next = { ...all, [projectId]: selected };
+      if (selected === null) delete next[projectId];
+      try {
+        localStorage.setItem('eden_run_filters', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+  const runFilterOf = (projectId: string) => runFilters[projectId] ?? null;
+  const visible = (card: Card) => {
+    const f = runFilters[card.projectId];
+    return !f || f.includes(runKey(card));
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -74,7 +98,7 @@ export function useProjects() {
     return d?.project as Project | undefined;
   };
   const deleteProject = (id: string) => run(() => send('DELETE', `/api/projects/${id}`));
-  const saveCard = async (c: Partial<Card> & { note?: string }) => (await run(() => send('POST', '/api/cards', c)))?.card as Card | undefined;
+  const saveCard = async (c: Partial<Omit<Card, 'source'>> & { note?: string; source?: Omit<CardSource, 'at'> }) => (await run(() => send('POST', '/api/cards', c)))?.card as Card | undefined;
   const deleteCard = (id: string) => run(() => send('DELETE', `/api/cards/${id}`));
 
   // Move a card to a column, optionally just before another card. Shown immediately, then saved.
@@ -94,7 +118,7 @@ export function useProjects() {
 
   const active = projects.find((p) => p.id === activeId) || projects[0];
 
-  return { planRequest, setPlanRequest, openCardId, setOpenCardId, projects, cards, active, activeId: active?.id || '', setActiveId, error, setError, refresh, saveProject, deleteProject, saveCard, deleteCard, moveCard };
+  return { runFilterOf, setRunFilter, visible, planRequest, setPlanRequest, openCardId, setOpenCardId, projects, cards, active, activeId: active?.id || '', setActiveId, error, setError, refresh, saveProject, deleteProject, saveCard, deleteCard, moveCard };
 }
 
 export type ProjectsApi = ReturnType<typeof useProjects>;

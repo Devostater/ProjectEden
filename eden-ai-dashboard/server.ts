@@ -11,6 +11,7 @@ import { registerActivityRoutes, logActivity } from './activity';
 import { registerTerminalRoutes } from './terminal';
 import { registerNexusRoutes, runningRooms, type NexusData } from './nexus';
 import { registerControlRoutes } from './control';
+import { registerUpdateRoutes } from './updates';
 import type { Project, Card } from './src/types/index';
 import { parseRepo, githubFetch, githubError, githubStatus } from './github';
 import dotenv from 'dotenv';
@@ -447,6 +448,7 @@ async function startServer() {
   registerPlannerRoutes(app, () => store);
   registerActivityRoutes(app);
   registerTerminalRoutes(app);
+  registerUpdateRoutes(app);
   registerControlRoutes(app, () => ({ cards: runningCards(), rooms: runningRooms() }));
   registerNexusRoutes(app, () => store, () => saveStore(store));
   logActivity('info', 'Hub started.');

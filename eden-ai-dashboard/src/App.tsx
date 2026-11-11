@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sidebar, type AppTab } from './components/Sidebar.tsx';
+import { Sidebar, type AppTab, type SidebarRequest } from './components/Sidebar.tsx';
 import { HomeView } from './components/HomeView.tsx';
 import { MyAIView } from './components/MyAIView.tsx';
 import { PipelineDAGView } from './components/PipelineDAGView.tsx';
@@ -8,6 +8,7 @@ import { ChatView, type ChatDraft } from './components/ChatView.tsx';
 import { AccountView, type AccountTab } from './components/AccountView.tsx';
 import { BottomPanel } from './components/BottomPanel.tsx';
 import { NexusView } from './components/NexusView.tsx';
+import { UpdatesView } from './components/UpdatesView.tsx';
 import { MobileNav } from './components/MobileNav.tsx';
 import { useNexusRooms } from './nexusRooms.ts';
 import type { Agent, DAGPipeline, HostedFile } from './types/index.ts';
@@ -17,7 +18,10 @@ import { ProjectsView } from './components/ProjectsView.tsx';
 
 export default function App() {
   const [darkMode, setDarkMode] = useState<boolean>(() => localStorage.getItem('nexus_theme') !== 'light');
-  const [activeTab, setActiveTab] = useState<AppTab>('home');
+  const [activeTab, setActiveTab] = useState<AppTab>(() => {
+    const wanted = new URLSearchParams(window.location.search).get('tab');
+    return (['home', 'projects', 'nexus', 'chat', 'my-ai', 'pipelines', 'files', 'updates', 'settings'] as AppTab[]).includes(wanted as AppTab) ? (wanted as AppTab) : 'home';
+  });
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [pipelines, setPipelines] = useState<DAGPipeline[]>([]);
@@ -27,6 +31,10 @@ export default function App() {
   const [drawer, setDrawer] = useState(false);
   const nexusRooms = useNexusRooms();
   const [newRoomRequest, setNewRoomRequest] = useState(0);
+  // Something the sidebar asked a page to open. The number makes repeat requests distinct.
+  const [request, setRequest] = useState<(SidebarRequest & { n: number }) | null>(null);
+  const [pipelineId, setPipelineId] = useState('');
+  const [nexusFocus, setNexusFocus] = useState<{ roomId: string; seq: number; n: number } | null>(null);
   const [accountTab, setAccountTab] = useState<AccountTab>('account');
   const [profile, setProfile] = useState({ name: '', studio: '' });
 
@@ -104,7 +112,17 @@ export default function App() {
 
   return (
     <div className="flex h-[100dvh] w-screen overflow-hidden bg-slate-100 font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100">
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} chat={chat} rooms={nexusRooms} agents={agents} onNewRoom={() => setNewRoomRequest((n) => n + 1)} profile={profile} mobileOpen={drawer} onCloseMobile={() => setDrawer(false)} />
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        chat={chat}
+        rooms={nexusRooms}
+        projects={projectsApi}
+        pipelines={pipelines}
+        activePipelineId={pipelineId}
+        agents={agents}
+        onNewRoom={() => setNewRoomRequest((n) => n + 1)}
+        onRequest={(r) => setRequest({ ...r, n: (request?.n || 0) + 1 })} profile={profile} mobileOpen={drawer} onCloseMobile={() => setDrawer(false)} />
 
       <div className="relative flex h-[100dvh] min-w-0 flex-1 flex-col overflow-hidden">
         <div className="eden-bg" aria-hidden="true">
@@ -130,7 +148,14 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'projects' && <ProjectsView api={projectsApi} agents={agents} onAsk={(text) => openChat(text, false)} />}
+          {activeTab === 'projects' && <ProjectsView api={projectsApi} agents={agents} onAsk={(text) => openChat(text, false)} newProjectRequest={request?.kind === 'new-project' ? request.n : 0}
+              onOpenBudgets={() => openAccount('connections')}
+              onOpenSource={(card) => {
+                if (!card.source?.roomId) return;
+                setNexusFocus({ roomId: card.source.roomId, seq: card.source.messageSeq || 0, n: (nexusFocus?.n || 0) + 1 });
+                setActiveTab('nexus');
+              }}
+            />}
 
           {activeTab === 'nexus' && (
             <NexusView
@@ -139,9 +164,16 @@ export default function App() {
               agents={agents}
               projects={projectsApi.projects}
               ownerName={profile.name}
-              onMakeCards={(projectId, goal) => {
+              cards={projectsApi.cards}
+              focus={nexusFocus}
+              onOpenCard={(card) => {
+                projectsApi.setActiveId(card.projectId);
+                projectsApi.setOpenCardId(card.id);
+                setActiveTab('projects');
+              }}
+              onMakeCards={(projectId, goal, source) => {
                 projectsApi.setActiveId(projectId);
-                projectsApi.setPlanRequest({ projectId, goal: `Turn this plan from the team discussion into cards:\n\n${goal}` });
+                projectsApi.setPlanRequest({ projectId, goal: `Turn this plan from the team discussion into cards:\n\n${goal}`, source: { kind: 'nexus', ...source } });
                 setActiveTab('projects');
               }}
             />
@@ -155,6 +187,7 @@ export default function App() {
 
           {activeTab === 'my-ai' && (
             <MyAIView
+              request={request?.kind === 'new-teammate' || request?.kind === 'edit-teammate' ? request : null}
               agents={agents}
               onSaveAgent={handleSaveAgent}
               onDeleteAgent={async (id) => {
@@ -169,7 +202,7 @@ export default function App() {
           )}
 
           {activeTab === 'pipelines' && (
-            <PipelineDAGView pipelines={pipelines} agents={agents} onSavePipeline={handleSavePipeline} onRefreshData={refreshAllData} />
+            <PipelineDAGView pipelines={pipelines} agents={agents} onSavePipeline={handleSavePipeline} onRefreshData={refreshAllData} openId={request?.kind === 'open-workflow' ? request.id : ''} openNonce={request?.n || 0} onSelected={setPipelineId} />
           )}
 
           {activeTab === 'files' && (
@@ -182,6 +215,8 @@ export default function App() {
               }
             />
           )}
+
+          {activeTab === 'updates' && <UpdatesView />}
 
           {activeTab === 'settings' && (
             <AccountView
@@ -216,7 +251,7 @@ export default function App() {
             activeTab === 'projects' && projectsApi.active
               ? {
                   project: projectsApi.active,
-                  cards: projectsApi.cards.filter((c) => c.projectId === projectsApi.active!.id),
+                  cards: projectsApi.cards.filter((c) => c.projectId === projectsApi.active!.id && projectsApi.visible(c)),
                   agents,
                   onOpenCard: projectsApi.setOpenCardId,
                 }

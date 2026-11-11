@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { DAGPipeline, DAGNode, Agent } from '../types/index.ts';
 import {
   GitBranch,
@@ -21,6 +21,9 @@ interface PipelineDAGViewProps {
   agents: Agent[];
   onSavePipeline: (pipe: DAGPipeline) => Promise<void>;
   onRefreshData?: () => void;
+  openId?: string; // from the sidebar
+  openNonce?: number;
+  onSelected?: (id: string) => void;
 }
 
 export const PipelineDAGView: React.FC<PipelineDAGViewProps> = ({
@@ -28,11 +31,25 @@ export const PipelineDAGView: React.FC<PipelineDAGViewProps> = ({
   agents,
   onSavePipeline,
   onRefreshData,
+  openId,
+  openNonce,
+  onSelected,
 }) => {
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>(
     pipelines[0]?.id || ''
   );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  useEffect(() => {
+    if (openId && pipelines.some((p) => p.id === openId)) {
+      setSelectedPipelineId(openId);
+      setSelectedNodeId(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openNonce]);
+  useEffect(() => {
+    onSelected?.(selectedPipelineId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPipelineId]);
   const [customRunInput, setCustomRunInput] = useState('');
   const [isExecuting, setIsExecuting] = useState(false);
   const [executionOutputs, setExecutionOutputs] = useState<Record<string, string>>({});

@@ -12,6 +12,8 @@ interface ProjectStore {
 
 const now = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+// A queue time: a valid date, or nothing ("start as soon as possible").
+const validTime = (v: unknown) => (typeof v === 'string' && v && !isNaN(Date.parse(v)) ? new Date(v).toISOString() : undefined);
 const text = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
 export const MAIN_BRANCH = 'branch-main';
@@ -213,6 +215,7 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
         column,
         assigneeId: b.assigneeId !== undefined ? b.assigneeId || '' : existing.assigneeId,
         branchId,
+        startAfter: b.startAfter !== undefined ? validTime(b.startAfter) : existing.startAfter,
         priority: ['low', 'normal', 'high'].includes(b.priority) ? b.priority : existing.priority,
         order: typeof b.order === 'number' && isFinite(b.order) ? b.order : movedColumn ? lastInColumn + 1 : existing.order,
         updatedAt: now(),
@@ -241,6 +244,19 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
       order: typeof b.order === 'number' && isFinite(b.order) ? b.order : lastInColumn + 1,
       notes: [],
       dependsOn: deps || [],
+      startAfter: validTime(b.startAfter),
+      source:
+        b.source && (b.source.kind === 'nexus' || b.source.kind === 'plan')
+          ? {
+              kind: b.source.kind,
+              roomId: text(b.source.roomId, 80) || undefined,
+              roomName: text(b.source.roomName, 80) || undefined,
+              messageSeq: Number.isInteger(b.source.messageSeq) ? b.source.messageSeq : undefined,
+              label: text(b.source.label, 160) || undefined,
+              runId: text(b.source.runId, 60) || undefined,
+              at: now(),
+            }
+          : undefined,
       reviewAt: column === 'review' ? now() : undefined,
       doneAt: column === 'done' ? now() : undefined,
       createdAt: now(),

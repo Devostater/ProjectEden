@@ -193,7 +193,17 @@ function tick(getStore: () => RunnerStore, save: () => void) {
       changed = true;
     }
   }
-  const startable = candidates.filter((c) => !blockersOf(c).length).sort(byPriority);
+  // Queued cards wait until their start time.
+  const due = (c: Card) => !c.startAfter || Date.parse(c.startAfter) <= Date.now();
+  for (const card of candidates) {
+    if (!due(card) && !blockersOf(card).length) hold(card, `Queued: starts ${new Date(card.startAfter!).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`);
+    else if (due(card) && card.runState === 'waiting' && card.runMessage?.startsWith('Queued:')) {
+      card.runState = undefined;
+      card.runMessage = undefined;
+      changed = true;
+    }
+  }
+  const startable = candidates.filter((c) => !blockersOf(c).length && due(c)).sort(byPriority);
 
   const busy = new Set(all.filter((c) => c.runState === 'running' && c.assigneeId).map((c) => c.assigneeId!));
   for (const agent of store.agents) {
@@ -249,6 +259,14 @@ export function startCardRunner(getStore: () => RunnerStore, save: () => void) {
     if (c.runState === 'running') {
       c.column = 'ready';
       c.runState = undefined;
+      recovered = true;
+    }
+  }
+  // Cards left in "In progress" that nothing is working on (moved there by hand, or left over from a
+  // restart) go back to Ready if someone is assigned, so the team picks them up.
+  for (const c of getStore().cards || []) {
+    if (c.column === 'doing' && !c.runState && c.assigneeId && c.runStartedAt) {
+      c.column = 'ready';
       recovered = true;
     }
   }

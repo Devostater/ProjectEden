@@ -140,6 +140,17 @@ export interface CardNote {
   via?: string; // set when another AI answered for the teammate
 }
 
+// Where a card came from, so it can be traced back.
+export interface CardSource {
+  kind: 'nexus' | 'plan'; // a Nexus discussion's plan, or "Plan with Chief" on the board
+  roomId?: string;
+  roomName?: string;
+  messageSeq?: number; // the plan message in that room
+  label?: string; // what was asked, shortened
+  runId?: string; // the cards made together in one go share this
+  at: string;
+}
+
 export interface Card {
   id: string;
   projectId: string;
@@ -148,10 +159,12 @@ export interface Card {
   column: CardColumn;
   assigneeId?: string; // a teammate's id
   branchId?: string; // the workstream it belongs to (Main if missing)
+  source?: CardSource;
   priority: 'low' | 'normal' | 'high';
   order: number; // position within its column, lowest first
   notes: CardNote[];
   dependsOn?: string[]; // ids of cards that must be Done before the AI starts this one
+  startAfter?: string; // queued: the AI won't start it before this time
   reviewAt?: string; // when it last entered Review
   doneAt?: string; // when it was finished
   runState?: 'running' | 'waiting' | 'failed'; // set by the card runner

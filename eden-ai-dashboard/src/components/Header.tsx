@@ -10,6 +10,7 @@ const TITLES: Record<AppTab, string> = {
   'my-ai': 'Team',
   pipelines: 'Workflows',
   files: 'Files',
+  updates: 'Improve the hub',
   settings: 'Connect',
 };
 
