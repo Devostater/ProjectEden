@@ -17,6 +17,7 @@ import { logActivity, recentActivity } from './activity';
 import { cliSignedIn } from './providers';
 import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
+import { localAgentModel, localClaudeEnv } from './localClaude';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STORE = path.join(APP_DIR, '.eden-updates.json');
@@ -91,6 +92,8 @@ interface UpdateJob {
   codebaseId: string;
   request: string;
   cardId?: string; // when it was asked for from a project card
+  local?: boolean; // run Claude Code on a model on this PC (Ollama) instead of your Claude plan
+  localModel?: string; // the model it ran on
   status: Status;
   createdAt: string;
   finishedAt?: string;
@@ -221,9 +224,15 @@ function describeTool(name: string, input: any): string {
 }
 
 async function runAI(cb: Codebase, job: UpdateJob, appDir: string) {
-  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--tools', 'Read,Edit,Write,Glob,Grep', '--model', 'claude-sonnet-5-5'];
+  // On this PC when asked for, or when offline (Claude's servers can't be reached then).
+  const local = (job.local || isOffline()) && localAgentModel();
+  if (local) {
+    job.localModel = local;
+    job.log.push(`Running on this PC (${local})`);
+  }
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--tools', 'Read,Edit,Write,Glob,Grep', '--model', local || 'claude-sonnet-5-5'];
   await new Promise<void>((resolve, reject) => {
-    const child = spawn('claude', args, { cwd: appDir, shell: true, windowsHide: true });
+    const child = spawn('claude', args, { cwd: appDir, shell: true, windowsHide: true, env: local ? localClaudeEnv() : process.env });
     let buffer = '';
     let errText = '';
     const timer = setTimeout(() => {
@@ -378,8 +387,9 @@ function startNext() {
   const next = jobs.find((j) => j.status === 'queued');
   if (!next) return;
   // PC busy mode: queued updates wait until the PC has room (they start by themselves then).
-  if (pcBusy() || isOffline()) {
-    if (!waitingForRoom) logActivity('info', isOffline() ? 'Code updates are waiting for the internet (Claude Code needs it).' : 'Code updates are waiting: the PC is busy right now.');
+  const needsInternet = isOffline() && !localAgentModel();
+  if (pcBusy() || needsInternet) {
+    if (!waitingForRoom) logActivity('info', needsInternet ? 'Code updates are waiting for the internet (no AI on this PC can do them).' : 'Code updates are waiting: the PC is busy right now.');
     waitingForRoom = true;
     return;
   }
@@ -535,13 +545,14 @@ function autoBackup() {
 }
 
 // Starts a code update from elsewhere in the hub (a project card). Returns the job id.
-export function requestCodeUpdate(codebaseId: string, request: string, cardId?: string): string {
+export function requestCodeUpdate(codebaseId: string, request: string, cardId?: string, local = false): string {
   const cb = findCodebase(codebaseId);
   if (!cb) throw new Error('That codebase is not set up in the hub.');
   // Uses the saved sign-in check (it refreshes itself every so often) so adding to the queue is quick and never freezes the hub.
-  if (!cliSignedIn('anthropic')) throw new Error('Code updates use Claude Code. Sign in to Claude in Account → Connections first.');
+  if (local && !localAgentModel()) throw new Error('No AI on this PC can do code updates yet. Start Ollama (gpt-oss-20b or a coder model).');
+  if (!local && !isOffline() && !cliSignedIn('anthropic')) throw new Error('Code updates use Claude Code. Sign in to Claude in Account → Connections first.');
   // If another update is running, this one waits in the queue.
-  const job: UpdateJob = { id: `upd-${Date.now().toString(36)}`, codebaseId: cb.id, request, cardId, status: 'queued', createdAt: now(), log: [] };
+  const job: UpdateJob = { id: `upd-${Date.now().toString(36)}`, codebaseId: cb.id, request, cardId, local: local || undefined, status: 'queued', createdAt: now(), log: [] };
   jobs.push(job);
   if (busy) logActivity('work', `Code update queued (${cb.name}): ${request.slice(0, 100)}`);
   save();
@@ -600,7 +611,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     const request = typeof req.body?.request === 'string' ? req.body.request.trim().slice(0, 4000) : '';
     if (!request) return res.status(400).json({ error: 'Describe what you want changed.' });
     try {
-      const id = requestCodeUpdate(String(req.body?.codebaseId || 'hub'), request, typeof req.body?.cardId === 'string' ? req.body.cardId : undefined);
+      const id = requestCodeUpdate(String(req.body?.codebaseId || 'hub'), request, typeof req.body?.cardId === 'string' ? req.body.cardId : undefined, req.body?.local === true);
       res.json({ job: { id } });
     } catch (err: any) {
       res.status(400).json({ error: err.message });

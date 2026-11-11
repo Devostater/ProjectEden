@@ -9,7 +9,9 @@ import { fileURLToPath } from 'url';
 import { realLimits, type RealLimit } from './realLimits';
 import { extraModels, extraConnected, freeFallbacks, callExtra } from './extraAI';
 import { pcBusy } from './busy';
-import { isOffline, isLocalFirst, recordSplit, localModelFor, kindFor } from './offline';
+import { isOffline, isLocalFirst, recordSplit, localModelFor, localModels, kindFor, fitsNow } from './offline';
+// A teammate's chosen local model, if Ollama still has it.
+const localUsable = (id: string) => (localModels().includes(id) && fitsNow(id) ? id : null);
 import { auraInstalled, auraRunning, auraCliArgs, auraSystemNote, isAuraModel } from './aura';
 
 export type ProviderId = 'lyra' | 'anthropic' | 'google' | 'openai' | 'extra';
@@ -227,6 +229,7 @@ export interface ChatMessage {
 export interface GenerateRequest {
   model?: string;
   role?: string; // the teammate's role, to pick a local model that suits the job
+  localModel?: string; // the teammate's own choice of local model (Team screen), if any
   hard?: boolean; // hard work (e.g. a High priority card): goes straight to the cloud in local-first mode
   noLocalFirst?: boolean; // internal: this request is the local try itself
   system?: string;
@@ -262,7 +265,7 @@ export async function generate(req: GenerateRequest): Promise<GenerateResult> {
   if (isOffline() && !(model.startsWith('x:') && localModelFor('general') && isLocalModel(model))) {
     if (isAuraModel(model)) throw new Error('Aura needs the internet (it runs through Claude). This waits until you are back online.');
     if (!model.startsWith('lyra')) {
-      const local = localModelFor(kindFor(model));
+      const local = (req.localModel && localUsable(req.localModel)) || localModelFor(kindFor(model, req.role));
       if (!local) throw new Error('Offline, and no AI on this PC is running. Start Ollama (it runs local models), then try again.');
       model = local;
     }
@@ -270,7 +273,7 @@ export async function generate(req: GenerateRequest): Promise<GenerateResult> {
   // Local first: everyday work tries the AI on this PC; hard work (Opus, Aura, High priority cards), a busy PC
   // or an answer that doesn't look right goes to the cloud as before.
   if (!isOffline() && isLocalFirst() && !req.noLocalFirst && !req.hard && !isLocalModel(model) && !model.startsWith('lyra') && !/opus/i.test(model) && !isAuraModel(model) && !pcBusy()) {
-    const local = localModelFor(kindFor(model, req.role));
+    const local = (req.localModel && localUsable(req.localModel)) || localModelFor(kindFor(model, req.role));
     if (local) {
       try {
         const r = await generate({ ...req, model: local, noLocalFirst: true });

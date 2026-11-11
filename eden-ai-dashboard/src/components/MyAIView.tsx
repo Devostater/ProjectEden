@@ -72,6 +72,8 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
   // Aura (Unreal): listed only when Aura is installed on this PC.
   const [auraModels, setAuraModels] = useState<{ id: string; label: string; provider: ProviderId }[]>([]);
   const allModels = [...MODELS, ...auraModels, ...freeModels];
+  // AI that runs on this PC (Ollama, LM Studio): used offline and in local-first mode.
+  const pcModels = freeModels.filter((m) => /^x:(ollama|lmstudio):/.test(m.id));
   const choiceModel = (c: (typeof AI_CHOICES)[number]) => c.model || freeModels[0]?.id || '';
   // Aura runs on your Claude plan, so it shows Claude's status.
   const usageOf = (p: ProviderId) => usage.find((u) => u.provider === (p === 'aura' ? 'anthropic' : p));
@@ -85,6 +87,7 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
   const [name, setName] = useState('');
   const [role, setRole] = useState('');
   const [model, setModel] = useState('gemini-3.6-flash');
+  const [localModel, setLocalModel] = useState('');
   const [instruction, setInstruction] = useState('');
   const [color, setColor] = useState(COLORS[0]);
 
@@ -97,6 +100,7 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
     setModel(agent?.model || (firstWorking ? choiceModel(firstWorking) : '') || 'gemini-3.6-flash');
     setInstruction(agent?.systemInstruction || '');
     setColor(agent?.color || COLORS[agents.length % COLORS.length]);
+    setLocalModel(agent?.localModel || '');
     setShowMore(false);
     setOpen(true);
   };
@@ -121,6 +125,7 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
       name: name.trim(),
       role: role.trim(),
       model,
+      localModel,
       color,
       avatar: name.trim().slice(0, 2).toUpperCase(),
       systemInstruction: instruction.trim() || defaultInstruction(name.trim(), role.trim()),
@@ -291,6 +296,18 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
                         {!allModels.some((m) => m.id === model) && <option value={model}>{model}</option>}
                       </select>
                     </div>
+                    {pcModels.length > 0 && (
+                      <div>
+                        <label htmlFor="tm-local" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">On this PC (offline and local first)</label>
+                        <select id="tm-local" value={localModel} onChange={(e) => setLocalModel(e.target.value)} className={inputClass}>
+                          <option value="">Automatic (picked for their role)</option>
+                          {pcModels.map((m) => (
+                            <option key={m.id} value={m.id}>{m.id.replace(/^x:[^:]+:/, '')}</option>
+                          ))}
+                        </select>
+                        <p className="mt-1 text-xs text-slate-500">Big models (gpt-oss-20b, 14B) are only used when the PC has enough free memory; otherwise a smaller one answers.</p>
+                      </div>
+                    )}
                     <div>
                       <label htmlFor="tm-inst" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Instructions</label>
                       <textarea

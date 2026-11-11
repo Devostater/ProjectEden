@@ -35,7 +35,9 @@ function modelQueue(agent: Agent): string[] {
 
 // Ask one teammate something directly, using their own AI first and other connected ones after.
 // Card work passes respectBudget so it stops at the daily budget; direct requests do not.
-import { isOffline, localModelFor, localModels, kindFor } from './offline';
+import { isOffline, localModelFor, localModels, kindFor, fitsNow } from './offline';
+import { knowledgeFor } from './knowledge';
+import { graphicsModelFor } from './graphics';
 
 export async function askTeammate(
   agent: Agent,
@@ -47,7 +49,7 @@ export async function askTeammate(
   const wantedProvider = providerFor(wanted);
   // `onlyModels` pins the AI (free-only rooms use Gemini only, never a paid fallback).
   // Offline: the local model that suits this teammate's job first, then any other model on this PC.
-  const offlineFirst = localModelFor(kindFor(wanted, agent.role));
+  const offlineFirst = (agent.localModel && localModels().includes(agent.localModel) && fitsNow(agent.localModel) ? agent.localModel : null) || localModelFor(kindFor(wanted, agent.role));
   const queue = isOffline()
     ? [...new Set([offlineFirst, ...localModels()].filter(Boolean) as string[])]
     : opts.onlyModels
@@ -58,7 +60,7 @@ export async function askTeammate(
   let lastError = 'No AI is available right now. Set one up in Account → Connections.';
   for (const model of queue) {
     try {
-      const r = await generate({ model, system, prompt, role: agent.role, maxTokens: opts.maxTokens ?? 8000 });
+      const r = await generate({ model, system, prompt: prompt + knowledgeFor(prompt.slice(-600)), role: agent.role, localModel: agent.localModel, maxTokens: opts.maxTokens ?? 8000 });
       if (r.text.trim()) {
         agent.totalRuns += 1;
         agent.totalTokens += r.tokens || 0;
@@ -91,6 +93,8 @@ function buildPrompt(project: Project, card: Card, all: Card[] = []): string {
     for (const n of card.notes.filter((n) => n.kind !== 'error')) parts.push(`--- ${n.author}:\n${n.text}`);
     parts.push('\nIf the owner left feedback after the last result, deliver a revised result that addresses it.');
   }
+  // What the studio already knows about this (other cards, Nexus plans, your docs), from the local knowledge base.
+  parts.push(knowledgeFor(`${card.title} ${card.details || ''} ${project.name}`, `Card: ${card.title} (`));
   return parts.join('\n');
 }
 
@@ -109,9 +113,11 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
   let result: { text: string; provider: ProviderId } | null = null;
   let lastError = 'No AI is available right now.';
   const wantedProvider = providerFor(agent.model || defaultModel());
-  for (const model of modelQueue(agent)) {
+  // Heavy graphics work goes to Unreal through Aura first, when it's open (see graphics.ts).
+  const viaUnreal = graphicsModelFor(card, getStore().agents, agent);
+  for (const model of [...(viaUnreal ? [viaUnreal] : []), ...modelQueue(agent)]) {
     try {
-      const r = await generate({ model, system: systemFor(agent), prompt: buildPrompt(project, card, getStore().cards || []), role: agent.role, hard: card.priority === 'high', maxTokens: 8000 });
+      const r = await generate({ model, system: systemFor(agent), prompt: buildPrompt(project, card, getStore().cards || []), role: agent.role, localModel: agent.localModel, hard: card.priority === 'high', maxTokens: 8000 });
       if (r.text.trim()) {
         agent.totalRuns += 1;
         agent.totalTokens += r.tokens || 0;

@@ -39,6 +39,10 @@ export async function auraRunning(): Promise<boolean> {
   }
   return up.ok;
 }
+// Last known answer, without waiting (refreshed whenever auraRunning() is called; kept fresh below).
+export const auraLastKnownUp = () => up.ok && Date.now() - up.at < 120000;
+setInterval(() => auraRunning().catch(() => {}), 60000).unref?.();
+
 export const auraProject = () => path.basename(up.project || '', '.uproject');
 
 // Arguments for `claude -p` that give it Aura's tools.

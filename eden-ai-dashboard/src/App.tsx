@@ -10,6 +10,8 @@ import { BottomPanel } from './components/BottomPanel.tsx';
 import { NexusView } from './components/NexusView.tsx';
 import { UpdatesView } from './components/UpdatesView.tsx';
 import { DevicesView } from './components/DevicesView.tsx';
+import { StatusBar } from './components/StatusBar.tsx';
+import { TITLES } from './components/Header.tsx';
 import { BusyBanner } from './components/BusyBanner.tsx';
 import { OfflineBanner } from './components/Offline.tsx';
 import { RemoteView } from './components/RemoteView.tsx';
@@ -158,6 +160,8 @@ export default function App() {
             <button onClick={() => setOutdated(false)} className="text-sm underline">Hide</button>
           </div>
         )}
+
+        <StatusBar title={TITLES[activeTab] || ''} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} />
 
         <main className="relative z-10 min-h-0 flex-1 overflow-y-auto">
           <OfflineBanner />

@@ -24,3 +24,4 @@ coverage/
 .eden-busy.json
 .eden-offline.json
 .eden-split.json
+.eden-knowledge.json

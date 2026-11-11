@@ -17,7 +17,7 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       // The hub's own data and settings files change while it runs; they are not part of the page.
-      watch: process.env.DISABLE_HMR === 'true' ? null : { ignored: ['**/.env*', '**/.nexusflow-store.json', '**/.eden-usage.json', '**/.eden-pairing.json', '**/.eden-control.json', '**/.eden-updates.json', '**/.eden-codebases.json', '**/.eden-devices.json', '**/.eden-ai.json', '**/.eden-main.json', '**/.eden-ideas.json', '**/.eden-logs/**', '**/.eden-aura-mcp.json', '**/.eden-busy.json', '**/.eden-offline.json', '**/.eden-split.json', '**/mobile/**'] },
+      watch: process.env.DISABLE_HMR === 'true' ? null : { ignored: ['**/.env*', '**/.nexusflow-store.json', '**/.eden-usage.json', '**/.eden-pairing.json', '**/.eden-control.json', '**/.eden-updates.json', '**/.eden-codebases.json', '**/.eden-devices.json', '**/.eden-ai.json', '**/.eden-main.json', '**/.eden-ideas.json', '**/.eden-logs/**', '**/.eden-aura-mcp.json', '**/.eden-busy.json', '**/.eden-offline.json', '**/.eden-split.json', '**/.eden-knowledge.json', '**/knowledge/**', '**/mobile/**'] },
     },
   };
 });

@@ -15,6 +15,8 @@ import { registerUpdateRoutes } from './updates';
 import { registerRestartRoutes } from './restart';
 import { registerBusyRoutes } from './busy';
 import { registerOfflineRoutes } from './offline';
+import { registerKnowledgeRoutes, knowledgeFor } from './knowledge';
+import { registerGraphicsRoutes } from './graphics';
 import { registerBackupRoutes } from './backup';
 import { registerDeviceRoutes } from './devices';
 import { registerTeamReformRoutes } from './teamReform';
@@ -422,7 +424,7 @@ async function startServer() {
       let lastError = `${providerLabel(wantedProvider)} isn't available right now, and no other AI is connected. Set one up in Account → Connections.`;
       for (const m of queue) {
         try {
-          const r = await generate({ model: m, system: systemFor(agent), messages: history });
+          const r = await generate({ model: m, system: systemFor(agent) + knowledgeFor(history[history.length - 1]?.content || ''), messages: history });
           if (agent) {
             agent.totalRuns += 1;
             agent.totalTokens += r.tokens || 0;
@@ -471,6 +473,8 @@ async function startServer() {
   registerRestartRoutes(app);
   registerBusyRoutes(app);
   registerOfflineRoutes(app);
+  registerKnowledgeRoutes(app, () => store);
+  registerGraphicsRoutes(app, () => store, () => saveStore(store));
   if (!process.env.EDEN_DEVICE_HUB) registerBackupRoutes(app);
   registerControlRoutes(app, () => ({ cards: runningCards(), rooms: runningRooms() }));
   registerNexusRoutes(app, () => store, () => saveStore(store));
@@ -694,6 +698,7 @@ Task:
       systemInstruction: payload.systemInstruction,
       color: payload.color || '#6366F1',
       connectedTools: payload.connectedTools || ['artifact_vault'],
+      localModel: payload.localModel || undefined,
       webhookUrl: payload.webhookUrl || '',
       githubRepo: payload.githubRepo || '',
       totalTokens: 0,

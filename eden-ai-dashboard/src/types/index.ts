@@ -4,6 +4,7 @@ export interface Agent {
   role: string;
   avatar: string;
   model: string; // any id from /api/models (Claude, Gemini, OpenAI)
+  localModel?: string; // AI on this PC used offline and in local-first mode; empty = picked by role
   systemInstruction: string;
   color: string;
   connectedTools: string[];

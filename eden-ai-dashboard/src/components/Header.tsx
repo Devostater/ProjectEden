@@ -2,7 +2,7 @@ import React from 'react';
 import { Sun, Moon } from 'lucide-react';
 import type { AppTab } from './Sidebar.tsx';
 
-const TITLES: Record<AppTab, string> = {
+export const TITLES: Record<AppTab, string> = {
   home: 'Dashboard',
   projects: 'Projects',
   nexus: 'Nexus',

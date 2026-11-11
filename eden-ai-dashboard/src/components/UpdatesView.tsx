@@ -210,6 +210,7 @@ export const UpdatesView: React.FC = () => {
   const [newName, setNewName] = useState('');
   const [newDir, setNewDir] = useState('');
   const [request, setRequest] = useState('');
+  const [onThisPc, setOnThisPc] = useState(false);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
@@ -248,7 +249,7 @@ export const UpdatesView: React.FC = () => {
     setError('');
     setNote('');
     try {
-      const d = await post('/api/updates', { request, codebaseId: target });
+      const d = await post('/api/updates', { request, codebaseId: target, local: onThisPc });
       setRequest('');
       setOpenId(d.job.id);
       live.current = true;
@@ -365,10 +366,14 @@ export const UpdatesView: React.FC = () => {
               {idea}
             </button>
           ))}
+          <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-sm text-slate-600 dark:text-slate-300" title="Claude Code runs on gpt-oss on this PC (like 'ollama launch claude'): free and works offline, but slower and less reliable than Claude.">
+            <input type="checkbox" checked={onThisPc} onChange={(e) => setOnThisPc(e.target.checked)} className="h-4 w-4 accent-emerald-600" />
+            Run on this PC (free)
+          </label>
           <button
             onClick={start}
-            disabled={!request.trim() || !claudeReady}
-            className="ml-auto flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
+            disabled={!request.trim() || (!claudeReady && !onThisPc)}
+            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
           >
             {busy ? <ListPlus className="h-4 w-4" /> : <Wand2 className="h-4 w-4" />} {busy ? 'Add to the queue' : 'Make this change'}
           </button>
