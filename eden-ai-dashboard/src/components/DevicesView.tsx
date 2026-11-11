@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Tablet, Smartphone, Cable, Cpu, MemoryStick, BatteryMedium, ExternalLink, Unplug, Loader2, RefreshCw, Server, Wifi, Crown, Monitor, ChevronDown, Bot } from 'lucide-react';
+import { Tablet, Smartphone, Cable, Cpu, MemoryStick, BatteryMedium, ExternalLink, Unplug, Loader2, RefreshCw, Server, Wifi, Crown, Monitor, ChevronDown, Bot, Plus } from 'lucide-react';
 import { api } from '../api.ts';
 import { useBusy } from './BusyBanner.tsx';
 import { RemoteDevices } from './RemoteDevices.tsx';
+import { AddDevice } from './AddDevice.tsx';
 
 interface Device {
   serial: string;
@@ -108,9 +109,24 @@ export const DevicesView: React.FC = () => {
   };
   useEffect(() => {
     load();
-    const t = setInterval(() => document.visibilityState === 'visible' && load(), 10000);
-    return () => clearInterval(t);
+    // Live: the hub tells this page the moment a device is plugged in or out. A slow check stays as a backup.
+    let events: EventSource | null = null;
+    try {
+      events = new EventSource('/api/devices/events');
+      events.onmessage = (e) => {
+        if (e.data !== 'change') return;
+        load();
+        setTimeout(load, 2500); // again once it's connected
+        setTimeout(() => loadHubs(true), 4000);
+      };
+    } catch {}
+    const t = setInterval(() => document.visibilityState === 'visible' && load(), 30000);
+    return () => {
+      clearInterval(t);
+      events?.close();
+    };
   }, []);
+  const [adding, setAdding] = useState(false);
 
   const act = async (d: Device, action: string, done: string) => {
     setBusy(`${d.serial}:${action}`);
@@ -128,18 +144,23 @@ export const DevicesView: React.FC = () => {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-4 sm:p-8">
-      <div className="flex items-start justify-between gap-4">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1 basis-64">
           <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
             <Tablet className="h-6 w-6 text-indigo-500" /> Devices
           </h1>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-            Plug your phone or tablet into this computer by USB. With a cable you need no Wi-Fi and no pairing code, and it connects by itself each time you plug it in. Without a cable, use the Remote tab.
+            Your phones and tablets. Plugged-in devices connect by themselves and this page updates live.
           </p>
         </div>
-        <button onClick={load} aria-label="Look for devices again" className="rounded-lg border border-slate-300 p-2 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
-          <RefreshCw className="h-4 w-4" />
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button onClick={() => setAdding(true)} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500">
+            <Plus className="h-4 w-4" /> Add a device
+          </button>
+          <button onClick={load} aria-label="Look for devices again" className="rounded-lg border border-slate-300 p-2 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+            <RefreshCw className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {hubs && hubs.main !== 'pc' && (
@@ -349,6 +370,7 @@ export const DevicesView: React.FC = () => {
       )}
 
       <RemoteDevices folded={folded} onToggle={toggleFold} usb={(devices || []).filter((d) => d.wifiIp).map((d) => ({ ip: d.wifiIp!, name: d.name || d.model || 'USB device' }))} />
+      {adding && <AddDevice devices={devices || []} onClose={() => setAdding(false)} />}
     </div>
   );
 };

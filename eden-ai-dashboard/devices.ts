@@ -2,12 +2,12 @@
 // For each one the hub can route its own address (and LYRA's) through the cable, so the device opens
 // http://localhost:3000 and counts as this computer: no Wi-Fi and no pairing code needed.
 // Devices connect by themselves when plugged in (unless you pressed Disconnect on them).
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import type { Express, Request } from 'express';
+import type { Express, Request, Response } from 'express';
 import { logActivity } from './activity';
 import { lanAddresses, pairingCode } from './pairing';
 
@@ -194,7 +194,43 @@ export function registerDeviceRoutes(app: Express) {
     }
   };
   setTimeout(autoConnect, 2000).unref?.(); // a phone that was already plugged in when the hub started
-  setInterval(autoConnect, 10000).unref?.();
+  setInterval(autoConnect, 30000).unref?.(); // backup check; plugging in is noticed straight away below
+
+  // Live updates: adb tells us the moment a device is plugged in, unplugged or allowed, so the hub connects
+  // it straight away and open Devices pages refresh by themselves (no polling).
+  const watchers = new Set<Response>();
+  const tell = () => {
+    for (const res of watchers) res.write('data: change\n\n');
+  };
+  const track = () => {
+    if (!adb(['version']).ok) return void setTimeout(track, 60000).unref?.();
+    const child = spawn(adbPath(), ['track-devices'], { windowsHide: true });
+    let last = '';
+    child.stdout.on('data', (d) => {
+      const now = d.toString();
+      if (now === last) return;
+      last = now;
+      setTimeout(() => {
+        autoConnect();
+        tell();
+      }, 1200); // give a new device a moment to be ready
+    });
+    child.on('error', () => {});
+    child.on('exit', () => setTimeout(track, 5000).unref?.());
+  };
+  track();
+
+  app.get('/api/devices/events', (req, res) => {
+    if (!isLocal(req)) return res.status(403).end();
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.write('data: hello\n\n');
+    watchers.add(res);
+    const ping = setInterval(() => res.write(': ping\n\n'), 25000);
+    req.on('close', () => {
+      clearInterval(ping);
+      watchers.delete(res);
+    });
+  });
 
   app.get('/api/this-pc', (req, res) => {
     if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });

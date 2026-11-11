@@ -8,7 +8,7 @@ interface PairingInfo {
 }
 
 // A QR code the phone's camera can open: the link carries the pairing code, so one scan pairs it.
-const QR: React.FC<{ text: string }> = ({ text }) => {
+export const QR: React.FC<{ text: string }> = ({ text }) => {
   const [src, setSrc] = useState('');
   useEffect(() => {
     QRCode.toDataURL(text, { margin: 1, width: 220, color: { dark: '#0f172a', light: '#ffffff' } })
