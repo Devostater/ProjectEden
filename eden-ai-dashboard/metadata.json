@@ -1,0 +1,6 @@
+{
+  "name": "EDEN AI — Calm Space & Game Dev Sanctuary",
+  "description": "The simplest multi-agent AI tool. Calm cosmic space with floating data bubbles, notifications, inspirational quotes, and guided next steps for game development.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

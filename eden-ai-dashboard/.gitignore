@@ -1,0 +1,12 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+.eden-usage.json
+
+# Runtime data (your projects, cards, team and Nexus room). Changes constantly; not source code.
+.nexusflow-store.json
