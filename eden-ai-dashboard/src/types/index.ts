@@ -126,6 +126,7 @@ export interface Project {
   status: 'active' | 'paused' | 'done';
   repo?: string; // "owner/name" on GitHub
   autoRun?: boolean; // AI picks up assigned cards in Ready (on unless set to false)
+  codebaseId?: string; // the code this project changes (see Code updates), e.g. "lyra"
   branches?: Branch[]; // workstreams; every project has at least "Main"
   createdAt: string;
   updatedAt: string;

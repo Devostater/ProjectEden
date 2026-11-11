@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { UsageBar, useProviderUsage } from './UsageBars.tsx';
-import { CheckCircle2, Circle, Save, Loader2, RefreshCw, ChevronDown, LogIn } from 'lucide-react';
+import { CheckCircle2, Circle, Save, Loader2, RefreshCw, ChevronDown, LogIn, Power, Archive } from 'lucide-react';
+import { BackupsCard } from './BackupsCard.tsx';
+import { FreeAIs } from './FreeAIs.tsx';
 
 interface Setting {
   key: string;
@@ -47,55 +49,113 @@ const Code = ({ children }: { children: string }) => (
 );
 
 // Pairing a phone: the code and the addresses the Android app (or a phone browser) connects to.
-// Only the computer running the hub can see this; on a phone it shows nothing.
-const PhoneCard: React.FC = () => {
-  const [info, setInfo] = useState<{ code: string; addresses: string[] } | null>(null);
+// Restart the hub without closing and reopening Start Eden. Waits for it to come back, then reloads the page.
+const RestartCard: React.FC = () => {
   const [confirm, setConfirm] = useState(false);
+  const [state, setState] = useState<'idle' | 'restarting' | 'failed'>('idle');
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetch('/api/pairing')
-      .then((r) => (r.ok ? r.json() : null))
-      .then(setInfo)
-      .catch(() => {});
-  }, []);
-
-  if (!info) return null;
-  const reset = async () => {
+  const restart = async () => {
     setConfirm(false);
-    const d = await fetch('/api/pairing/reset', { method: 'POST' }).then((r) => r.json());
-    setInfo(d);
+    setError('');
+    setState('restarting');
+    try {
+      const res = await fetch('/api/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not restart the hub.');
+      // The hub goes away for a few seconds. Wait for it to stop, then for it to answer again.
+      await new Promise((r) => setTimeout(r, 3000));
+      for (let i = 0; i < 40; i++) {
+        const up = await fetch('/api/settings').then((r) => r.ok).catch(() => false);
+        if (up) return window.location.reload();
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      throw new Error('The hub has not come back yet. Check the hub window on your computer, or close and reopen Start Eden.');
+    } catch (err: any) {
+      setError(err.message);
+      setState('failed');
+    }
   };
 
   return (
     <div>
-      <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Your phone</h2>
-      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Open the Eden AI Hub app on your phone, on the same Wi-Fi as this computer, and enter these.</p>
-      <div className="mt-3 space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-        <div>
-          <div className="text-xs text-slate-500">Hub address</div>
-          {info.addresses.length ? (
-            info.addresses.map((a) => (
-              <div key={a} className="font-mono text-base text-slate-900 dark:text-white">{a}</div>
-            ))
-          ) : (
-            <div className="text-sm text-amber-600">This computer isn't on a network right now.</div>
-          )}
-        </div>
-        <div>
-          <div className="text-xs text-slate-500">Pairing code</div>
-          <div className="font-mono text-2xl tracking-[0.3em] text-slate-900 dark:text-white">{info.code}</div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 text-sm dark:border-slate-800">
-          {confirm ? (
-            <>
-              <span className="text-slate-600 dark:text-slate-300">Make a new code? Paired phones will need the new one.</span>
-              <button onClick={reset} className="rounded-md bg-red-600 px-2.5 py-1 font-medium text-white hover:bg-red-500">New code</button>
-              <button onClick={() => setConfirm(false)} className="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Keep</button>
-            </>
-          ) : (
-            <button onClick={() => setConfirm(true)} className="text-slate-500 hover:underline">Make a new code (signs out paired phones)</button>
-          )}
-        </div>
+      <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Restart the hub</h2>
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use this after a code update that says the hub needs a restart. It closes and starts the hub again for you.</p>
+      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        {confirm ? (
+          <>
+            <span className="text-sm text-slate-600 dark:text-slate-300">Restart now? Anything the team is writing right now will stop.</span>
+            <button onClick={restart} className="rounded-md bg-red-600 px-2.5 py-1 text-sm font-medium text-white hover:bg-red-500">Restart</button>
+            <button onClick={() => setConfirm(false)} className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
+          </>
+        ) : (
+          <button
+            onClick={() => setConfirm(true)}
+            disabled={state === 'restarting'}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            {state === 'restarting' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
+            {state === 'restarting' ? 'Restarting… this page reloads when the hub is back' : 'Restart hub'}
+          </button>
+        )}
+        {error && <span role="alert" className="text-sm text-red-500">{error}</span>}
+      </div>
+    </div>
+  );
+};
+
+// Save a copy of the hub's files on a separate "eden-backups" branch. Your own files and branch aren't touched.
+const BackupCard: React.FC = () => {
+  const [last, setLast] = useState<{ at: string; files: number; changed: boolean; auto: boolean } | null>(null);
+  const [running, setRunning] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/backup')
+      .then((r) => r.json())
+      .then((d) => setLast(d.last || null))
+      .catch(() => {});
+  }, []);
+
+  const backUp = async () => {
+    setRunning(true);
+    setMessage(null);
+    try {
+      const res = await fetch('/api/backup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not back up your work.');
+      setLast({ at: data.at, files: data.files, changed: data.changed, auto: false });
+      setMessage({ ok: true, text: data.changed ? `Backed up ${data.files} files.` : `Backed up ${data.files} files. Nothing had changed since the last backup.` });
+    } catch (err: any) {
+      setMessage({ ok: false, text: err.message });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Back up my work</h2>
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        Saves a copy of the hub's files in a separate place (a git branch called eden-backups). Your passwords, settings and project data are never included. It also happens by itself once a day while the hub is running.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+        <button
+          onClick={backUp}
+          disabled={running}
+          className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
+          {running ? 'Backing up…' : 'Back up my work'}
+        </button>
+        <span className="text-sm text-slate-500 dark:text-slate-400">
+          {last ? `Last backup: ${new Date(last.at).toLocaleString()} (${last.files} files${last.auto ? ', automatic' : ''})` : 'Last backup: none yet'}
+        </span>
+        {message && (
+          <span role={message.ok ? 'status' : 'alert'} className={`text-sm ${message.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>
+            {message.text}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -266,7 +326,13 @@ export const SettingsView: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
         })}
       </div>
 
-      <PhoneCard />
+      <FreeAIs />
+
+      <BackupsCard />
+
+      <RestartCard />
+
+      <BackupCard />
 
       <div>
         <h2 className="text-lg font-semibold text-slate-900 dark:text-white">GitHub</h2>
@@ -281,7 +347,7 @@ export const SettingsView: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
             <span className={`text-sm ${github?.connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}`}>
               {github?.connected ? 'Connected' : 'Not connected'}
             </span>
-            {github?.connected && github.source === 'saved' && (
+            {github?.source === 'saved' && (
               <button onClick={() => save({ GITHUB_TOKEN: '' })} disabled={saving} className="text-xs text-slate-500 hover:text-red-500">
                 Disconnect
               </button>
@@ -308,6 +374,7 @@ export const SettingsView: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
                   onClick={async () => {
                     await save({ GITHUB_TOKEN: githubToken.trim() });
                     setGithubToken('');
+                    await loadGithub(true);
                   }}
                   disabled={!githubToken.trim() || saving}
                   className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"

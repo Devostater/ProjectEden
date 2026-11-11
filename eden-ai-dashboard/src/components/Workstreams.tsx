@@ -1,16 +1,12 @@
 // Workstreams on a project board: the tab row (All + each workstream) and the form for one workstream.
 import React, { useEffect, useState } from 'react';
+import { api } from '../api.ts';
 import { Plus, Settings2, X, Trash2 } from 'lucide-react';
 import type { Agent, Branch, Card, Project } from '../types/index.ts';
 
 const COLORS = ['#6366F1', '#06B6D4', '#10B981', '#F97316', '#EC4899', '#8B5CF6', '#EAB308', '#F43F5E'];
 
-async function send(method: string, url: string, body?: unknown) {
-  const res = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-  return data;
-}
+const send = (method: string, url: string, body?: unknown) => api(method, url, body);
 
 export const WorkstreamTabs: React.FC<{
   project: Project;

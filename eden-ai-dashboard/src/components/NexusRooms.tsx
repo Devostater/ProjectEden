@@ -1,5 +1,6 @@
 // The list of Nexus rooms (pin, drag to reorder, open) and the form for creating or changing a room.
 import React, { useEffect, useState } from 'react';
+import { api } from '../api.ts';
 import { Plus, Pin, GripVertical, X, Trash2, Loader2, Leaf } from 'lucide-react';
 import type { Agent } from '../types/index.ts';
 
@@ -16,12 +17,7 @@ export interface RoomSummary {
   running: boolean;
 }
 
-const send = async (method: string, url: string, body?: unknown) => {
-  const res = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-  return data;
-};
+const send = (method: string, url: string, body?: unknown) => api(method, url, body);
 
 // Pinned rooms first, then the rest; each group in the order you dragged them.
 export const sortRooms = (rooms: RoomSummary[]) => [...rooms].sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.order - b.order);

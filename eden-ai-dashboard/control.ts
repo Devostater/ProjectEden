@@ -19,6 +19,17 @@ try {
 const listeners: Array<(paused: boolean) => void> = [];
 
 export const aiPaused = () => paused;
+
+// Pause or resume from code (e.g. when the main server moves to another device).
+export function setPaused(next: boolean, note?: string) {
+  if (next === paused) return;
+  paused = next;
+  try {
+    fs.writeFileSync(FILE, JSON.stringify({ paused }), 'utf-8');
+  } catch {}
+  logActivity(paused ? 'error' : 'done', note || (paused ? 'AI paused.' : 'AI resumed.'));
+  for (const fn of listeners) fn(paused);
+}
 export const onPauseChange = (fn: (paused: boolean) => void) => listeners.push(fn);
 
 export function registerControlRoutes(app: Express, runningCount: () => { cards: number; rooms: number }) {

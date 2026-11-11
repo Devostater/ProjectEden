@@ -11,7 +11,7 @@ const TABS: { id: AppTab; label: string; icon: React.ElementType }[] = [
   { id: 'chat', label: 'Chat', icon: MessagesSquare },
 ];
 
-export const MobileNav: React.FC<{ activeTab: AppTab; setActiveTab: (t: AppTab) => void; onMore: () => void }> = ({ activeTab, setActiveTab, onMore }) => {
+export const MobileNav: React.FC<{ activeTab: AppTab; setActiveTab: (t: AppTab) => void; onMore: () => void; reviewCount?: number }> = ({ activeTab, setActiveTab, onMore, reviewCount = 0 }) => {
   const inMore = !TABS.some((t) => t.id === activeTab);
   const item = (active: boolean) =>
     `flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[11px] ${active ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400'}`;
@@ -22,8 +22,19 @@ export const MobileNav: React.FC<{ activeTab: AppTab; setActiveTab: (t: AppTab) 
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       {TABS.map(({ id, label, icon: Icon }) => (
-        <button key={id} onClick={() => setActiveTab(id)} aria-current={activeTab === id ? 'page' : undefined} className={item(activeTab === id)}>
-          <Icon className="h-5 w-5" />
+        <button
+          key={id}
+          onClick={() => setActiveTab(id)}
+          aria-current={activeTab === id ? 'page' : undefined}
+          aria-label={id === 'projects' && reviewCount > 0 ? `${label}, ${reviewCount} waiting for your review` : undefined}
+          className={item(activeTab === id)}
+        >
+          <span className="relative">
+            <Icon className="h-5 w-5" />
+            {id === 'projects' && reviewCount > 0 && (
+              <span className="absolute -right-2.5 -top-1.5 min-w-4 rounded-full bg-amber-500 px-1 text-center text-[10px] font-semibold leading-4 tabular-nums text-white">{reviewCount > 99 ? '99+' : reviewCount}</span>
+            )}
+          </span>
           {label}
         </button>
       ))}

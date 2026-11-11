@@ -144,7 +144,7 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
     if (stillOurs) current.column = 'todo';
     current.runState = 'failed';
     current.runMessage = lastError;
-    logActivity('error', `${agent.name} could not finish "${current.title}" (${project.name}): ${lastError}`);
+    logActivity('error', `${agent.name} could not finish "${current.title}" (${project.name}): ${lastError}`, { reason: lastError, retry: { kind: 'card', id: current.id } });
   }
   current.updatedAt = now();
   save();

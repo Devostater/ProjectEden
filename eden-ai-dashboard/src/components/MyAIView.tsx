@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Plus, Trash2, X, ChevronDown, MessageSquare } from 'lucide-react';
 import type { Agent } from '../types/index.ts';
 import { useProviderUsage, type ProviderUsage } from './UsageBars.tsx';
+import { ReformTeam } from './ReformTeam.tsx';
 
 interface MyAIViewProps {
   agents: Agent[];
@@ -9,18 +10,25 @@ interface MyAIViewProps {
   onDeleteAgent: (id: string) => Promise<void>;
   onSelectAgentForSwarm: (agentId: string) => void; // opens Chat addressed to this teammate
   request?: { kind: 'new-teammate' | 'edit-teammate'; id?: string; n: number } | null; // from the sidebar
+  onTeamChanged?: () => void | Promise<void>; // reload the team after "Reform team"
 }
 
-type ProviderId = 'anthropic' | 'google' | 'openai';
+type ProviderId = 'lyra' | 'anthropic' | 'google' | 'openai' | 'extra' | 'aura';
 
-// The three AIs a teammate can run on, and the model each uses unless you pick another under "More options".
+// The AIs a teammate can run on (LYRA = your own local AI on this PC), and the model each uses unless you pick another under "More options".
 const AI_CHOICES: { id: ProviderId; name: string; model: string; badge: string }[] = [
+  { id: 'lyra', name: 'LYRA', model: 'lyra', badge: 'text-fuchsia-500 bg-fuchsia-500/10' },
   { id: 'anthropic', name: 'Claude', model: 'claude-sonnet-5-5', badge: 'text-orange-500 bg-orange-500/10' },
   { id: 'google', name: 'Gemini', model: 'gemini-3.6-flash', badge: 'text-sky-500 bg-sky-500/10' },
   { id: 'openai', name: 'ChatGPT', model: 'gpt-5', badge: 'text-emerald-500 bg-emerald-500/10' },
+  // Free AIs (Account → Connections): the model is filled in from what's available.
+  { id: 'extra', name: 'Free AI', model: '', badge: 'text-lime-600 bg-lime-500/10' },
+  // Aura (Unreal): Claude with Aura's Unreal tools. Only shown when Aura is installed.
+  { id: 'aura', name: 'Aura (Unreal)', model: 'aura', badge: 'text-violet-500 bg-violet-500/10' },
 ];
 
 const MODELS: { id: string; label: string; provider: ProviderId }[] = [
+  { id: 'lyra', label: 'LYRA (local, picks the best free model)', provider: 'lyra' },
   { id: 'claude-opus-5-5', label: 'Claude Opus 5.5 (deepest thinking)', provider: 'anthropic' },
   { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 (balanced)', provider: 'anthropic' },
   { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 (fast)', provider: 'anthropic' },
@@ -33,7 +41,7 @@ const ROLE_IDEAS = ['Music & Sound', 'QA & Testing', 'Translation', 'Legal & Lic
 const COLORS = ['#06B6D4', '#F43F5E', '#84CC16', '#D97706', '#3B82F6', '#8B5CF6', '#10B981', '#EC4899'];
 const LEAD_ID = 'agent-synthesizer';
 
-const providerOf = (model: string): ProviderId => (model.startsWith('claude') ? 'anthropic' : model.startsWith('gemini') ? 'google' : 'openai');
+const providerOf = (model: string): ProviderId => (model.startsWith('aura') ? 'aura' : model.startsWith('x:') ? 'extra' : model.startsWith('lyra') ? 'lyra' : model.startsWith('claude') ? 'anthropic' : model.startsWith('gemini') ? 'google' : 'openai');
 
 function aiStatus(u?: ProviderUsage): { text: string; ok: boolean } {
   if (!u) return { text: '', ok: true };
@@ -48,9 +56,25 @@ const defaultInstruction = (name: string, role: string) =>
 const inputClass =
   'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white';
 
-export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDeleteAgent, onSelectAgentForSwarm, request }) => {
+export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDeleteAgent, onSelectAgentForSwarm, request, onTeamChanged }) => {
   const usage = useProviderUsage();
-  const usageOf = (p: ProviderId) => usage.find((u) => u.provider === p);
+  // Free AI models found in Account → Connections (Google AI Studio, Ollama on this PC, …).
+  const [freeModels, setFreeModels] = useState<{ id: string; label: string; provider: ProviderId }[]>([]);
+  useEffect(() => {
+    fetch('/api/models')
+      .then((r) => r.json())
+      .then((d) => {
+        setFreeModels((d.models || []).filter((m: any) => m.provider === 'extra'));
+        setAuraModels((d.models || []).filter((m: any) => String(m.id).startsWith('aura')).map((m: any) => ({ ...m, provider: 'aura' })));
+      })
+      .catch(() => {});
+  }, []);
+  // Aura (Unreal): listed only when Aura is installed on this PC.
+  const [auraModels, setAuraModels] = useState<{ id: string; label: string; provider: ProviderId }[]>([]);
+  const allModels = [...MODELS, ...auraModels, ...freeModels];
+  const choiceModel = (c: (typeof AI_CHOICES)[number]) => c.model || freeModels[0]?.id || '';
+  // Aura runs on your Claude plan, so it shows Claude's status.
+  const usageOf = (p: ProviderId) => usage.find((u) => u.provider === (p === 'aura' ? 'anthropic' : p));
 
   const [editing, setEditing] = useState<Agent | null>(null);
   const [open, setOpen] = useState(false);
@@ -69,8 +93,8 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
     setName(agent?.name || '');
     setRole(agent?.role || '');
     // New teammates start on the first AI that is working right now.
-    const firstWorking = AI_CHOICES.find((c) => aiStatus(usageOf(c.id)).ok && usageOf(c.id)?.mode !== 'off');
-    setModel(agent?.model || firstWorking?.model || 'gemini-3.6-flash');
+    const firstWorking = AI_CHOICES.find((c) => choiceModel(c) && aiStatus(usageOf(c.id)).ok && usageOf(c.id)?.mode !== 'off');
+    setModel(agent?.model || (firstWorking ? choiceModel(firstWorking) : '') || 'gemini-3.6-flash');
     setInstruction(agent?.systemInstruction || '');
     setColor(agent?.color || COLORS[agents.length % COLORS.length]);
     setShowMore(false);
@@ -128,9 +152,12 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
           <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Team</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Click a teammate to change them.</p>
         </div>
-        <button onClick={() => openForm()} className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
-          <Plus className="h-4 w-4" /> Add teammate
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <ReformTeam onApplied={onTeamChanged || (() => {})} />
+          <button onClick={() => openForm()} className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
+            <Plus className="h-4 w-4" /> Add teammate
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -225,14 +252,14 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
               <div>
                 <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Which AI?</span>
                 <div className="grid grid-cols-3 gap-2">
-                  {AI_CHOICES.map((c) => {
+                  {AI_CHOICES.filter((c) => (c.id !== 'extra' || freeModels.length) && (c.id !== 'aura' || auraModels.length)).map((c) => {
                     const status = aiStatus(usageOf(c.id));
                     const selected = chosenProvider === c.id;
                     return (
                       <button
                         key={c.id}
                         type="button"
-                        onClick={() => setModel(c.model)}
+                        onClick={() => setModel(choiceModel(c))}
                         aria-pressed={selected}
                         className={`rounded-lg border-2 px-3 py-2.5 text-left ${
                           selected ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40' : 'border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-slate-600'
@@ -258,10 +285,10 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
                     <div>
                       <label htmlFor="tm-model" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Exact model</label>
                       <select id="tm-model" value={model} onChange={(e) => setModel(e.target.value)} className={inputClass}>
-                        {MODELS.map((m) => (
+                        {allModels.map((m) => (
                           <option key={m.id} value={m.id}>{m.label}</option>
                         ))}
-                        {!MODELS.some((m) => m.id === model) && <option value={model}>{model}</option>}
+                        {!allModels.some((m) => m.id === model) && <option value={model}>{model}</option>}
                       </select>
                     </div>
                     <div>

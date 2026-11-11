@@ -14,6 +14,7 @@ import type { Express } from 'express';
 import { askTeammate } from './cardRunner';
 import { logActivity } from './activity';
 import { providerFor } from './providers';
+import { freeFallbacks } from './extraAI';
 import { aiPaused, onPauseChange } from './control';
 import type { Agent } from './src/types/index';
 
@@ -144,10 +145,13 @@ export function registerNexusRoutes(app: Express, getStore: () => NexusStore, sa
     return { text: text.replace(pattern, '').trim(), names };
   };
 
-  // In a free-only room, a member whose own AI is Gemini keeps their model; everyone else uses free Gemini.
+  // In a free-only room, a member whose own AI is Gemini keeps their model; everyone else uses free Gemini, then other free AIs.
   const modelsFor = (room: NexusRoom, agent: Agent) => {
     if (!room.freeOnly) return undefined;
-    return providerFor(agent.model) === 'google' ? [agent.model, ...FREE_MODELS.filter((m) => m !== agent.model)] : FREE_MODELS;
+    // Free AIs (Google AI Studio models, Ollama on this PC, free tiers) take over when Gemini's free limit runs out.
+    const free = [...FREE_MODELS, ...freeFallbacks()];
+    const own = providerFor(agent.model) === 'google' || free.includes(agent.model);
+    return own ? [agent.model, ...free.filter((m) => m !== agent.model)] : free;
   };
 
   async function speak(room: NexusRoom, state: Live, agent: Agent, system: string): Promise<{ text: string; via: string } | null> {

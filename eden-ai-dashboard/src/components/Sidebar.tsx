@@ -16,6 +16,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Wand2,
+  Tablet,
+  Wifi,
 } from 'lucide-react';
 import { UsageBars } from './UsageBars.tsx';
 import { PauseAI } from './PauseAI.tsx';
@@ -25,7 +27,7 @@ import type { ProjectsApi } from '../projectsStore.ts';
 import { RoomList } from './NexusRooms.tsx';
 import type { Agent, DAGPipeline } from '../types/index.ts';
 
-export type AppTab = 'home' | 'projects' | 'nexus' | 'chat' | 'my-ai' | 'pipelines' | 'files' | 'updates' | 'settings';
+export type AppTab = 'home' | 'projects' | 'nexus' | 'chat' | 'my-ai' | 'pipelines' | 'files' | 'updates' | 'devices' | 'remote' | 'settings';
 
 // What the sidebar asks a page to open, e.g. "the new-project form" or "this teammate".
 export type SidebarRequest =
@@ -125,17 +127,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   // A plain page link. Collapsed, the sidebar is a strip of icons; each keeps its name as a tooltip.
-  const navButton = (id: AppTab, label: string, Icon: React.ElementType) => (
+  const navButton = (id: AppTab, label: string, Icon: React.ElementType, badgeCount = 0) => (
     <button
       key={id}
       onClick={() => setActiveTab(id)}
       aria-current={activeTab === id ? 'page' : undefined}
-      aria-label={collapsed ? label : undefined}
-      title={collapsed ? label : undefined}
-      className={itemClass(activeTab === id, collapsed)}
+      aria-label={collapsed ? (badgeCount > 0 ? `${label}, ${badgeCount} waiting for your review` : label) : undefined}
+      title={collapsed ? (badgeCount > 0 ? `${label} · ${badgeCount} waiting for your review` : label) : undefined}
+      className={`${itemClass(activeTab === id, collapsed)} ${collapsed && badgeCount > 0 ? 'relative' : ''}`}
     >
       <Icon className="h-4 w-4 shrink-0" />
       {!collapsed && <span className="truncate">{label}</span>}
+      {collapsed && badgeCount > 0 && (
+        <span className="absolute right-0.5 top-0.5 min-w-4 rounded-full bg-amber-500 px-1 text-center text-[10px] font-semibold leading-4 tabular-nums text-white">{badgeCount > 99 ? '99+' : badgeCount}</span>
+      )}
     </button>
   );
 
@@ -149,9 +154,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     newLabel: string,
     onNew: () => void,
     body: React.ReactNode,
-    badge?: React.ReactNode
+    badge?: React.ReactNode,
+    collapsedBadgeCount = 0
   ) => {
-    if (collapsed) return navButton(tab, label, Icon);
+    if (collapsed) return navButton(tab, label, Icon, collapsedBadgeCount);
     const open = openGroups[g];
     return (
       <div key={g}>
@@ -180,6 +186,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const runningIn = (projectId: string) => projects.cards.some((c) => c.projectId === projectId && c.runState === 'running');
   const reviewIn = (projectId: string) => projects.cards.filter((c) => c.projectId === projectId && c.column === 'review').length;
+  // Every card waiting for your review, across all projects. It drops as cards are approved or sent back.
+  const totalReview = projects.cards.filter((c) => c.column === 'review').length;
   const busyAgents = new Set(projects.cards.filter((c) => c.runState === 'running').map((c) => c.assigneeId));
 
   const displayName = profile.name || 'Account';
@@ -258,7 +266,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   )}
                 </button>
               );
-            })
+            }),
+            totalReview > 0 ? (
+              <span className="rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold tabular-nums text-white" title={`${totalReview} waiting for your review`} aria-label={`${totalReview} waiting for your review`}>
+                {totalReview > 99 ? '99+' : totalReview}
+              </span>
+            ) : undefined,
+            totalReview
           )}
 
           {group(
@@ -384,7 +398,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
 
           {navButton('files', 'Files', FolderGit2)}
-          {navButton('updates', 'Improve the hub', Wand2)}
+          {navButton('updates', 'Code updates', Wand2)}
+          {navButton('devices', 'Devices', Tablet)}
+          {navButton('remote', 'Remote', Wifi)}
         </nav>
 
         <div className={`border-t border-slate-200 dark:border-slate-800 ${collapsed ? 'p-2' : 'p-3'}`}>

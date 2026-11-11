@@ -1,5 +1,6 @@
 // Projects and cards, loaded from the server and shared by the Projects page, sidebar and Dashboard.
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { api } from './api.ts';
 import type { Project, Card, CardColumn, CardSource } from './types/index.ts';
 import { runKey } from './runs.ts';
 
@@ -11,16 +12,7 @@ export const COLUMNS: { id: CardColumn; label: string; hint: string }[] = [
   { id: 'done', label: 'Done', hint: 'Finished' },
 ];
 
-async function send(method: string, url: string, body?: unknown) {
-  const res = await fetch(url, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-  return data;
-}
+const send = (method: string, url: string, body?: unknown) => api(method, url, body);
 
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);

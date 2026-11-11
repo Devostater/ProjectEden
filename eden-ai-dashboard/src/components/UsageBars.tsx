@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, ChevronDown } from 'lucide-react';
 
 export interface ProviderUsage {
-  provider: 'anthropic' | 'google' | 'openai';
+  provider: 'lyra' | 'anthropic' | 'google' | 'openai' | 'extra';
   name: string;
   mode: 'subscription' | 'api' | 'off';
   messages: number;
@@ -79,15 +79,16 @@ export const UsageBar: React.FC<{ u: ProviderUsage; compact?: boolean }> = ({ u,
       : pct >= 70
         ? 'bg-amber-500'
         : 'bg-emerald-500';
+  // Short label beside the name; the longer explanation shows when you hover below.
   const status = off
-    ? 'Not connected'
+    ? 'Off'
     : real?.limited
-      ? `Used up · back ${resetText(real.resetsAt)}`
+      ? 'Used up'
       : real?.usedPercent !== undefined
-        ? `${real.usedPercent}% of ${real.window || 'plan'}`
+        ? `${real.usedPercent}%`
         : limited
-          ? 'Limit reached'
-          : `${u.messages} / ${u.limit} today`;
+          ? 'Used up'
+          : `${u.messages}/${u.limit}`;
   const detail = off
     ? 'Set it up in Account → Connections'
     : real?.usedPercent !== undefined
@@ -97,10 +98,10 @@ export const UsageBar: React.FC<{ u: ProviderUsage; compact?: boolean }> = ({ u,
         : u.limitNote || `${u.messages} of your ${u.limit}-message daily budget used in this hub. The plan doesn't report its own remaining amount.`;
 
   return (
-    <div title={detail}>
-      <div className={`flex items-center justify-between ${compact ? 'text-xs' : 'text-sm'}`}>
-        <span className={off ? 'text-slate-400' : 'text-slate-700 dark:text-slate-300'}>{u.name}</span>
-        <span className={`tabular-nums ${limited ? 'text-red-500' : 'text-slate-400'}`}>{status}</span>
+    <div className="group rounded outline-none" tabIndex={0}>
+      <div className={`flex items-center justify-between gap-2 ${compact ? 'text-xs' : 'text-sm'}`}>
+        <span className={`truncate ${off ? 'text-slate-400' : 'text-slate-700 dark:text-slate-300'}`}>{u.name}</span>
+        <span className={`shrink-0 tabular-nums ${limited ? 'text-red-500' : 'text-slate-400'}`}>{status}</span>
       </div>
       <div
         className={`mt-1 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800 ${compact ? 'h-1.5' : 'h-2'}`}
@@ -112,7 +113,7 @@ export const UsageBar: React.FC<{ u: ProviderUsage; compact?: boolean }> = ({ u,
       >
         <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${off ? 0 : Math.max(pct, u.messages ? 3 : 0)}%` }} />
       </div>
-      {!compact && <p className={`mt-1.5 text-xs ${limited ? 'text-red-500' : 'text-slate-500 dark:text-slate-400'}`}>{detail}</p>}
+      <p className={`mt-1.5 hidden text-xs leading-snug group-hover:block group-focus:block ${limited ? 'text-red-500' : 'text-slate-500 dark:text-slate-400'}`}>{detail}</p>
     </div>
   );
 };
@@ -120,16 +121,37 @@ export const UsageBar: React.FC<{ u: ProviderUsage; compact?: boolean }> = ({ u,
 // Compact stack for the sidebar.
 export const UsageBars: React.FC = () => {
   const usage = useProviderUsage();
+  // Minimized or open is remembered, so it stays how you left it.
+  const [minimized, setMinimized] = useState(() => {
+    try {
+      return localStorage.getItem('eden-usage-minimized') === '1';
+    } catch {
+      return false;
+    }
+  });
   if (!usage.length) return null;
+  const toggle = () => {
+    const next = !minimized;
+    setMinimized(next);
+    try {
+      localStorage.setItem('eden-usage-minimized', next ? '1' : '0');
+    } catch {}
+  };
   return (
     <div className="space-y-2.5 px-3 pb-1 pt-2">
       <div className="flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">
-        AI usage
-        <RefreshUsageButton />
+        <button
+          onClick={toggle}
+          aria-expanded={!minimized}
+          title={minimized ? 'Show AI usage' : 'Minimize AI usage'}
+          className="flex items-center gap-1 rounded px-0.5 hover:text-slate-800 dark:hover:text-slate-200"
+        >
+          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${minimized ? '-rotate-90' : ''}`} />
+          AI usage
+        </button>
+        {!minimized && <RefreshUsageButton />}
       </div>
-      {usage.map((u) => (
-        <UsageBar key={u.provider} u={u} compact />
-      ))}
+      {!minimized && usage.map((u) => <UsageBar key={u.provider} u={u} compact />)}
     </div>
   );
 };

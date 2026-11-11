@@ -2,8 +2,40 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Eden AI Hub</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;padding:16px;background:#0f172a;color:#e2e8f0;font-family:system-ui,sans-serif;text-align:center}
-img{width:64px;height:64px;border-radius:16px}h1{font-size:20px;margin:16px 0 6px}p{color:#94a3b8;max-width:340px;line-height:1.5}
-button{margin-top:12px;padding:10px 18px;border:0;border-radius:10px;background:#4f46e5;color:#fff;font-size:15px}</style></head>
-<body><main><img src="/icon-192.png" alt=""><h1>Can't reach the hub</h1>
-<p>Eden AI Hub runs on your computer. Start it there, and if you're on another device, make sure it's on the same Wi-Fi.</p>
-<button onclick="location.reload()">Try again</button></main></body></html>
+img{width:64px;height:64px;border-radius:16px}h1{font-size:20px;margin:16px 0 6px}p{color:#94a3b8;max-width:360px;line-height:1.5;margin:6px auto}
+button{margin-top:12px;padding:10px 18px;border:0;border-radius:10px;background:#4f46e5;color:#fff;font-size:15px}
+.spin{width:22px;height:22px;margin:14px auto 0;border:3px solid #334155;border-top-color:#818cf8;border-radius:50%;animation:s 1s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){.spin{animation:none}}</style></head>
+<body><main><img src="/icon-192.png" alt="">
+<h1 id="title">Starting the hub…</h1>
+<p id="text">This opens by itself in a few seconds.</p>
+<div class="spin" id="spin" aria-hidden="true"></div>
+<p id="tip" hidden></p>
+<button id="retry" onclick="location.reload()" hidden>Try again</button></main>
+<script>
+// Shown when the hub doesn't answer. Keeps checking and opens the hub as soon as it's up.
+const onThisPc = ['localhost', '127.0.0.1'].includes(location.hostname);
+const started = Date.now();
+const tip = document.getElementById('tip');
+if (!onThisPc) {
+  document.getElementById('title').textContent = 'Looking for the hub…';
+  document.getElementById('text').textContent = 'Eden AI Hub runs on your computer. This page connects by itself once it is on.';
+}
+async function check() {
+  try {
+    const r = await fetch('/api/models', { cache: 'no-store' });
+    // Up: reload the page that was asked for (or go to the hub if this page was opened directly).
+    if (r.status < 500) return location.pathname === '/offline.html' ? location.replace('/') : location.reload();
+  } catch {}
+  const waited = (Date.now() - started) / 1000;
+  if (waited > 45) {
+    tip.hidden = false;
+    document.getElementById('retry').hidden = false;
+    tip.textContent = onThisPc
+      ? 'Still starting. If it doesn\'t open, use the "Eden AI Hub" icon on your desktop: it starts the hub for you. What happened is written in .eden-logs\\hub.log in the hub folder.'
+      : 'Check the computer is on, the hub is open there, and this device is on the same Wi-Fi (or plugged in by USB).';
+  }
+  setTimeout(check, waited > 120 ? 10000 : 2000);
+}
+check();
+</script></body></html>

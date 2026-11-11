@@ -16,12 +16,14 @@ export interface ChatDraft {
 }
 
 const SUMMARY_KEY = 'eden_chat_summary';
-const PROVIDER_NAME: Record<string, string> = { anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT' };
+const PROVIDER_NAME: Record<string, string> = { lyra: 'LYRA', anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT', extra: 'Free AI' };
 
 const providerColor: Record<string, string> = {
+  lyra: 'text-fuchsia-500 bg-fuchsia-500/10',
   anthropic: 'text-orange-500 bg-orange-500/10',
   google: 'text-sky-500 bg-sky-500/10',
   openai: 'text-emerald-500 bg-emerald-500/10',
+  extra: 'text-lime-600 bg-lime-500/10',
 };
 
 // Light formatting for AI answers: **bold**, *italic*, `code`, headings and bullets. No HTML is injected.
@@ -189,7 +191,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ agents, chat, draft, onDraft
   }, [draft]);
 
   const providerOf = (m?: string) => models.find((x) => x.id === m)?.provider || '';
-  const notConnected = Object.entries(providers).filter(([, ok]) => !ok).map(([p]) => PROVIDER_NAME[p]);
+  const notConnected = Object.entries(providers).filter(([p, ok]) => !ok && p !== 'extra').map(([p]) => PROVIDER_NAME[p]);
 
   return (
     <div className="flex h-full">

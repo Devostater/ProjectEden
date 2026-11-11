@@ -9,8 +9,12 @@ import { AccountView, type AccountTab } from './components/AccountView.tsx';
 import { BottomPanel } from './components/BottomPanel.tsx';
 import { NexusView } from './components/NexusView.tsx';
 import { UpdatesView } from './components/UpdatesView.tsx';
+import { DevicesView } from './components/DevicesView.tsx';
+import { BusyBanner } from './components/BusyBanner.tsx';
+import { RemoteView } from './components/RemoteView.tsx';
 import { MobileNav } from './components/MobileNav.tsx';
 import { useNexusRooms } from './nexusRooms.ts';
+import { OUTDATED_EVENT } from './api.ts';
 import type { Agent, DAGPipeline, HostedFile } from './types/index.ts';
 import { useChatThreads } from './chatThreads.ts';
 import { useProjects } from './projectsStore.ts';
@@ -20,7 +24,7 @@ export default function App() {
   const [darkMode, setDarkMode] = useState<boolean>(() => localStorage.getItem('nexus_theme') !== 'light');
   const [activeTab, setActiveTab] = useState<AppTab>(() => {
     const wanted = new URLSearchParams(window.location.search).get('tab');
-    return (['home', 'projects', 'nexus', 'chat', 'my-ai', 'pipelines', 'files', 'updates', 'settings'] as AppTab[]).includes(wanted as AppTab) ? (wanted as AppTab) : 'home';
+    return (['home', 'projects', 'nexus', 'chat', 'my-ai', 'pipelines', 'files', 'updates', 'devices', 'remote', 'settings'] as AppTab[]).includes(wanted as AppTab) ? (wanted as AppTab) : 'home';
   });
 
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -29,6 +33,13 @@ export default function App() {
 
   const chat = useChatThreads();
   const [drawer, setDrawer] = useState(false);
+  // Shown when the page is newer than the running server (see api.ts).
+  const [outdated, setOutdated] = useState(false);
+  useEffect(() => {
+    const on = () => setOutdated(true);
+    window.addEventListener(OUTDATED_EVENT, on);
+    return () => window.removeEventListener(OUTDATED_EVENT, on);
+  }, []);
   const nexusRooms = useNexusRooms();
   const [newRoomRequest, setNewRoomRequest] = useState(0);
   // Something the sidebar asked a page to open. The number makes repeat requests distinct.
@@ -55,6 +66,12 @@ export default function App() {
     setActiveTab('settings');
   };
   const projectsApi = useProjects();
+
+  // The number of cards waiting for your review, shown in the browser tab title.
+  const reviewCount = projectsApi.cards.filter((c) => c.column === 'review').length;
+  useEffect(() => {
+    document.title = reviewCount > 0 ? `(${reviewCount}) Eden AI Hub` : 'Eden AI Hub';
+  }, [reviewCount]);
 
   // A message handed to Chat from another page (Home's ask box, a teammate, a file).
   const [chatDraft, setChatDraft] = useState<ChatDraft | null>(null);
@@ -129,7 +146,20 @@ export default function App() {
           <div className="eden-grid" />
         </div>
 
+        {outdated && (
+          <div role="alert" className="relative z-20 flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-100">
+            <span className="min-w-0 flex-1">
+              <b>The hub needs a restart.</b> The page has been updated but the hub on your computer is still running the old version, so some things won't work. Close and reopen Start Eden.
+            </span>
+            <button onClick={() => window.location.reload()} className="rounded-md bg-amber-600 px-3 py-1 text-sm font-medium text-white hover:bg-amber-500">
+              I've restarted it
+            </button>
+            <button onClick={() => setOutdated(false)} className="text-sm underline">Hide</button>
+          </div>
+        )}
+
         <main className="relative z-10 min-h-0 flex-1 overflow-y-auto">
+          <BusyBanner />
           {activeTab === 'home' && (
             <HomeView
               agents={agents}
@@ -187,6 +217,7 @@ export default function App() {
 
           {activeTab === 'my-ai' && (
             <MyAIView
+              onTeamChanged={refreshAllData}
               request={request?.kind === 'new-teammate' || request?.kind === 'edit-teammate' ? request : null}
               agents={agents}
               onSaveAgent={handleSaveAgent}
@@ -218,6 +249,10 @@ export default function App() {
 
           {activeTab === 'updates' && <UpdatesView />}
 
+          {activeTab === 'devices' && <DevicesView />}
+
+          {activeTab === 'remote' && <RemoteView />}
+
           {activeTab === 'settings' && (
             <AccountView
               tab={accountTab}
@@ -232,10 +267,16 @@ export default function App() {
           )}
         </main>
 
-        <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} onMore={() => setDrawer(true)} />
+        <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} onMore={() => setDrawer(true)} reviewCount={reviewCount} />
 
         <BottomPanel
           onOpenPreferences={() => openAccount('preferences')}
+          onRetryCard={async (id) => {
+            // Only a card that is still stuck on its failure goes back to Ready; one you already moved is left alone.
+            const card = projectsApi.cards.find((c) => c.id === id);
+            if (!card || card.runState !== 'failed') return false;
+            return !!(await projectsApi.saveCard({ id, column: 'ready' }));
+          }}
           review={{
             cards: projectsApi.cards.filter((c) => c.column === 'review'),
             projects: projectsApi.projects,

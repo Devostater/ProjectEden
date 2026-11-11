@@ -1,17 +1,24 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import { generate, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel } from './providers';
 import { registerSettingsRoutes } from './settings';
 import { registerPairing } from './pairing';
-import { registerProjectRoutes, ensureProjects } from './projects';
+import { registerProjectRoutes, ensureProjects, noteOnCard } from './projects';
 import { startCardRunner, askTeammate, runningCards } from './cardRunner';
 import { registerPlannerRoutes } from './planner';
 import { registerActivityRoutes, logActivity } from './activity';
 import { registerTerminalRoutes } from './terminal';
+import { registerLyraRoutes } from './lyra';
 import { registerNexusRoutes, runningRooms, type NexusData } from './nexus';
 import { registerControlRoutes } from './control';
 import { registerUpdateRoutes } from './updates';
+import { registerRestartRoutes } from './restart';
+import { registerBusyRoutes } from './busy';
+import { registerBackupRoutes } from './backup';
+import { registerDeviceRoutes } from './devices';
+import { registerTeamReformRoutes } from './teamReform';
+import { registerDeviceHubRoutes, ON_DEVICE } from './deviceHub';
+import { startExtraScan } from './extraAI';
 import type { Project, Card } from './src/types/index';
 import { parseRepo, githubFetch, githubError, githubStatus } from './github';
 import dotenv from 'dotenv';
@@ -342,7 +349,7 @@ async function fetchGitHubRepoSummary(repoTarget: string): Promise<{
 async function startServer() {
   const app = express();
   registerPairing(app); // must come first: guards every route for devices other than this computer
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '5mb' }));
 
@@ -448,9 +455,24 @@ async function startServer() {
   registerPlannerRoutes(app, () => store);
   registerActivityRoutes(app);
   registerTerminalRoutes(app);
-  registerUpdateRoutes(app);
+  registerLyraRoutes(app);
+  if (!ON_DEVICE) registerDeviceRoutes(app); // a hub running on a phone or tablet has no USB devices to manage
+  registerDeviceHubRoutes(app);
+  startExtraScan();
+  registerUpdateRoutes(app, {
+    // A code change asked for from a card goes back to that card for review.
+    onApplied: ({ cardId, codebase, files, needsRestart, restartHint }) => {
+      if (!cardId) return;
+      noteOnCard(store, cardId, `Code change applied to ${codebase} (${files} file${files === 1 ? '' : 's'}).${needsRestart ? ` To finish: ${restartHint}.` : ''}`, 'review');
+      saveStore(store);
+    },
+  });
+  registerRestartRoutes(app);
+  registerBusyRoutes(app);
+  if (!process.env.EDEN_DEVICE_HUB) registerBackupRoutes(app);
   registerControlRoutes(app, () => ({ cards: runningCards(), rooms: runningRooms() }));
   registerNexusRoutes(app, () => store, () => saveStore(store));
+  registerTeamReformRoutes(app, () => store.agents, () => saveStore(store));
   logActivity('info', 'Hub started.');
   startCardRunner(() => store, () => saveStore(store));
 
@@ -1344,6 +1366,8 @@ Task:
 
   // Vite middleware for development or static serving for production
   if (process.env.NODE_ENV !== 'production') {
+    // Loaded only here, so the packed hub (for phones and tablets) doesn't need Vite.
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       // The page uses no .env values. Without this, saving a setting (which rewrites .env.local)
       // makes the dev server reload the whole page.

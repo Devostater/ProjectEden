@@ -127,7 +127,7 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
               setTab(id);
               setMessage(null);
             }}
-            className={`flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm ${
+            className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md px-1.5 py-2 text-sm sm:gap-2 sm:px-3 ${
               tab === id ? 'bg-indigo-600 font-medium text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'
             }`}
           >

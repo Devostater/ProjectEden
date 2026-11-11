@@ -1,4 +1,4 @@
-// Unified multi-provider LLM layer: Claude (Anthropic), Gemini (Google), OpenAI.
+// Unified multi-provider LLM layer: LYRA (your own local AI), Claude (Anthropic), Gemini (Google), OpenAI.
 // Every AI call in the server goes through generate(); the provider is picked from the model id.
 import { GoogleGenAI } from '@google/genai';
 import { spawn, spawnSync } from 'child_process';
@@ -7,8 +7,29 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { realLimits, type RealLimit } from './realLimits';
+import { extraModels, extraConnected, freeFallbacks, callExtra } from './extraAI';
+import { pcBusy } from './busy';
+import { auraInstalled, auraRunning, auraCliArgs, auraSystemNote, isAuraModel } from './aura';
 
-export type ProviderId = 'anthropic' | 'google' | 'openai';
+export type ProviderId = 'lyra' | 'anthropic' | 'google' | 'openai' | 'extra';
+
+// ---- LYRA ----------------------------------------------------------------------------------
+// LYRA (Forge, Nova.bat) runs on this PC. EDEN sends it the conversation and LYRA's Auto mode picks
+// the model: free local/cloud models first, paid ones only if you allowed them in LYRA (with LYRA's
+// spending caps). LYRA counts as connected while it answers on LYRA_URL.
+const LYRA_URL = () => (process.env.LYRA_URL || 'http://127.0.0.1:4777').replace(/\/+$/, '');
+let lyraUp = false;
+export async function pingLyra() {
+  try {
+    const r = await fetch(`${LYRA_URL()}/api/cloud`, { signal: AbortSignal.timeout(4000) });
+    lyraUp = r.ok;
+  } catch {
+    lyraUp = false;
+  }
+}
+pingLyra();
+setInterval(pingLyra, 30000).unref?.();
+export const lyraConnected = () => lyraUp;
 
 export interface ModelInfo {
   id: string;
@@ -18,20 +39,32 @@ export interface ModelInfo {
 
 // Functions (not constants) so values set later via .env.local or the Settings page take effect.
 export const models = (): ModelInfo[] => [
+  { id: 'lyra', label: 'LYRA (your local AI, picks the best model)', provider: 'lyra' },
   { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', provider: 'anthropic' },
   { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', provider: 'anthropic' },
   { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5', provider: 'anthropic' },
   { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', provider: 'google' },
   { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite', provider: 'google' },
   { id: process.env.OPENAI_MODEL || 'gpt-5', label: `OpenAI ${process.env.OPENAI_MODEL || 'gpt-5'}`, provider: 'openai' },
+  // Aura: Claude with Aura's Unreal tools (Aura app must be open). See aura.ts.
+  ...(auraInstalled()
+    ? [
+        { id: 'aura', label: 'Aura: Unreal, inspect & plan (no changes)', provider: 'anthropic' as ProviderId },
+        { id: 'aura-build', label: 'Aura: Unreal, can change the project (no undo)', provider: 'anthropic' as ProviderId },
+      ]
+    : []),
+  // Extra AIs (+ Add AI): local models, Google AI Studio models, free tiers you connected.
+  ...extraModels().map((m) => ({ id: m.id, label: `${m.label}${m.local ? ' (this PC, free)' : m.free ? ' (free)' : ''}`, provider: 'extra' as ProviderId })),
 ];
 
-export const defaultModel = () => process.env.DEFAULT_MODEL || 'gemini-3.6-flash';
+export const defaultModel = () => process.env.DEFAULT_MODEL || (lyraUp ? 'lyra' : 'gemini-3.6-flash');
 
 export function providerFor(model: string): ProviderId {
   const known = models().find((m) => m.id === model);
   if (known) return known.provider;
-  if (model.startsWith('claude')) return 'anthropic';
+  if (model.startsWith('x:')) return 'extra';
+  if (model.startsWith('lyra')) return 'lyra';
+  if (model.startsWith('claude') || isAuraModel(model)) return 'anthropic';
   if (model.startsWith('gemini')) return 'google';
   return 'openai';
 }
@@ -42,10 +75,11 @@ const hasKey = (v?: string) => !!v && !/^MY_[A-Z_]+$/.test(v);
 //   Claude  -> Claude Code  (`claude`, Pro/Max login)
 //   Gemini  -> Gemini CLI   (`gemini`, Google account login, free tier)
 //   OpenAI  -> Codex CLI    (`codex`, ChatGPT plan login)
-const CLI: Record<ProviderId, string> = { anthropic: 'claude', google: 'gemini', openai: 'codex' };
+const CLI: Record<ProviderId, string> = { lyra: '', anthropic: 'claude', google: 'gemini', openai: 'codex', extra: '' };
 const cliCache: Partial<Record<ProviderId, boolean>> = {};
 
 export function cliInstalled(p: ProviderId, refresh = false): boolean {
+  if (p === 'lyra' || p === 'extra') return false;
   if (refresh || cliCache[p] === undefined) {
     const r = spawnSync(`${CLI[p]} --version`, { shell: true, timeout: 15000, windowsHide: true });
     cliCache[p] = r.status === 0;
@@ -85,6 +119,8 @@ export type ProviderMode = 'subscription' | 'api' | 'off';
 
 // API key wins if set; otherwise fall back to the subscription CLI if it is installed.
 export function providerMode(p: ProviderId): ProviderMode {
+  if (p === 'lyra') return lyraUp ? 'api' : 'off';
+  if (p === 'extra') return extraConnected() ? 'api' : 'off';
   const key = { anthropic: 'ANTHROPIC_API_KEY', google: 'GEMINI_API_KEY', openai: 'OPENAI_API_KEY' }[p];
   if (hasKey(process.env[key])) return 'api';
   if (cliSignedIn(p)) return 'subscription';
@@ -93,9 +129,11 @@ export function providerMode(p: ProviderId): ProviderMode {
 
 export function providerStatus(): Record<ProviderId, boolean> {
   return {
+    lyra: providerMode('lyra') !== 'off',
     anthropic: providerMode('anthropic') !== 'off',
     google: providerMode('google') !== 'off',
     openai: providerMode('openai') !== 'off',
+    extra: providerMode('extra') !== 'off',
   };
 }
 
@@ -109,7 +147,7 @@ export function providerDetails(refresh = false) {
   });
 }
 
-function flatten(req: GenerateRequest): string {
+function flatten(req: GenerateRequest, opts: { tools?: boolean } = {}): string {
   const parts: string[] = [];
   if (req.system) parts.push(`# Instructions
 ${req.system}`);
@@ -120,7 +158,8 @@ ${req.system}`);
   }
   parts.push(`# Reply to this
 ${msgs[msgs.length - 1]?.content ?? ''}`);
-  parts.push('Reply with plain text only. Do not use tools, read files or run commands.');
+  // Aura teammates are the exception: they must use Aura's Unreal tools.
+  if (!opts.tools) parts.push('Reply with plain text only. Do not use tools, read files or run commands.');
   return parts.join('\n\n');
 }
 
@@ -155,10 +194,15 @@ function runCli(cmd: string, input: string, cwd: string, timeoutMs = 180000): Pr
 async function callSubscription(provider: ProviderId, model: string, req: GenerateRequest): Promise<GenerateResult> {
   // Empty scratch folder so the CLI agents have nothing to touch.
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'eden-'));
-  const prompt = flatten(req);
+  const prompt = flatten(req, { tools: isAuraModel(model) });
   try {
     let text: string;
-    if (provider === 'anthropic') {
+    if (provider === 'anthropic' && isAuraModel(model)) {
+      // Aura works on the real Unreal project and can take several minutes.
+      if (!(await auraRunning())) throw new Error('Aura isn\'t open. Open the Aura app (it starts Unreal for the project), then try again.');
+      const withNote = `# Working with Aura\n${auraSystemNote(model)}\n\n${prompt}`;
+      text = await runCli(`claude -p --model claude-sonnet-5-5 --output-format text ${auraCliArgs(model)}`, withNote, cwd, 15 * 60 * 1000);
+    } else if (provider === 'anthropic') {
       text = await runCli(`claude -p --model ${model} --output-format text`, prompt, cwd);
     } else if (provider === 'google') {
       text = await runCli(`gemini -m ${model}`, prompt, cwd);
@@ -210,10 +254,12 @@ function toMessages(req: GenerateRequest): ChatMessage[] {
 
 export async function generate(req: GenerateRequest): Promise<GenerateResult> {
   const model = req.model || defaultModel();
-  if (!/^[\w.\-]+$/.test(model)) throw new Error(`Invalid model id: ${model}`);
+  if (!(model.startsWith('x:') ? /^x:[\w.\-]+:[\w.\-:/@]+$/ : /^[\w.\-]+$/).test(model)) throw new Error(`Invalid model id: ${model}`);
   const provider = providerFor(model);
   const mode = providerMode(provider);
   if (mode === 'off') {
+    if (provider === 'extra') throw new Error('That free AI is not available right now (not running or removed). Check Account → Connections → Free AIs.');
+    if (provider === 'lyra') throw new Error("LYRA isn't running. Start it with Nova.bat on the PC (it answers on " + LYRA_URL() + ').');
     throw new Error(`${provider === 'anthropic' ? 'Claude' : provider === 'google' ? 'Gemini' : 'OpenAI'} isn't connected yet. Connect it in Account → Connections.`);
   }
   try {
@@ -227,7 +273,9 @@ export async function generate(req: GenerateRequest): Promise<GenerateResult> {
 }
 
 function dispatch(provider: ProviderId, mode: ProviderMode, model: string, req: GenerateRequest): Promise<GenerateResult> {
-  if (mode === 'subscription') return callSubscription(provider, model, req);
+  if (provider === 'lyra') return callLyra(req);
+  if (provider === 'extra') return callExtra(model, { system: req.system, messages: toMessages(req), maxTokens: req.maxTokens }).then((r) => ({ ...r, provider: 'extra' as ProviderId }));
+  if (mode === 'subscription' || isAuraModel(model)) return callSubscription(provider, model, req);
   switch (provider) {
     case 'anthropic':
       return callClaude(model, req);
@@ -290,6 +338,7 @@ const DOWN_MS = 5 * 60 * 1000;
 
 const LIMIT_RETRY_MS = 60 * 60 * 1000;
 const limited = (p: ProviderId) => {
+  if (p === 'lyra' || p === 'extra') return false; // LYRA has its own caps; extra AIs rest per model
   if (p !== 'google') {
     const real = realLimits()[p];
     if (real.limited) return true; // the plan itself says it's used up, until its reset time
@@ -299,29 +348,48 @@ const limited = (p: ProviderId) => {
 };
 
 export function providerUnavailable(p: ProviderId): boolean {
-  return providerMode(p) === 'off' || limited(p) || (downUntil[p] || 0) > Date.now();
+  // While the PC is busy, LYRA (which runs models on this PC) is skipped and cloud AIs answer instead.
+  return providerMode(p) === 'off' || limited(p) || (downUntil[p] || 0) > Date.now() || (p === 'lyra' && pcBusy());
 }
 
 export function clearUnavailable() {
   for (const k of Object.keys(downUntil) as ProviderId[]) delete downUntil[k];
 }
 
-const PROVIDER_LABEL: Record<ProviderId, string> = { anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT' };
+// Forgets the saved "limit hit" notes so a refresh starts clean. If a plan is still really used up,
+// the plan check (real limits) or the next failed message will bring the note back.
+function clearLimitNotes() {
+  let changed = false;
+  for (const p of ['lyra', 'anthropic', 'google', 'openai'] as ProviderId[]) {
+    const u = usage[p];
+    if (u && (u.limitNote || u.limitAt)) {
+      u.limitNote = undefined;
+      u.limitAt = undefined;
+      changed = true;
+    }
+  }
+  if (changed) saveUsage();
+}
+
+const PROVIDER_LABEL: Record<ProviderId, string> = { lyra: 'LYRA', anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT', extra: 'Free AIs' };
 export const providerLabel = (p: ProviderId) => PROVIDER_LABEL[p];
 
 // Working models on other providers, best first, for when an agent's own AI can't answer.
 export function fallbackModels(exclude: ProviderId): string[] {
   const pick: Record<ProviderId, string> = {
+    lyra: 'lyra',
+    extra: '',
     google: 'gemini-3.6-flash',
     anthropic: 'claude-sonnet-5-5',
     openai: process.env.OPENAI_MODEL || 'gpt-5',
   };
-  return (['anthropic', 'google', 'openai'] as ProviderId[])
-    .filter((p) => p !== exclude && !providerUnavailable(p))
-    .map((p) => pick[p]);
+  const main = (['lyra', 'anthropic', 'google', 'openai'] as ProviderId[]).filter((p) => p !== exclude && !providerUnavailable(p)).map((p) => pick[p]);
+  // Then free extra AIs (Google AI Studio models, Ollama on this PC, free tiers you added).
+  return [...main, ...freeFallbacks()];
 }
 
 function recordFailure(p: ProviderId, message: string) {
+  if (p === 'lyra' || p === 'extra') return; // LYRA marks itself; extra AIs rest per model
   if (/log ?in|logged|sign ?in|auth|unauthor|\b401\b|\b403\b|api key|usage limit|hit your .{0,20}limit|quota|credit balance/i.test(message)) {
     downUntil[p] = Date.now() + DOWN_MS;
   }
@@ -332,6 +400,8 @@ function recordFailure(p: ProviderId, message: string) {
 }
 
 const LIMIT_ENV: Record<ProviderId, string> = {
+  lyra: 'LYRA_DAILY_LIMIT',
+  extra: 'EXTRA_DAILY_LIMIT',
   anthropic: 'CLAUDE_DAILY_LIMIT',
   google: 'GEMINI_DAILY_LIMIT',
   openai: 'CHATGPT_DAILY_LIMIT',
@@ -343,11 +413,12 @@ export function providerUsage(refresh = false) {
   if (refresh) {
     for (const p of ['anthropic', 'openai'] as ProviderId[]) cliSignedIn(p, true);
     clearUnavailable();
+    clearLimitNotes();
   }
-  const names: Record<ProviderId, string> = { anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT' };
-  return (['anthropic', 'google', 'openai'] as ProviderId[]).map((p) => {
+  const names: Record<ProviderId, string> = { lyra: 'LYRA', anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT', extra: 'Free AIs' };
+  return (['lyra', 'anthropic', 'google', 'openai', 'extra'] as ProviderId[]).map((p) => {
     const u = dayUsage(p);
-    const limit = Math.max(1, parseInt(process.env[LIMIT_ENV[p]] || '', 10) || DEFAULT_DAILY_LIMIT);
+    const limit = Math.max(1, parseInt(process.env[LIMIT_ENV[p]] || '', 10) || (p === 'lyra' || p === 'extra' ? 1000 : DEFAULT_DAILY_LIMIT));
     return {
       provider: p,
       name: names[p],
@@ -357,9 +428,56 @@ export function providerUsage(refresh = false) {
       limit,
       limitNote: u.limitNote || '',
       // What the plan itself reports, when the tool records it (ChatGPT: percent used; Claude: limit hits).
-      real: p === 'google' ? ({ source: 'none', checkedAt: Date.now() } as RealLimit) : real[p],
+      real: p === 'google' || p === 'lyra' || p === 'extra' ? ({ source: 'none', checkedAt: Date.now() } as RealLimit) : real[p],
     };
   });
+}
+
+// LYRA's chat API streams one JSON event per line; the reply is the last "answer" event.
+async function callLyra(req: GenerateRequest): Promise<GenerateResult> {
+  const history = toMessages(req);
+  if (req.system && history.length) {
+    history[0] = { ...history[0], content: '(Instructions from EDEN AI Hub, follow them for this conversation:\n' + req.system + ')\n\n' + history[0].content };
+  }
+  let res: Response;
+  try {
+    res = await fetch(LYRA_URL() + '/api/chat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'auto', mode: 'chat', project: null, trust: 'ask', history }),
+      signal: AbortSignal.timeout(10 * 60 * 1000),
+    });
+  } catch (e: any) {
+    lyraUp = false;
+    throw new Error("LYRA isn't running (" + (e?.cause?.code || e?.message || e) + '). Start it with Nova.bat.');
+  }
+  if (!res.ok || !res.body) throw new Error('LYRA answered ' + res.status);
+  let answer = '';
+  let error = '';
+  let tokens = 0;
+  let used = 'lyra';
+  const handle = (line: string) => {
+    if (!line.trim()) return;
+    let ev: any;
+    try { ev = JSON.parse(line); } catch { return; }
+    if (ev.type === 'answer' && ev.text) answer = ev.text;
+    else if (ev.type === 'error') error = ev.text || 'LYRA failed';
+    else if (ev.type === 'usage') tokens = (ev.input || 0) + (ev.output || 0);
+    else if (ev.type === 'route' && ev.model) used = 'lyra (' + ev.model + ')';
+  };
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let k;
+    while ((k = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, k)); buf = buf.slice(k + 1); }
+  }
+  handle(buf);
+  if (!answer) throw new Error('LYRA: ' + (error || 'no answer'));
+  return { text: answer.trim(), tokens, model: used, provider: 'lyra' };
 }
 
 const GEMINI_FALLBACK = 'gemini-3.5-flash-lite';

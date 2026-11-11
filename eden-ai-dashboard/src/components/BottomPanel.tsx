@@ -3,10 +3,14 @@ import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Use
 import type { Agent, Card, Project } from '../types/index.ts';
 import { FlowTab, WorkloadTab, ProgressTab } from './ProjectVisuals.tsx';
 import { ReviewTab, type ReviewProps } from './ReviewTab.tsx';
+import { LyraPanel, LyraChibi } from './LyraPanel.tsx';
 
-type PanelTab = 'flow' | 'workload' | 'progress' | 'review' | 'activity' | 'terminal';
+type PanelTab = 'flow' | 'workload' | 'progress' | 'review' | 'lyra' | 'activity' | 'terminal';
 const PROJECT_TABS: PanelTab[] = ['flow', 'workload', 'progress'];
-const ALL_TABS: PanelTab[] = [...PROJECT_TABS, 'review', 'activity', 'terminal'];
+const ALL_TABS: PanelTab[] = [...PROJECT_TABS, 'review', 'lyra', 'activity', 'terminal'];
+
+// The little LYRA face used as the tab's icon.
+const LyraIcon: React.FC<{ className?: string }> = () => <LyraChibi connected className="h-5 w-5" />;
 
 // Set while the Projects page is open: adds the Flow, Workload and Progress tabs for that project.
 export interface PanelProject {
@@ -21,6 +25,8 @@ interface ActivityEntry {
   at: string;
   kind: 'info' | 'work' | 'done' | 'error';
   text: string;
+  hint?: { explain: string; action: string }; // plain explanation and suggestion for common failures
+  retry?: { kind: 'card' | 'update'; id: string }; // what Retry runs again
 }
 
 interface TerminalLine {
@@ -58,7 +64,12 @@ const KIND_STYLE: Record<ActivityEntry['kind'], string> = {
 
 const folderName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
 
-export const BottomPanel: React.FC<{ onOpenPreferences: () => void; project?: PanelProject | null; review: ReviewProps }> = ({ onOpenPreferences, project, review }) => {
+export const BottomPanel: React.FC<{
+  onOpenPreferences: () => void;
+  onRetryCard: (cardId: string) => Promise<boolean>; // false when the card is no longer failed
+  project?: PanelProject | null;
+  review: ReviewProps;
+}> = ({ onOpenPreferences, onRetryCard, project, review }) => {
   const [open, setOpen] = useState(() => read(OPEN_KEY, '0') === '1');
   const [savedTab, setTab] = useState<PanelTab>(() => {
     const saved = read(TAB_KEY, 'activity') as PanelTab;
@@ -129,6 +140,25 @@ export const BottomPanel: React.FC<{ onOpenPreferences: () => void; project?: Pa
       clearInterval(timer);
     };
   }, []);
+
+  // Retry buttons on [error] lines: what happened to each press, by line.
+  const [retried, setRetried] = useState<Record<number, string>>({});
+  const retry = async (e: ActivityEntry) => {
+    if (!e.retry || retried[e.id]) return;
+    const say = (msg: string) => setRetried((r) => ({ ...r, [e.id]: msg }));
+    say('Trying again…');
+    try {
+      if (e.retry.kind === 'card') {
+        say((await onRetryCard(e.retry.id)) ? 'Sent back to the team. It will start again shortly.' : 'Already handled. Nothing to retry.');
+      } else {
+        const res = await fetch(`/api/updates/${e.retry.id}/retry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const d = await res.json().catch(() => ({}));
+        say(res.ok ? 'Started again. Follow it in Code updates.' : d.error || "Couldn't retry that.");
+      }
+    } catch {
+      say("Couldn't retry that. Check the hub is running.");
+    }
+  };
 
   useEffect(() => {
     if (watching) {
@@ -258,6 +288,7 @@ export const BottomPanel: React.FC<{ onOpenPreferences: () => void; project?: Pa
           </>,
           Inbox
         )}
+        {tabButton('lyra', 'LYRA', LyraIcon)}
         {tabButton('activity', 'Activity', Activity, unread)}
         {tabButton('terminal', 'Terminal', TerminalSquare)}
         </div>
@@ -312,13 +343,43 @@ export const BottomPanel: React.FC<{ onOpenPreferences: () => void; project?: Pa
         </div>
       )}
 
+      {open && tab === 'lyra' && (
+        <div className="min-h-0 flex-1">
+          <LyraPanel />
+        </div>
+      )}
+
       {open && tab === 'activity' && (
         <div className="flex-1 overflow-y-auto px-3 py-2 font-mono text-xs leading-relaxed">
           {entries.length === 0 && <p className="font-sans text-sm text-slate-500">Nothing yet. Card work, plans and chat replies show up here as they happen.</p>}
           {entries.map((e) => (
             <div key={e.id} className="flex gap-3">
               <span className="shrink-0 text-slate-400">{new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
-              <span className={KIND_STYLE[e.kind]}>{e.text}</span>
+              <span className="min-w-0">
+                <span className={KIND_STYLE[e.kind]}>{e.text}</span>
+                {e.kind === 'error' && (e.hint || e.retry) && (
+                  <span className="mb-1 mt-0.5 block font-sans text-xs text-slate-600 dark:text-slate-300">
+                    {e.hint && (
+                      <>
+                        {e.hint.explain} <span className="font-medium">{e.hint.action}</span>
+                      </>
+                    )}
+                    {e.retry && (
+                      <>
+                        {' '}
+                        <button
+                          onClick={() => retry(e)}
+                          disabled={!!retried[e.id]}
+                          className="rounded border border-slate-300 px-2 py-0.5 text-xs font-medium text-slate-700 hover:border-indigo-400 hover:text-indigo-600 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200"
+                        >
+                          Retry
+                        </button>
+                        {retried[e.id] && <span className="ml-2 text-slate-500 dark:text-slate-400">{retried[e.id]}</span>}
+                      </>
+                    )}
+                  </span>
+                )}
+              </span>
             </div>
           ))}
           <div ref={activityEnd} />

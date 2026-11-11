@@ -27,7 +27,8 @@ let ghCliToken: string | null | undefined;
 
 // Token from Connect AI (saved in .env.local), or from the GitHub CLI if you're signed in there.
 export function githubToken(refresh = false): { token: string; source: 'saved' | 'gh' } | null {
-  const saved = process.env.GITHUB_TOKEN;
+  // Tidy up a pasted token: stray spaces, quotes, or a leading "Bearer " / "token " make GitHub reject it.
+  const saved = (process.env.GITHUB_TOKEN || '').trim().replace(/^["']|["']$/g, '').replace(/^(bearer|token)\s+/i, '').trim();
   if (saved && !/^MY_[A-Z_]+$/.test(saved)) return { token: saved, source: 'saved' };
   if (refresh || ghCliToken === undefined) {
     const r = spawnSync('gh auth token', { shell: true, timeout: 10000, windowsHide: true, encoding: 'utf-8' });
@@ -57,18 +58,18 @@ export async function githubFetch(url: string): Promise<Response> {
 
 export function githubError(status: number, repo: string, remaining?: string | null): string {
   const connected = !!githubToken();
-  if (status === 401) return 'GitHub rejected the saved token. Replace it in Account → Connections.';
+  if (status === 401) return 'GitHub rejected the saved token. It may be mistyped, expired or revoked. Disconnect it and paste a new one in Settings → GitHub.';
   if (status === 403 || status === 429) {
     return remaining === '0'
       ? connected
         ? 'GitHub hourly limit reached. Try again in a little while.'
-        : 'GitHub hourly limit for unconnected use reached. Connect GitHub in Account → Connections for a much higher limit.'
+        : 'GitHub hourly limit for unconnected use reached. Connect GitHub in Settings → GitHub for a much higher limit.'
       : `GitHub refused access to ${repo}. The token may not have permission for this repository.`;
   }
   if (status === 404) {
     return connected
       ? `Couldn't find ${repo}. Check the name, and that your token can see this repository.`
-      : `Couldn't find ${repo}. Check the name. If it's a private repository, connect GitHub in Account → Connections.`;
+      : `Couldn't find ${repo}. Check the name. If it's a private repository, connect GitHub in Settings → GitHub.`;
   }
   return `GitHub returned an error (${status}) for ${repo}.`;
 }

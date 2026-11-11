@@ -102,15 +102,14 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     });
   };
 
-  const panels: Record<PanelId, { title: string; count?: number; wide?: boolean; action: string; onAction: () => void; body: React.ReactNode }> = {
+  const panels: Record<PanelId, { title: string; count?: number; action: string; onAction: () => void; body: React.ReactNode }> = {
     projects: {
       title: 'Projects',
       count: projects.length,
-      wide: true,
       action: 'Open boards',
       onAction: () => onOpen('projects'),
       body: projects.length ? (
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2">
           {projects.map((p) => {
             const mine = cards.filter((c) => c.projectId === p.id);
             const open = mine.filter((c) => c.column !== 'done').length;
@@ -151,7 +150,6 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     team: {
       title: 'Your team',
       count: agents.length,
-      wide: true,
       action: 'Edit team',
       onAction: () => onOpen('my-ai'),
       body: (
@@ -270,7 +268,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
       </div>
 
       {/* Panels: collapse with the arrow, drag by the grip to rearrange (or focus the grip and use arrow keys) */}
-      <div className="grid grid-flow-row-dense grid-cols-1 items-start gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2">
         {order.map((id) => {
           const p = panels[id];
           const isCollapsed = !!collapsed[id];
@@ -286,7 +284,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                 e.preventDefault();
                 setDragging(null);
               }}
-              className={`rounded-xl border bg-white p-5 transition-shadow dark:bg-slate-900 ${p.wide ? 'md:col-span-2' : ''} ${
+              className={`flex flex-col rounded-xl border bg-white p-5 transition-shadow dark:bg-slate-900 ${isCollapsed ? '' : 'h-80'} ${
                 dragging === id ? 'border-indigo-500 opacity-60 shadow-lg' : 'border-slate-200 dark:border-slate-800'
               }`}
             >
@@ -325,7 +323,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                   {p.action} <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               </div>
-              {!isCollapsed && p.body}
+              {!isCollapsed && <div className="min-h-0 flex-1 overflow-y-auto">{p.body}</div>}
             </section>
           );
         })}

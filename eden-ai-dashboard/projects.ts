@@ -75,6 +75,19 @@ function createsLoop(cardId: string, deps: string[], all: Card[]): boolean {
   return false;
 }
 
+// Adds a note to a card from elsewhere in the hub (e.g. when its code change is applied).
+export function noteOnCard(store: ProjectStore, cardId: string, text: string, moveTo?: CardColumn) {
+  const card = (store.cards || []).find((c) => c.id === cardId);
+  if (!card) return false;
+  card.notes.push({ id: id('note'), author: 'Code update', text, at: now(), kind: 'result' });
+  if (moveTo && card.column !== 'done') {
+    card.column = moveTo;
+    if (moveTo === 'review') card.reviewAt = now();
+  }
+  card.updatedAt = now();
+  return true;
+}
+
 export function registerProjectRoutes(app: Express, getStore: () => ProjectStore, save: () => void) {
   const projects = () => getStore().projects!;
   const cards = () => getStore().cards!;
@@ -100,6 +113,7 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
         repo: b.repo !== undefined ? text(b.repo, 200) : existing.repo,
         status,
         autoRun: typeof b.autoRun === 'boolean' ? b.autoRun : existing.autoRun,
+        codebaseId: b.codebaseId !== undefined ? text(b.codebaseId, 40) || undefined : existing.codebaseId,
         updatedAt: now(),
       });
       save();

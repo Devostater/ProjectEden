@@ -13,3 +13,12 @@ coverage/
 .eden-pairing.json
 .eden-control.json
 .eden-updates.json
+.eden-codebases.json
+.eden-devices.json
+.eden-ai.json
+.eden-main.json
+.eden-ideas.json
+.eden-backup.json
+.eden-logs/
+.eden-aura-mcp.json
+.eden-busy.json

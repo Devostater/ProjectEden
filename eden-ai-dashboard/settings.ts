@@ -7,6 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
 import { providerDetails, providerUsage } from './providers';
+import { PRESETS, scanExtraAIs, addExtraAI, setExtraEnabled, removeExtraAI, extraSummary } from './extraAI';
 
 const ENV_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '.env.local');
 
@@ -88,6 +89,33 @@ export function registerSettingsRoutes(app: Express) {
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ error: `Could not open the sign-in window: ${err?.message || 'unknown error'}` });
+    }
+  });
+
+  // ---- + Add AI
+  app.get('/api/extra-ai', (_req, res) => {
+    res.json({ providers: extraSummary(), presets: PRESETS });
+  });
+  app.post('/api/extra-ai/scan', async (req, res) => {
+    if (!isLocal(req)) return res.status(403).json({ error: 'Only from this computer.' });
+    res.json({ ...(await scanExtraAIs()), providers: extraSummary() });
+  });
+  app.post('/api/extra-ai', async (req, res) => {
+    if (!isLocal(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'AIs can only be added from the hub on this computer.' });
+    try {
+      res.json({ ...(await addExtraAI(req.body || {})), providers: extraSummary() });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+  app.post('/api/extra-ai/:id/:action', (req, res) => {
+    if (!isLocal(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'Only from the hub on this computer.' });
+    try {
+      if (req.params.action === 'remove') removeExtraAI(req.params.id);
+      else setExtraEnabled(req.params.id, req.params.action === 'enable');
+      res.json({ providers: extraSummary() });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 
