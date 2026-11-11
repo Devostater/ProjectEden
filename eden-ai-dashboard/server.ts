@@ -19,6 +19,7 @@ import { registerKnowledgeRoutes, knowledgeFor } from './knowledge';
 import { registerGraphicsRoutes } from './graphics';
 import { registerBackupRoutes } from './backup';
 import { registerDeviceRoutes } from './devices';
+import { registerTeamDeviceRoutes } from './teamDevices';
 import { registerTeamReformRoutes } from './teamReform';
 import { registerDeviceHubRoutes, ON_DEVICE } from './deviceHub';
 import { startExtraScan } from './extraAI';
@@ -460,6 +461,7 @@ async function startServer() {
   registerTerminalRoutes(app);
   registerLyraRoutes(app);
   if (!ON_DEVICE) registerDeviceRoutes(app); // a hub running on a phone or tablet has no USB devices to manage
+  if (!ON_DEVICE) registerTeamDeviceRoutes(app); // alerts and screens on connected devices for the AI team
   registerDeviceHubRoutes(app);
   startExtraScan();
   registerUpdateRoutes(app, {

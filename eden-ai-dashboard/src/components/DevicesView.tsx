@@ -4,6 +4,7 @@ import { api } from '../api.ts';
 import { useBusy } from './BusyBanner.tsx';
 import { RemoteDevices } from './RemoteDevices.tsx';
 import { AddDevice } from './AddDevice.tsx';
+import { DeviceTeamRow } from './DeviceTeamRow.tsx';
 
 interface Device {
   serial: string;
@@ -309,6 +310,7 @@ export const DevicesView: React.FC = () => {
               </div>
             )}
 
+            {d.state === 'device' && <DeviceTeamRow serial={d.serial} />}
             {d.state === 'device' && hubs && (() => {
               const h = hubs.devices[d.serial];
               const isMain = hubs.main === d.serial;

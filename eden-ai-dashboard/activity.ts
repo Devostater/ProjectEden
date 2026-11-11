@@ -66,7 +66,16 @@ export function logActivity(kind: ActivityKind, text: string, extra?: { reason?:
   }
   entries.push(entry);
   if (entries.length > MAX) entries.splice(0, entries.length - MAX);
+  for (const fn of listeners) {
+    try {
+      fn(kind, entry.text);
+    } catch {}
+  }
 }
+
+// Other parts of the hub can follow the log (e.g. sending "needs you" alerts to your phone).
+const listeners: ((kind: ActivityKind, text: string) => void)[] = [];
+export const onActivity = (fn: (kind: ActivityKind, text: string) => void) => void listeners.push(fn);
 
 // The latest lines (for the AI suggesting app updates: what went wrong recently).
 export const recentActivity = (n = 60) => entries.slice(-n).map((e) => `${e.at.slice(0, 16)} [${e.kind}] ${e.text}`);

@@ -38,6 +38,7 @@ function modelQueue(agent: Agent): string[] {
 import { isOffline, localModelFor, localModels, kindFor, fitsNow } from './offline';
 import { knowledgeFor } from './knowledge';
 import { graphicsModelFor } from './graphics';
+import { devicesNote, showFromResult } from './teamDevices';
 
 export async function askTeammate(
   agent: Agent,
@@ -101,7 +102,7 @@ function buildPrompt(project: Project, card: Card, all: Card[] = []): string {
 const systemFor = (agent: Agent) =>
   `${agent.systemInstruction}
 You are ${agent.name} (${agent.role}), working on a task card for the studio owner. Deliver the finished work for this task in full, ready to use, in clear Markdown. Start with the result itself, not an introduction. If something essential is missing, make a sensible assumption, list it in one line at the end under "Assumptions", and carry on.
-You can only produce text. You cannot change files or the app, run anything, or contact anyone, so never say that you did.`;
+You can only produce text. You cannot change files or the app, run anything, or contact anyone, so never say that you did.${devicesNote()}`;
 
 async function work(cardId: string, getStore: () => RunnerStore, save: () => void) {
   const find = () => (getStore().cards || []).find((c) => c.id === cardId);
@@ -151,6 +152,8 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
     current.runState = undefined;
     current.runMessage = undefined;
     logActivity('done', `${agent.name} finished "${current.title}" (${project.name}). It is waiting in Review.`);
+    const shown = showFromResult(result.text);
+    if (shown.length) logActivity('info', `${agent.name} put a link on ${shown.join(' and ')}.`);
   } else {
     current.notes.push({ id: noteId(), author: 'System', text: `${agent.name} couldn't finish this: ${lastError}`, at: now(), kind: 'error' });
     if (stillOurs) current.column = 'todo';
