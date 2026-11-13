@@ -50,6 +50,7 @@ export const LyraChibi: React.FC<{ connected: boolean; thinking?: boolean; class
   </svg>
 );
 
+interface LyraEdit { id: string; file: string; project: string; isNew: boolean; added: number; removed: number; preview: string[] }
 interface LyraTask { id: string; label: string; status: string; type: string; step: string; pct: number; needsOk: boolean }
 interface LyraOverview {
   connected: boolean;
@@ -68,11 +69,32 @@ const LyraWork: React.FC = () => {
   const [project, setProject] = useState('');
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
-  const load = () =>
+  const [edits, setEdits] = useState<LyraEdit[]>([]);
+  const [deciding, setDeciding] = useState('');
+  const load = () => {
     fetch('/api/lyra/overview')
       .then((r) => r.json())
       .then(setO)
       .catch(() => setO({ connected: false }));
+    fetch('/api/lyra/edits')
+      .then((r) => r.json())
+      .then((d) => setEdits(d.items || []))
+      .catch(() => {});
+  };
+  const decide = async (e: LyraEdit, accept: boolean) => {
+    setDeciding(e.id);
+    try {
+      const r = await fetch('/api/lyra/edits/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: e.id, accept, file: e.file }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'LYRA did not take it.');
+      setEdits((list) => list.filter((x) => x.id !== e.id));
+      setNote(accept ? `Saved ${e.file.split('/').pop()}.` : `Rejected ${e.file.split('/').pop()}.`);
+    } catch (err: any) {
+      setNote(err.message);
+    } finally {
+      setDeciding('');
+    }
+  };
   useEffect(() => {
     load();
     const t = setInterval(load, 10000);
@@ -105,6 +127,45 @@ const LyraWork: React.FC = () => {
         <a href={lyraUrl} target="_blank" rel="noreferrer" className="text-xs text-fuchsia-600 hover:underline dark:text-fuchsia-400">Open LYRA ↗</a>
       </div>
       {o.build && <div className="text-xs text-slate-500 dark:text-slate-400" title={o.build.what}>Build {o.build.name}</div>}
+      {edits.length > 0 && (
+        <div className="space-y-1.5 rounded-lg border border-amber-300 bg-amber-50 p-2 dark:border-amber-500/40 dark:bg-amber-500/10">
+          <div className="text-xs font-semibold text-amber-800 dark:text-amber-300">
+            ✎ {edits.length} edit{edits.length === 1 ? '' : 's'} waiting for your ✓
+          </div>
+          {edits.map((e) => (
+            <details key={e.id} className="rounded-md bg-white px-2 py-1.5 dark:bg-slate-900">
+              <summary className="cursor-pointer list-none">
+                <span className="block truncate text-sm font-medium text-slate-800 dark:text-slate-100" title={e.file}>
+                  {e.isNew ? '🆕 ' : ''}
+                  {e.file.split('/').pop()}
+                </span>
+                <span className="block text-xs text-slate-500 dark:text-slate-400">
+                  {e.project} · <span className="text-emerald-600">+{e.added}</span> <span className="text-red-500">−{e.removed}</span> · tap to look
+                </span>
+              </summary>
+              {e.preview.length > 0 && (
+                <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-slate-100 p-1.5 text-[11px] leading-snug text-slate-700 dark:bg-slate-800 dark:text-slate-200">{e.preview.join('\n')}</pre>
+              )}
+              <div className="mt-1.5 flex gap-1.5">
+                <button
+                  onClick={() => decide(e, true)}
+                  disabled={deciding === e.id}
+                  className="min-h-[36px] flex-1 rounded-md bg-emerald-600 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                >
+                  ✓ Accept
+                </button>
+                <button
+                  onClick={() => decide(e, false)}
+                  disabled={deciding === e.id}
+                  className="min-h-[36px] flex-1 rounded-md border border-slate-300 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  ✕ Reject
+                </button>
+              </div>
+            </details>
+          ))}
+        </div>
+      )}
       <div className="space-y-1">
         {(o.tasks || []).length === 0 && <div className="text-xs text-slate-500 dark:text-slate-400">No tasks yet.</div>}
         {(o.tasks || []).slice(0, 6).map((t) => (

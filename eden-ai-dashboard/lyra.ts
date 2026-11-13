@@ -7,6 +7,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { generate, lyraConnected, pingLyra } from './providers';
 import { logActivity } from './activity';
+import { mayManage } from './pairing';
 
 // Where LYRA's Nova.bat lives. The owner can set LYRA_START_PATH to its full path; otherwise we look in the usual place.
 function findNovaBat(): string | null {
@@ -96,6 +97,29 @@ export function registerLyraRoutes(app: Express) {
       res.end(Buffer.from(await r.arrayBuffer()));
     } catch {
       res.status(502).end();
+    }
+  });
+
+  // ✎ LYRA's edits waiting for your ✓ (from her tasks and chats): which file, how big, a short look at the new lines.
+  app.get('/api/lyra/edits', async (_req, res) => {
+    try {
+      const r = await lyraJson('/api/phone/pending?full=1');
+      res.json({ items: r.items || [] });
+    } catch (err: any) {
+      res.json({ items: [], error: String(err?.message || err) });
+    }
+  });
+  // ✓ / ✕ one of them. Same rule as other code changes here: this computer, or a paired device with "Code updates" on.
+  app.post('/api/lyra/edits/decide', async (req, res) => {
+    if (!mayManage(req)) return res.status(403).json({ error: 'LYRA\'s edits can only be approved from this computer, or from a device with "Code updates" switched on.' });
+    const id = typeof req.body?.id === 'string' ? req.body.id : '';
+    if (!id) return res.status(400).json({ error: 'Which edit?' });
+    try {
+      await lyraJson('/api/apply', { id, accept: !!req.body?.accept });
+      logActivity('info', `${req.body?.accept ? 'Approved' : 'Rejected'} a LYRA edit${req.body?.file ? ' to ' + short(req.body.file, 80) : ''}.`);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(502).json({ error: String(err?.message || err) });
     }
   });
 
