@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, RotateCcw, Eye, EyeOff, Bot, AlertTriangle, Sparkles, Link2, Network, Clock, Code2 } from 'lucide-react';
+import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, Eye, EyeOff, Bot, AlertTriangle, Sparkles, Link2, Network, Clock, Code2 } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
+import { ResultActions } from './ResultActions.tsx';
+import { SendBackBox } from './SendBackBox.tsx';
 import { WorkstreamTabs, WorkstreamDialog } from './Workstreams.tsx';
 import { RunPicker } from './RunPicker.tsx';
 import { WhyWaiting } from './WhyWaiting.tsx';
@@ -46,7 +48,7 @@ const Dialog: React.FC<{ title: string; wide?: boolean; onClose: () => void; onS
       <form
         onSubmit={onSubmit}
         onClick={(e) => e.stopPropagation()}
-        className={`flex max-h-[90vh] w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900`}
+        className={`flex max-h-[90dvh] w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900`}
       >
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
           <h2 className="font-semibold text-slate-900 dark:text-white">{title}</h2>
@@ -259,14 +261,11 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
   const inReview = card.column === 'review';
   const working = card.runState === 'running';
 
-  // Review decisions. Approve finishes the card; send back re-queues it with your note for the teammate.
+  // Review decision: Approve finishes the card and saves its result as a file (Deliverables folder).
+  // Sending it back is the "Send back with feedback" box under the notes.
   const approve = async () => {
-    await api.saveCard({ id: card.id, title, details, assigneeId, priority, column: 'done', note: note.trim() || undefined });
-    onClose();
-  };
-  const sendBack = async () => {
-    if (!note.trim()) return;
-    await api.saveCard({ id: card.id, title, details, assigneeId, priority, column: 'ready', note: note.trim() });
+    await api.saveCard({ id: card.id, title, details, assigneeId, priority, note: note.trim() || undefined });
+    await api.approveCards([card.id]);
     onClose();
   };
 
@@ -323,16 +322,7 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
           </button>
           {inReview ? (
             <>
-              <button
-                type="button"
-                onClick={sendBack}
-                disabled={!note.trim()}
-                title={note.trim() ? '' : 'Write what to change in the note box first'}
-                className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-              >
-                <RotateCcw className="h-4 w-4" /> Send back
-              </button>
-              <button type="button" onClick={approve} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+              <button type="button" onClick={approve} title="Approve, and save the result as a file in the project's Deliverables folder" className="ml-auto flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
                 <Check className="h-4 w-4" /> Approve
               </button>
             </>
@@ -381,7 +371,7 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
         <label htmlFor="cd-details" className={labelClass}>Details</label>
         <textarea id="cd-details" rows={4} value={details} onChange={(e) => setDetails(e.target.value)} placeholder="What needs doing, and what does done look like?" className={inputClass} />
       </div>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
           <label htmlFor="cd-who" className={labelClass}>Who</label>
           <select id="cd-who" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className={inputClass}>
@@ -474,15 +464,29 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
               >
                 {n.kind === 'result' ? <Formatted text={n.text} /> : <span className="whitespace-pre-wrap">{n.text}</span>}
                 <span className="mt-1.5 block text-xs text-slate-500">
+                  {n.kind === 'feedback' && <b className="mr-1 text-slate-600 dark:text-slate-300">Sent back:</b>}
                   {n.author}
                   {n.via ? ` (answered with ${n.via})` : ''} · {new Date(n.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                  {n.web && <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 font-medium text-sky-800 dark:bg-sky-500/20 dark:text-sky-300">Used the web</span>}
+                  {n.revised && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800 dark:bg-amber-500/20 dark:text-amber-300">Revised</span>}
                 </span>
+                {n.kind === 'result' && (
+                  <span className="mt-2 block">
+                    <ResultActions title={card.title} text={n.text} meta={`${project.name} · ${n.author} · ${new Date(n.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`} />
+                  </span>
+                )}
               </li>
             ))}
           </ul>
         )}
-        <textarea id="cd-note" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder={inReview ? 'To send it back, write what should change' : 'Add a note for yourself or for the teammate'} className={inputClass} />
+        <textarea id="cd-note" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder={inReview ? 'A note to keep with the card when you approve it (optional)' : 'Add a note for yourself or for the teammate'} className={inputClass} />
+        {card.deliverablePath && card.column === 'done' && (
+          <p className="mt-1.5 break-all text-xs text-slate-500 dark:text-slate-400">
+            Approved result saved on the PC: <span className="font-mono">{card.deliverablePath}</span>
+          </p>
+        )}
       </div>
+      {inReview && <SendBackBox card={card} assignee={assignee} onSendBack={api.sendBackCard} onSent={onClose} />}
     </Dialog>
   );
 };
@@ -497,8 +501,26 @@ const TeamStrip: React.FC<{ cards: Card[]; agents: Agent[]; filter: string; onFi
   }
   const firstBy = (list: Card[]) => [...list].sort((a, b) => a.order - b.order)[0];
 
+  // On phones each teammate is just a small round icon in one scrolling row (tap one to see its cards and status);
+  // from tablet width up they're the full chips with name and status.
+  const sel = involved.find((a) => a.id === filter);
+  const plainStatus = (a: Agent) => {
+    const mine = cards.filter((c) => c.assigneeId === a.id);
+    const w = mine.find((c) => c.runState === 'running');
+    if (w) return `Working on: ${w.title}`;
+    if (mine.some((c) => c.runState === 'waiting')) return 'Waiting for AI budget';
+    const nx = firstBy(mine.filter((c) => c.column === 'ready' && !c.runState));
+    if (nx) return `Up next: ${nx.title}`;
+    const f = mine.find((c) => c.runState === 'failed');
+    if (f) return `Couldn't run: ${f.title}`;
+    const rv = mine.filter((c) => c.column === 'review').length;
+    if (rv) return `${rv} waiting for your review`;
+    const td = mine.filter((c) => c.column === 'todo').length;
+    return td ? `Idle · ${td} in To do` : `Idle · ${mine.filter((c) => c.column === 'done').length} done`;
+  };
   return (
-    <div className="mt-3 flex flex-wrap gap-2">
+    <>
+    <div className="mt-3 flex gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0">
       {involved.map((a) => {
         const mine = cards.filter((c) => c.assigneeId === a.id);
         const working = mine.find((c) => c.runState === 'running');
@@ -541,24 +563,37 @@ const TeamStrip: React.FC<{ cards: Card[]; agents: Agent[]; filter: string; onFi
             key={a.id}
             onClick={() => onFilter(selected ? '' : a.id)}
             aria-pressed={selected}
-            title={selected ? 'Show everyone\'s cards' : `Show only ${a.name}'s cards`}
-            className={`flex max-w-xs items-center gap-2.5 rounded-full border bg-white py-1.5 pl-1.5 pr-4 text-left dark:bg-slate-900 ${
+            aria-label={`${a.name}: ${plainStatus(a)}`}
+            title={`${a.name}: ${plainStatus(a)}\n${selected ? 'Tap to show everyone\'s cards' : `Tap to show only ${a.name}'s cards`}`}
+            className={`flex shrink-0 items-center gap-2.5 rounded-full border bg-white p-0.5 text-left md:max-w-xs md:shrink md:py-1.5 md:pl-1.5 md:pr-4 dark:bg-slate-900 ${
               selected ? 'border-indigo-500 ring-1 ring-indigo-500' : 'border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700'
             }`}
           >
             <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white" style={{ backgroundColor: a.color }}>
               {a.avatar || a.name.slice(0, 2).toUpperCase()}
-              {working && <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-900" />}
+              {(working || waiting || failed || review > 0) && (
+                <span
+                  className={`absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white dark:border-slate-900 ${
+                    working ? 'bg-emerald-500' : failed && !next ? 'bg-red-500' : 'bg-amber-500'
+                  }`}
+                />
+              )}
             </span>
-            <span className="min-w-0 flex-1">
+            <span className="hidden min-w-0 flex-1 md:block">
               <span className="block truncate text-sm font-medium leading-tight text-slate-900 dark:text-white">{a.name}</span>
               <span className={`mt-0.5 flex items-center gap-1 text-xs leading-tight ${tone}`}>{line}</span>
             </span>
           </button>
         );
       })}
-      {unassigned > 0 && <span className="self-center text-xs text-slate-500">{unassigned} card{unassigned === 1 ? '' : 's'} with nobody assigned</span>}
+      {unassigned > 0 && <span className="shrink-0 self-center whitespace-nowrap text-xs text-slate-500">{unassigned} card{unassigned === 1 ? '' : 's'} with nobody assigned</span>}
     </div>
+    {sel && (
+      <div className="mt-1.5 truncate text-xs text-slate-600 md:hidden dark:text-slate-300">
+        <b>{sel.name}</b> · {plainStatus(sel)}
+      </div>
+    )}
+    </>
   );
 };
 
