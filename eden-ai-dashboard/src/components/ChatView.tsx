@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Send, Users, Bot, Loader2 } from 'lucide-react';
+import { Send, Users, Bot, Loader2, Plus, Check, X } from 'lucide-react';
 import type { Agent } from '../types/index.ts';
 import { emptyThread, type ChatMsg, type ChatThreads, type Thread } from '../chatThreads.ts';
 
@@ -129,10 +129,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ agents, chat, draft, onDraft
     patchThread(target.id, (t) => ({ ...t, title: t.messages.length ? t.title : text.replace(/@[\w-]+\s*/g, '').slice(0, 40) || text.slice(0, 40), messages: history }));
     if (textOverride === undefined) setInput('');
     setBusy(true);
-    // No @name means you're talking to Chief.
+    // No @name means you're talking to whoever this chat is with (picked when it was started), else Chief.
     const named = resolveTargets(text);
     const chief = agents.find((a) => a.id === 'agent-synthesizer');
-    const targets = named.length ? named : chief ? [chief] : [];
+    const chosen = agents.filter((a) => (target.with || []).includes(a.id));
+    const targets = named.length ? named : chosen.length ? chosen : chief ? [chief] : [];
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -190,18 +191,102 @@ export const ChatView: React.FC<ChatViewProps> = ({ agents, chat, draft, onDraft
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
+  // 👥 Who this chat is with: a bar at the top (handy on phones, where the chat list is tucked away) with
+  // "New chat", which asks who the new chat is with. "Change" edits who the current chat is with.
+  const [picker, setPicker] = useState<null | 'new' | 'edit'>(null);
+  const [pick, setPick] = useState<string[]>([]);
+  const withAgents = agents.filter((a) => (thread.with || []).includes(a.id));
+  const withLabel = withAgents.length === 0 ? 'Chief' : withAgents.length === agents.length ? 'Whole team' : withAgents.map((a) => a.name.split(' ')[0]).join(', ');
+  const openPicker = (mode: 'new' | 'edit') => {
+    setPick(mode === 'edit' ? thread.with || [] : []);
+    setPicker(mode);
+  };
+  const confirmPick = () => {
+    if (picker === 'new') chat.newThread(pick);
+    else patchThread(thread.id, (t) => ({ ...t, with: pick }));
+    setPicker(null);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+  const togglePick = (id: string) => setPick((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+
   const providerOf = (m?: string) => models.find((x) => x.id === m)?.provider || '';
   const notConnected = Object.entries(providers).filter(([p, ok]) => !ok && p !== 'extra').map(([p]) => PROVIDER_NAME[p]);
 
   return (
     <div className="flex h-full">
       {/* Conversation */}
-      <section className="flex min-w-0 flex-1 flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <section className="relative flex min-w-0 flex-1 flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
+          <button
+            onClick={() => openPicker('edit')}
+            className="flex min-h-[40px] min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+            title="Change who this chat is with"
+          >
+            <Users className="h-4 w-4 shrink-0 text-indigo-500" />
+            <span className="truncate">
+              With <b>{withLabel}</b>
+            </span>
+            <span className="shrink-0 text-xs text-slate-400">Change</span>
+          </button>
+          <button
+            onClick={() => openPicker('new')}
+            className="flex min-h-[40px] shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 text-sm font-medium text-white hover:bg-indigo-500"
+          >
+            <Plus className="h-4 w-4" /> New chat
+          </button>
+        </div>
+        {picker && (
+          <div className="absolute inset-0 z-20 flex flex-col rounded-xl bg-white/95 p-4 pb-24 backdrop-blur md:pb-4 dark:bg-slate-900/95" role="dialog" aria-label="Who is this chat with">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-base font-semibold text-slate-900 dark:text-white">{picker === 'new' ? 'New chat: who with?' : 'Who is this chat with?'}</h3>
+              <button onClick={() => setPicker(null)} aria-label="Close" className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="mb-3 flex flex-wrap gap-2">
+              <button
+                onClick={() => setPick([])}
+                className={`min-h-[40px] rounded-full border px-4 text-sm ${pick.length === 0 ? 'border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300' : 'border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300'}`}
+              >
+                Chief (your lead)
+              </button>
+              <button
+                onClick={() => setPick(agents.map((a) => a.id))}
+                className={`min-h-[40px] rounded-full border px-4 text-sm ${pick.length === agents.length && agents.length > 0 ? 'border-indigo-500 bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300' : 'border-slate-300 text-slate-600 dark:border-slate-700 dark:text-slate-300'}`}
+              >
+                Whole team
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+              {agents.map((a) => {
+                const on = pick.includes(a.id);
+                return (
+                  <button
+                    key={a.id}
+                    onClick={() => togglePick(a.id)}
+                    className={`flex min-h-[52px] w-full items-center gap-3 rounded-xl border px-3 text-left ${on ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-500/15' : 'border-slate-200 dark:border-slate-800'}`}
+                  >
+                    <span className="h-3 w-3 shrink-0 rounded-full" style={{ background: (a as any).color || '#6366f1' }} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-slate-900 dark:text-white">{a.name}</span>
+                      <span className="block truncate text-xs text-slate-500 dark:text-slate-400">{(a as any).role || ''}</span>
+                    </span>
+                    {on && <Check className="h-5 w-5 shrink-0 text-indigo-600 dark:text-indigo-400" />}
+                  </button>
+                );
+              })}
+            </div>
+            <button onClick={confirmPick} className="mt-3 min-h-[48px] rounded-xl bg-indigo-600 text-base font-medium text-white hover:bg-indigo-500">
+              {picker === 'new' ? 'Start chat' : 'Done'}
+              {pick.length > 0 && pick.length < agents.length ? ` with ${pick.length}` : ''}
+            </button>
+          </div>
+        )}
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
           {thread.messages.length === 0 && (
             <div className="mt-16 text-center text-slate-500 dark:text-slate-400">
               <Users className="mx-auto mb-3" />
-              <p className="text-base text-slate-700 dark:text-slate-200">You're talking to Chief.</p>
+              <p className="text-base text-slate-700 dark:text-slate-200">You're talking to {withLabel}.</p>
               <p className="mt-1">Add @name to ask a teammate, or @all for the whole team.</p>
               <div className="mx-auto mt-4 flex max-w-xl flex-wrap justify-center gap-2">
                 {agents.filter((a) => a.id !== 'agent-synthesizer').map((a) => (
@@ -259,7 +344,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ agents, chat, draft, onDraft
 
         <div className="relative border-t border-slate-200 p-3 dark:border-slate-800">
           {suggestions.length > 0 && (
-            <div className="absolute bottom-full left-3 mb-2 w-64 rounded-lg border border-slate-200 bg-white p-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+            <div className="absolute bottom-full left-3 mb-2 w-64 max-w-[calc(100%-1.5rem)] rounded-lg border border-slate-200 bg-white p-1 shadow-xl dark:border-slate-700 dark:bg-slate-900">
               {suggestions.map((a) => (
                 <button
                   key={a.id}

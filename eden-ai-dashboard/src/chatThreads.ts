@@ -16,6 +16,8 @@ export interface Thread {
   id: string;
   title: string;
   messages: ChatMsg[];
+  // Who this chat is with (agent ids). Empty or missing = Chief. "@name" in a message still overrides it.
+  with?: string[];
 }
 
 const STORAGE_KEY = 'nexus_chat_threads';
@@ -42,10 +44,16 @@ export function useChatThreads() {
   }, [threads]);
 
   // Reuses the current chat if it is still empty, so "New chat" never stacks up blank ones.
-  const newThread = (): Thread => {
+  // `withIds`: who the new chat is with (picked in the chat's "New chat" sheet).
+  const newThread = (withIds?: string[]): Thread => {
     const current = threads.find((t) => t.id === activeId);
-    if (current && !current.messages.length) return current;
-    const t = emptyThread();
+    if (current && !current.messages.length) {
+      if (!withIds) return current;
+      const updated = { ...current, with: withIds };
+      setThreads((ts) => ts.map((t) => (t.id === current.id ? updated : t)));
+      return updated;
+    }
+    const t = { ...emptyThread(), ...(withIds ? { with: withIds } : {}) };
     setThreads((ts) => [t, ...ts]);
     setActiveId(t.id);
     return t;
