@@ -50,6 +50,119 @@ export const LyraChibi: React.FC<{ connected: boolean; thinking?: boolean; class
   </svg>
 );
 
+interface LyraTask { id: string; label: string; status: string; type: string; step: string; pct: number; needsOk: boolean }
+interface LyraOverview {
+  connected: boolean;
+  build?: { name: string; what: string } | null;
+  tasks?: LyraTask[];
+  made?: { title: string; url: string }[];
+  projects?: { path: string; name: string }[];
+  lyraPort?: number;
+}
+const TASK_ICON: Record<string, string> = { running: '⚙', queued: '⏳', done: '✓', failed: '⚠', interrupted: '⏸', cancelled: '■' };
+
+// What LYRA is working on, a box to give her a task, and what she made lately. Refreshes every 10 seconds.
+const LyraWork: React.FC = () => {
+  const [o, setO] = useState<LyraOverview | null>(null);
+  const [text, setText] = useState('');
+  const [project, setProject] = useState('');
+  const [note, setNote] = useState('');
+  const [sending, setSending] = useState(false);
+  const load = () =>
+    fetch('/api/lyra/overview')
+      .then((r) => r.json())
+      .then(setO)
+      .catch(() => setO({ connected: false }));
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 10000);
+    return () => clearInterval(t);
+  }, []);
+  if (!o || !o.connected) return null;
+  const give = async () => {
+    const t = text.trim();
+    if (!t || sending) return;
+    setSending(true);
+    setNote('');
+    try {
+      const r = await fetch('/api/lyra/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: t, project }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'LYRA did not take the task.');
+      setText('');
+      setNote(project ? 'Added. Her edits wait for your ✓ in LYRA.' : 'Added to her tasks.');
+      load();
+    } catch (err: any) {
+      setNote(err.message);
+    } finally {
+      setSending(false);
+    }
+  };
+  const lyraUrl = `${location.protocol}//${location.hostname}:${o.lyraPort || 4777}/`;
+  return (
+    <div className="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto border-l border-slate-200 px-3 py-2 text-sm dark:border-slate-800">
+      <div className="flex items-center justify-between">
+        <span className="font-semibold text-slate-900 dark:text-white">LYRA's work</span>
+        <a href={lyraUrl} target="_blank" rel="noreferrer" className="text-xs text-fuchsia-600 hover:underline dark:text-fuchsia-400">Open LYRA ↗</a>
+      </div>
+      {o.build && <div className="text-xs text-slate-500 dark:text-slate-400" title={o.build.what}>Build {o.build.name}</div>}
+      <div className="space-y-1">
+        {(o.tasks || []).length === 0 && <div className="text-xs text-slate-500 dark:text-slate-400">No tasks yet.</div>}
+        {(o.tasks || []).slice(0, 6).map((t) => (
+          <div key={t.id} className="flex items-start gap-2 rounded-lg bg-slate-100 px-2 py-1.5 dark:bg-slate-800/60" title={t.step}>
+            <span className={t.status === 'running' ? 'animate-spin' : ''}>{t.needsOk ? '⏸' : TASK_ICON[t.status] || '•'}</span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-slate-800 dark:text-slate-100">{t.label.replace(/^(🎙|🤖)\s*/, '')}</span>
+              {(t.status === 'running' || t.needsOk) && (
+                <span className="block truncate text-xs text-slate-500 dark:text-slate-400">{t.needsOk ? 'Waiting for your OK in LYRA' : t.step || 'Working…'}{t.pct > 0 && t.pct < 1 ? ` (${Math.round(t.pct * 100)}%)` : ''}</span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          give();
+        }}
+        className="space-y-1.5"
+      >
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={2}
+          aria-label="Task for LYRA"
+          placeholder="Give LYRA a task… (e.g. add a shield meter)"
+          className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:border-fuchsia-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+        />
+        <div className="flex gap-1.5">
+          <select value={project} onChange={(e) => setProject(e.target.value)} aria-label="Project" className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">
+            <option value="">💬 No project (just do it)</option>
+            {(o.projects || []).map((p) => (
+              <option key={p.path} value={p.path} title={p.path}>
+                📁 {p.name}
+              </option>
+            ))}
+          </select>
+          <button type="submit" disabled={sending || !text.trim()} className="rounded-lg bg-fuchsia-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-fuchsia-500 disabled:opacity-50">
+            {sending ? '…' : 'Give'}
+          </button>
+        </div>
+        {note && <div className="text-xs text-slate-500 dark:text-slate-400">{note}</div>}
+      </form>
+      {(o.made || []).length > 0 && (
+        <div>
+          <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">Made lately</div>
+          <div className="grid grid-cols-4 gap-1">
+            {(o.made || []).map((m) => (
+              <img key={m.url} src={m.url} alt={m.title} title={m.title} loading="lazy" className="aspect-square w-full rounded-md bg-slate-200 object-cover dark:bg-slate-800" />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const LyraPanel: React.FC = () => {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -219,6 +332,7 @@ export const LyraPanel: React.FC = () => {
           </button>
         </form>
       </div>
+      {connected && <LyraWork />}
     </div>
   );
 };
