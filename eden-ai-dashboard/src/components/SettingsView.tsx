@@ -3,6 +3,7 @@ import { UsageBar, useProviderUsage } from './UsageBars.tsx';
 import { CheckCircle2, Circle, Save, Loader2, RefreshCw, ChevronDown, LogIn, Power, Archive } from 'lucide-react';
 import { KnowledgeCard } from './KnowledgeCard.tsx';
 import { OfflineCard } from './Offline.tsx';
+import { AutoPauseCard } from './UsageWarning.tsx';
 import { BackupsCard } from './BackupsCard.tsx';
 import { FreeAIs } from './FreeAIs.tsx';
 
@@ -56,6 +57,9 @@ const RestartCard: React.FC = () => {
   const [confirm, setConfirm] = useState(false);
   const [state, setState] = useState<'idle' | 'restarting' | 'failed'>('idle');
   const [error, setError] = useState('');
+  const [stopConfirm, setStopConfirm] = useState(false);
+  const [stopState, setStopState] = useState<'idle' | 'stopping' | 'stopped' | 'failed'>('idle');
+  const [stopError, setStopError] = useState('');
 
   const restart = async () => {
     setConfirm(false);
@@ -79,28 +83,71 @@ const RestartCard: React.FC = () => {
     }
   };
 
+  const stopServer = async () => {
+    setStopConfirm(false);
+    setStopError('');
+    setStopState('stopping');
+    try {
+      const res = await fetch('/api/stop-server', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Could not stop the hub.');
+      setStopState('stopped');
+    } catch (err: any) {
+      setStopError(err.message);
+      setStopState('failed');
+    }
+  };
+
   return (
-    <div>
-      <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Restart the hub</h2>
-      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use this after a code update that says the hub needs a restart. It closes and starts the hub again for you.</p>
-      <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-        {confirm ? (
-          <>
-            <span className="text-sm text-slate-600 dark:text-slate-300">Restart now? Anything the team is writing right now will stop.</span>
-            <button onClick={restart} className="rounded-md bg-red-600 px-2.5 py-1 text-sm font-medium text-white hover:bg-red-500">Restart</button>
-            <button onClick={() => setConfirm(false)} className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
-          </>
-        ) : (
-          <button
-            onClick={() => setConfirm(true)}
-            disabled={state === 'restarting'}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-          >
-            {state === 'restarting' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
-            {state === 'restarting' ? 'Restarting… this page reloads when the hub is back' : 'Restart hub'}
-          </button>
-        )}
-        {error && <span role="alert" className="text-sm text-red-500">{error}</span>}
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Restart the hub</h2>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use this after a code update that says the hub needs a restart. It closes and starts the hub again for you.</p>
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          {confirm ? (
+            <>
+              <span className="text-sm text-slate-600 dark:text-slate-300">Restart now? Anything the team is writing right now will stop.</span>
+              <button onClick={restart} className="rounded-md bg-red-600 px-2.5 py-1 text-sm font-medium text-white hover:bg-red-500">Restart</button>
+              <button onClick={() => setConfirm(false)} className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
+            </>
+          ) : (
+            <button
+              onClick={() => setConfirm(true)}
+              disabled={state === 'restarting'}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              {state === 'restarting' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
+              {state === 'restarting' ? 'Restarting… this page reloads when the hub is back' : 'Restart hub'}
+            </button>
+          )}
+          {error && <span role="alert" className="text-sm text-red-500">{error}</span>}
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Stop the server</h2>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Turn off the Lyra server process on this laptop.</p>
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+          {stopState === 'stopped' ? (
+            <span role="status" className="text-sm font-medium text-emerald-600 dark:text-emerald-400">Server stopped successfully. You can close this window.</span>
+          ) : stopConfirm ? (
+            <>
+              <span className="text-sm text-slate-600 dark:text-slate-300">Turn off the Lyra server?</span>
+              <button onClick={stopServer} className="rounded-md bg-red-600 px-2.5 py-1 text-sm font-medium text-white hover:bg-red-500">Stop Server</button>
+              <button onClick={() => setStopConfirm(false)} className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
+            </>
+          ) : (
+            <button
+              onClick={() => setStopConfirm(true)}
+              disabled={stopState === 'stopping'}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              {stopState === 'stopping' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
+              {stopState === 'stopping' ? 'Stopping server…' : 'Stop server'}
+            </button>
+          )}
+          {stopError && <span role="alert" className="text-sm text-red-500">{stopError}</span>}
+        </div>
       </div>
     </div>
   );
@@ -327,6 +374,8 @@ export const SettingsView: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
           );
         })}
       </div>
+
+      <AutoPauseCard />
 
       <OfflineCard />
 
