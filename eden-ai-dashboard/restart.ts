@@ -1,37 +1,29 @@
 // "Restart hub": starts a fresh copy of the hub and closes this one, so you don't have to close and reopen Start Eden.
 // The new copy waits a few seconds first, so this one has let go of its port by then.
-// Only the computer running the hub, from the hub's own page, can do this.
+// Only the hub's own page can do this: on the computer running the hub, or on a paired device with "Code updates" switched on.
 import { spawn } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
 import { logActivity } from './activity';
+import { mayManage } from './pairing';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 
-function isLocal(req: Request) {
-  const ip = req.socket.remoteAddress || '';
-  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
-}
-function fromOwnPage(req: Request) {
-  try {
-    return !!req.headers.origin && new URL(req.headers.origin).host === req.headers.host;
-  } catch {
-    return false;
-  }
-}
-
 function startNewCopy() {
+  // The supervisor (scripts/hub-supervisor.mjs) starts the hub and keeps it running; plain "npm run dev" is the fallback.
+  const command = fs.existsSync(path.join(APP_DIR, 'scripts', 'hub-supervisor.mjs')) ? 'node scripts/hub-supervisor.mjs' : 'npm run dev';
   if (process.platform === 'win32') {
     // Opens a new window for the hub, like Start Eden does.
-    spawn('cmd', ['/c', 'start "EDEN AI Dashboard Server" cmd /c "timeout /t 4 /nobreak >nul & npm run dev"'], {
+    spawn('cmd', ['/c', `start "EDEN AI Dashboard Server" cmd /c "timeout /t 4 /nobreak >nul & ${command}"`], {
       cwd: APP_DIR,
       detached: true,
       stdio: 'ignore',
       windowsHide: false,
     }).unref();
   } else {
-    spawn('sh', ['-c', 'sleep 4 && npm run dev'], { cwd: APP_DIR, detached: true, stdio: 'ignore' }).unref();
+    spawn('sh', ['-c', `sleep 4 && ${command}`], { cwd: APP_DIR, detached: true, stdio: 'ignore' }).unref();
   }
 }
 
@@ -48,18 +40,13 @@ export function restartHub() {
 }
 
 export function registerRestartRoutes(app: Express) {
-  app.post('/api/restart', (req, res) => {
-    if (!isLocal(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'The hub can only be restarted from this computer.' });
-    logActivity('work', 'Hub restarting (asked for from Settings).');
+  app.post('/api/stop-server', (req, res) => {
+    if (!mayManage(req)) return res.status(403).json({ error: 'The hub can only be stopped from this computer, or from a device with "Code updates" switched on.' });
+    logActivity('work', 'Hub server stopping (asked for from Settings).');
     res.json({ ok: true });
     res.on('finish', () => {
-      if (process.env.EDEN_SUPERVISED === '1') return void setTimeout(() => process.exit(0), 300);
-      try {
-        startNewCopy();
-      } catch {
-        return; // couldn't start a new copy: keep this one running rather than leave you with no hub
-      }
       setTimeout(() => process.exit(0), 300);
     });
   });
-}
+
+  app.post('/api/restart', (req, res) => {
