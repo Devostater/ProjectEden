@@ -8,7 +8,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express, Request, Response } from 'express';
-import { logActivity } from './activity';
+import { logActivity, fileProblem } from './activity';
 import { lanAddresses, pairingCode } from './pairing';
 
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-devices.json');
@@ -37,11 +37,15 @@ try {
     declined = Array.isArray(saved?.declined) ? saved.declined : [];
     wifiReady = Array.isArray(saved?.wifi) ? saved.wifi : [];
   }
-} catch {}
+} catch (err: any) {
+  fileProblem('load your remembered devices', err);
+}
 const save = () => {
   try {
     fs.writeFileSync(FILE, JSON.stringify({ auto: remembered, declined, wifi: wifiReady }), 'utf-8');
-  } catch {}
+  } catch (err: any) {
+    fileProblem('save your remembered devices', err);
+  }
 };
 
 interface DeviceInfo {

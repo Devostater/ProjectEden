@@ -14,6 +14,12 @@ export const COLUMNS: { id: CardColumn; label: string; hint: string }[] = [
 
 const send = (method: string, url: string, body?: unknown) => api(method, url, body);
 
+// What the server reports after approving cards: which were approved (and where their result file went) and which were left alone.
+export interface ApproveResult {
+  approved: { id: string; title: string; path?: string }[];
+  skipped: { id: string; title: string; reason: string }[];
+}
+
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
@@ -92,6 +98,14 @@ export function useProjects() {
   const deleteProject = (id: string) => run(() => send('DELETE', `/api/projects/${id}`));
   const saveCard = async (c: Partial<Omit<Card, 'source'>> & { note?: string; source?: Omit<CardSource, 'at'> }) => (await run(() => send('POST', '/api/cards', c)))?.card as Card | undefined;
   const deleteCard = (id: string) => run(() => send('DELETE', `/api/cards/${id}`));
+  // Approve cards in Review: each goes to Done and its result is saved as a file on the PC.
+  const approveCards = (ids: string[]) => run(() => send('POST', '/api/cards/approve', { ids })) as Promise<ApproveResult | undefined>;
+  // Sends a Review card back to the same teammate with the owner's feedback. Throws if the server says no.
+  const sendBackCard = async (id: string, note: string) => {
+    const d = await send('POST', `/api/cards/${id}/send-back`, { note });
+    await refresh();
+    return d.card as Card;
+  };
 
   // Move a card to a column, optionally just before another card. Shown immediately, then saved.
   const moveCard = (cardId: string, column: CardColumn, beforeCardId?: string) => {
@@ -110,7 +124,7 @@ export function useProjects() {
 
   const active = projects.find((p) => p.id === activeId) || projects[0];
 
-  return { runFilterOf, setRunFilter, visible, planRequest, setPlanRequest, openCardId, setOpenCardId, projects, cards, active, activeId: active?.id || '', setActiveId, error, setError, refresh, saveProject, deleteProject, saveCard, deleteCard, moveCard };
+  return { runFilterOf, setRunFilter, visible, planRequest, setPlanRequest, openCardId, setOpenCardId, projects, cards, active, activeId: active?.id || '', setActiveId, error, setError, refresh, saveProject, deleteProject, saveCard, deleteCard, approveCards, sendBackCard, moveCard };
 }
 
 export type ProjectsApi = ReturnType<typeof useProjects>;

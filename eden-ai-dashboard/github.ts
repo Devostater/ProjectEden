@@ -58,18 +58,18 @@ export async function githubFetch(url: string): Promise<Response> {
 
 export function githubError(status: number, repo: string, remaining?: string | null): string {
   const connected = !!githubToken();
-  if (status === 401) return 'GitHub rejected the saved token. It may be mistyped, expired or revoked. Disconnect it and paste a new one in Settings → GitHub.';
+  if (status === 401) return 'GitHub rejected the saved token. It may be mistyped, expired or revoked. Paste a new one in Account → Connections, under GitHub.';
   if (status === 403 || status === 429) {
     return remaining === '0'
       ? connected
         ? 'GitHub hourly limit reached. Try again in a little while.'
-        : 'GitHub hourly limit for unconnected use reached. Connect GitHub in Settings → GitHub for a much higher limit.'
+        : 'GitHub hourly limit for unconnected use reached. Connect GitHub in Account → Connections for a much higher limit.'
       : `GitHub refused access to ${repo}. The token may not have permission for this repository.`;
   }
   if (status === 404) {
     return connected
       ? `Couldn't find ${repo}. Check the name, and that your token can see this repository.`
-      : `Couldn't find ${repo}. Check the name. If it's a private repository, connect GitHub in Settings → GitHub.`;
+      : `Couldn't find ${repo}. Check the name. If it's a private repository, connect GitHub in Account → Connections.`;
   }
   return `GitHub returned an error (${status}) for ${repo}.`;
 }

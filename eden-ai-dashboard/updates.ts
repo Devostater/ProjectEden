@@ -6,18 +6,20 @@
 //   3. The hub runs that codebase's checks on the copy and shows you every changed line.
 //   4. Only when you press Apply is the change copied into the real folder. Undo reverses it.
 //   One update runs at a time; any others asked for meanwhile wait in a queue and start by themselves.
-// Every request here must come from this computer and from the hub's own page.
+// Every request here must come from the hub's own page, on this computer or on a paired device the owner
+// switched "Code updates" on for (see pairing.ts).
 import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
-import { logActivity, recentActivity } from './activity';
+import { logActivity, recentActivity, fileProblem } from './activity';
 import { cliSignedIn } from './providers';
 import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
 import { localAgentModel, localClaudeEnv } from './localClaude';
+import { mayView, mayManage } from './pairing';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STORE = path.join(APP_DIR, '.eden-updates.json');
@@ -70,7 +72,9 @@ function loadCodebases(): Codebase[] {
   let extra: Codebase[] = [];
   try {
     extra = JSON.parse(fs.readFileSync(CODEBASES_FILE, 'utf-8'));
-  } catch {}
+  } catch (err: any) {
+    fileProblem('load your saved codebases', err);
+  }
   const list = [HUB, ...extra.filter((c) => c.id !== 'hub')];
   if (!list.some((c) => c.id === 'lyra') && fs.existsSync(path.join(LYRA_DIR, 'server.js'))) list.push(lyraPreset());
   return list;
@@ -79,7 +83,9 @@ let codebases = loadCodebases();
 const saveCodebases = () => {
   try {
     fs.writeFileSync(CODEBASES_FILE, JSON.stringify(codebases.filter((c) => c.id !== 'hub'), null, 2), 'utf-8');
-  } catch {}
+  } catch (err: any) {
+    fileProblem('save your codebases', err);
+  }
 };
 export const findCodebase = (id?: string) => codebases.find((c) => c.id === (id || 'hub'));
 
@@ -104,6 +110,8 @@ interface UpdateJob {
   check?: { ok: boolean; output: string };
   needsRestart?: boolean;
   error?: string;
+  interruptions?: number; // how many times the hub closed while this was running
+  interrupted?: boolean; // stopped for that reason (after starting again once by itself)
   // Saved just before Apply, so Undo can put the files back exactly as they were.
   restore?: { ref: string; commit: string; files: string[]; backup?: string; at: string };
 }
@@ -111,18 +119,41 @@ interface UpdateJob {
 let jobs: UpdateJob[] = [];
 try {
   jobs = JSON.parse(fs.readFileSync(STORE, 'utf-8'));
-} catch {}
-for (const j of jobs) {
-  j.codebaseId = j.codebaseId || 'hub';
-  if (j.status === 'working' || j.status === 'checking') Object.assign(j, { status: 'failed', error: 'The hub restarted while this was running.' });
+} catch (err: any) {
+  fileProblem('load your saved code updates', err);
 }
 
 const save = () => {
   try {
     fs.writeFileSync(STORE, JSON.stringify(jobs.slice(-50), null, 2), 'utf-8');
-  } catch {}
+  } catch (err: any) {
+    fileProblem('save your code updates', err);
+  }
 };
 const now = () => new Date().toISOString();
+
+// Updates that were running when the hub closed. Nothing is running yet at this point, so they can't still be
+// alive. The first time, an update goes back into the queue and starts again by itself (it keeps its place, so
+// it runs before anything asked for later). Cut short a second time, it is marked failed with "Try again", so
+// an update that keeps stopping the hub can't go round in circles.
+const interrupted: UpdateJob[] = [];
+for (const j of jobs) {
+  j.codebaseId = j.codebaseId || 'hub';
+  if (j.status !== 'working' && j.status !== 'checking') continue;
+  interrupted.push(j);
+  j.interruptions = (j.interruptions || 0) + 1;
+  j.log = [...(j.log || []), 'The hub restarted while this was running'];
+  if (j.interruptions === 1) {
+    j.status = 'queued';
+    delete j.error;
+    j.log.push('Back in the queue: it starts again from the beginning by itself');
+    logActivity('info', `A code update was cut short when the hub restarted. It is back in the queue and starts again by itself: ${j.request.slice(0, 80)}`);
+  } else {
+    Object.assign(j, { status: 'failed', interrupted: true, finishedAt: now(), error: 'The hub restarted while this was running (twice now). Press "Try again" once the hub is staying up.' });
+    logActivity('error', `Code update stopped: the hub restarted twice while it was running. ${j.request.slice(0, 80)}`, { retry: { kind: 'update', id: j.id } });
+  }
+}
+if (interrupted.length) save();
 
 const git = (args: string[], cwd: string, input?: string, env?: NodeJS.ProcessEnv) => {
   const r = spawnSync('git', args, { cwd, encoding: 'utf-8', input, windowsHide: true, maxBuffer: 64 * 1024 * 1024, env: env ? { ...process.env, ...env } : undefined });
@@ -186,19 +217,56 @@ function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skip
 
 function removeCopy(cb: Codebase, id: string) {
   const dir = path.join(WORK_ROOT, id);
-  if (!fs.existsSync(dir)) return;
-  try {
-    // Remove the shared-packages link first, so nothing can follow it into the real folder.
-    const rel = relOf(cb);
-    const link = path.join(rel ? path.join(dir, rel) : dir, 'node_modules');
-    if (fs.existsSync(link) && fs.lstatSync(link).isSymbolicLink()) fs.rmdirSync(link);
-  } catch {}
-  try {
-    git(['worktree', 'remove', '--force', dir], repoRoot(cb));
-  } catch {
+  const prune = () => {
     try {
       git(['worktree', 'prune'], repoRoot(cb));
     } catch {}
+  };
+  // The folder is already gone (for example after a crash): just forget git's leftover entry for it.
+  if (!fs.existsSync(dir)) return prune();
+  // Remove the shared-packages link first, so nothing can follow it into the real folder. It sits in the copy's
+  // top folder or one folder down, depending on where the codebase is inside its repository.
+  const isLink = (p: string) => {
+    try {
+      return fs.lstatSync(p).isSymbolicLink();
+    } catch {
+      return false;
+    }
+  };
+  let places = [dir];
+  try {
+    places = [dir, ...fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== '.git' && e.name !== 'node_modules').map((e) => path.join(dir, e.name))];
+  } catch {}
+  const links = places.map((p) => path.join(p, 'node_modules'));
+  for (const link of links) {
+    try {
+      if (isLink(link)) fs.rmdirSync(link);
+    } catch {}
+  }
+  try {
+    git(['worktree', 'remove', '--force', dir], repoRoot(cb));
+  } catch {
+    // Git no longer knows this copy (the hub stopped half-way through making it): delete the folder itself,
+    // but never while a shared-packages link is still inside it.
+    try {
+      if (!links.some(isLink)) fs.rmSync(dir, { recursive: true, force: true });
+    } catch {}
+    prune();
+  }
+}
+
+// Working copies left behind by updates that were cut short in the past are cleared away when the hub starts.
+function sweepCopies() {
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(WORK_ROOT);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const job = jobs.find((j) => j.id === name);
+    if (job && (job.status === 'working' || job.status === 'checking')) continue; // in use right now
+    removeCopy(findCodebase(job?.codebaseId) || HUB, name);
   }
 }
 
@@ -232,7 +300,7 @@ async function runAI(cb: Codebase, job: UpdateJob, appDir: string) {
   }
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--tools', 'Read,Edit,Write,Glob,Grep', '--model', local || 'claude-sonnet-5-5'];
   await new Promise<void>((resolve, reject) => {
-    const child = spawn('claude', args, { cwd: appDir, shell: true, windowsHide: true, env: local ? localClaudeEnv() : process.env });
+    const child = spawn(['claude', ...args].join(' '), { cwd: appDir, shell: true, windowsHide: true, env: local ? localClaudeEnv() : process.env });
     let buffer = '';
     let errText = '';
     const timer = setTimeout(() => {
@@ -297,30 +365,68 @@ function hasTests(appDir: string) {
   }
 }
 
+// Runs a command in the background and gives back its exit code and output. The hub keeps answering while it
+// runs: tests and type checks take a minute or more, and waiting for them the old way froze the whole hub (pages
+// stopped loading, and the watchdog restarted the hub, which killed the update that was running).
+function runCommand(cmd: string, args: string[], opts: { cwd: string; timeout: number; shell?: boolean; env?: NodeJS.ProcessEnv }): Promise<{ status: number | null; out: string }> {
+  return new Promise((resolve) => {
+    let out = '';
+    let done = false;
+    // Through a shell the command goes as one line (the words here are fixed, never typed in by anyone).
+    const child = opts.shell
+      ? spawn([cmd, ...args].join(' '), { cwd: opts.cwd, shell: true, windowsHide: true, env: opts.env })
+      : spawn(cmd, args, { cwd: opts.cwd, windowsHide: true, env: opts.env });
+    const finish = (status: number | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve({ status, out });
+    };
+    const timer = setTimeout(() => {
+      out += `\n(Stopped: it was still running after ${Math.round(opts.timeout / 60000)} minutes.)`;
+      // Through a shell the real work is a child of the shell, so stop the whole family.
+      if (process.platform === 'win32' && child.pid) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }).on('error', () => {});
+      else child.kill();
+      finish(null);
+    }, opts.timeout);
+    const add = (d: Buffer) => {
+      out += d.toString();
+      if (out.length > 4_000_000) out = out.slice(-2_000_000);
+    };
+    child.stdout?.on('data', add);
+    child.stderr?.on('data', add);
+    child.on('error', (err) => {
+      out += String(err?.message || err);
+      finish(null);
+    });
+    child.on('close', (code) => finish(code));
+  });
+}
+
 // Runs the codebase's tests and returns the names of the ones that failed.
-function runTests(appDir: string): { ok: boolean; failed: string[]; out: string } {
-  const r = spawnSync('npm', ['test'], { cwd: appDir, shell: true, encoding: 'utf-8', windowsHide: true, timeout: 8 * 60 * 1000, env: { ...process.env, CI: '1' } });
-  const out = `${r.stdout || ''}${r.stderr || ''}`;
+async function runTests(appDir: string): Promise<{ ok: boolean; failed: string[]; out: string }> {
+  const r = await runCommand('npm', ['test'], { cwd: appDir, shell: true, timeout: 8 * 60 * 1000, env: { ...process.env, CI: '1' } });
+  const out = r.out;
   // The test reporter marks a failed test with ✖ in front of its name.
   const failed = [...new Set([...out.matchAll(/^\s*✖\s+(.+?)(?:\s+\(\d[\d.]*m?s\))?\s*$/gm)].map((m) => m[1].trim()))].filter((n) => !/^failing tests:?$/i.test(n));
   return { ok: r.status === 0, failed, out };
 }
 
-function runCheck(cb: Codebase, appDir: string, files: string[], baselineFailed: string[] = []): { ok: boolean; output: string } {
+async function runCheck(cb: Codebase, appDir: string, files: string[], baselineFailed: string[] = []): Promise<{ ok: boolean; output: string }> {
   const clean = (s: string) => s.replace(new RegExp(appDir.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&'), 'g'), '').trim().slice(-6000);
   if (cb.check === 'tsc') {
-    const r = spawnSync('npx', ['tsc', '--noEmit'], { cwd: appDir, shell: true, encoding: 'utf-8', windowsHide: true, timeout: 5 * 60 * 1000 });
-    return { ok: r.status === 0, output: clean(`${r.stdout || ''}${r.stderr || ''}`) };
+    const r = await runCommand('npx', ['tsc', '--noEmit'], { cwd: appDir, shell: true, timeout: 5 * 60 * 1000 });
+    return { ok: r.status === 0, output: clean(r.out) };
   }
   // Node: every changed .js file must parse, then the codebase's own tests must pass.
   const outputs: string[] = [];
   for (const f of files.filter((f) => /\.(c|m)?js$/.test(f) && fs.existsSync(path.join(appDir, f)))) {
-    const r = spawnSync(process.execPath, ['--check', f], { cwd: appDir, encoding: 'utf-8', windowsHide: true, timeout: 60_000 });
-    if (r.status !== 0) return { ok: false, output: clean(`Syntax error in ${f}:\n${r.stderr || r.stdout}`) };
+    const r = await runCommand(process.execPath, ['--check', f], { cwd: appDir, timeout: 60_000 });
+    if (r.status !== 0) return { ok: false, output: clean(`Syntax error in ${f}:\n${r.out}`) };
   }
   outputs.push(`${files.length} file(s) parse cleanly.`);
   if (hasTests(appDir)) {
-    const t = runTests(appDir);
+    const t = await runTests(appDir);
     const newFailures = t.failed.filter((n) => !baselineFailed.includes(n));
     const stillFailing = t.failed.filter((n) => baselineFailed.includes(n));
     // Judge the change only on tests it broke; tests that were already failing are listed but don't count.
@@ -333,6 +439,10 @@ function runCheck(cb: Codebase, appDir: string, files: string[], baselineFailed:
 }
 
 let busy = false;
+// A hub update that changes the server part was applied or undone since this copy of the hub started:
+// it only takes effect after a restart (which also clears this).
+let restartPending = false;
+const LOCKED = 'Code updates are kept to this computer. To use them on this device too, switch on "Code updates" for it on the PC (Devices, under Connected over Wi-Fi), or plug it in with USB.';
 let onApplied: (job: UpdateJob, cb: Codebase) => void = () => {};
 
 async function process_(job: UpdateJob) {
@@ -351,7 +461,7 @@ async function process_(job: UpdateJob) {
       if (cb.check === 'node' && hasTests(copy.appDir)) {
         job.log.push(`Running ${cb.name}'s tests once first, to see what already fails (about a minute or two)`);
         save();
-        baselineFailed = runTests(copy.appDir).failed;
+        baselineFailed = (await runTests(copy.appDir)).failed;
         if (baselineFailed.length) job.log.push(`Already failing before any change: ${baselineFailed.join('; ')}`);
       }
       job.log.push('Claude is working on the copy');
@@ -362,7 +472,7 @@ async function process_(job: UpdateJob) {
       job.status = 'checking';
       job.log.push(cb.check === 'tsc' ? 'Running the type check' : 'Checking the code and running the tests');
       save();
-      job.check = runCheck(cb, copy.appDir, job.files.map((f) => f.path), baselineFailed);
+      job.check = await runCheck(cb, copy.appDir, job.files.map((f) => f.path), baselineFailed);
       job.status = 'ready';
       logActivity(job.check.ok ? 'done' : 'error', `Code update ready for review (${cb.name}, ${job.files.length} file${job.files.length === 1 ? '' : 's'}${job.check.ok ? '' : ', checks failed'}).`);
     } finally {
@@ -482,7 +592,9 @@ interface BackupInfo {
 let lastBackup: BackupInfo | null = null;
 try {
   lastBackup = JSON.parse(fs.readFileSync(BACKUP_FILE, 'utf-8'));
-} catch {}
+} catch (err: any) {
+  fileProblem('load the last backup details', err);
+}
 let backingUp = false;
 
 function makeBackup(): { files: number; changed: boolean } {
@@ -521,7 +633,9 @@ function runBackup(auto: boolean): BackupInfo {
     lastBackup = { at: now(), files, changed, auto };
     try {
       fs.writeFileSync(BACKUP_FILE, JSON.stringify(lastBackup, null, 2), 'utf-8');
-    } catch {}
+    } catch (err: any) {
+      fileProblem('save the last backup details', err);
+    }
     logActivity('done', `${auto ? 'Daily backup' : 'Backup'} saved: ${files} file${files === 1 ? '' : 's'}${changed ? '' : ' (nothing had changed since the last one)'}.`);
     return lastBackup;
   } catch (err: any) {
@@ -563,14 +677,21 @@ export function requestCodeUpdate(codebaseId: string, request: string, cardId?: 
 export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: { cardId?: string; request: string; codebase: string; files: number; needsRestart: boolean; restartHint: string }) => void } = {}) {
   onApplied = (job, cb) =>
     hooks.onApplied?.({ cardId: job.cardId, request: job.request, codebase: cb.name, files: job.files?.length || 0, needsRestart: !!job.needsRestart, restartHint: cb.restartHint });
-  const guard = (req: Request) => (isLocal(req) && fromOwnPage(req) ? '' : 'Code updates can only be managed from the hub on this computer.');
-  startNext(); // updates still waiting when the hub was last closed carry on
+  const guard = (req: Request) => (mayManage(req) ? '' : LOCKED);
+  // Tidy up the working copies of updates that were cut short (now or in the past), before the next one starts.
+  for (const j of interrupted) {
+    const cb = findCodebase(j.codebaseId);
+    if (cb) removeCopy(cb, j.id);
+  }
+  setTimeout(sweepCopies, 3000).unref?.();
+  // Updates still waiting when the hub was last closed carry on, once the hub itself is up and answering.
+  setTimeout(startNext, 8000).unref?.();
   registerIdeaRoutes(app, guard);
   onBusyChange((isBusy) => !isBusy && startNext());
   onOfflineChange((off) => !off && startNext());
 
   app.get('/api/backup', (req, res) => {
-    if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
+    if (!mayView(req)) return res.status(403).json({ error: LOCKED });
     res.json({ last: lastBackup, running: backingUp });
   });
 
@@ -589,17 +710,19 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
   setInterval(autoBackup, 60 * 60 * 1000).unref();
 
   app.get('/api/updates', (req, res) => {
-    if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
+    if (!mayView(req)) return res.status(403).json({ error: LOCKED });
     res.json({
       jobs: [...jobs].reverse().map(({ diff, restore, ...rest }) => ({ ...rest, hasDiff: !!diff, hasRestorePoint: !!restore, codebaseName: findCodebase(rest.codebaseId)?.name || rest.codebaseId })),
       codebases: codebases.map((c) => ({ id: c.id, name: c.name, dir: c.dir, check: c.check, restartHint: c.restartHint, ok: fs.existsSync(c.dir) })),
       busy,
       claudeReady: cliSignedIn('anthropic'),
+      restartPending,
+      remote: !isLocal(req), // a paired device: the page asks before applying, so a stray tap can't change code
     });
   });
 
   app.get('/api/updates/:id/diff', (req, res) => {
-    if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
+    if (!mayView(req)) return res.status(403).json({ error: LOCKED });
     const job = jobs.find((j) => j.id === req.params.id);
     if (!job) return res.status(404).json({ error: 'Update not found.' });
     res.json({ diff: job.diff || '' });
@@ -620,8 +743,8 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
 
   // Add a codebase: any folder inside a git repository.
   app.post('/api/codebases', (req, res) => {
-    const denied = guard(req);
-    if (denied) return res.status(403).json({ error: denied });
+    // Choosing a folder on this PC for the AI to change: only from the PC itself.
+    if (!isLocal(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'A codebase can only be added from the hub on this computer.' });
     const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 40) : '';
     const dir = typeof req.body?.dir === 'string' ? path.resolve(req.body.dir.trim()) : '';
     if (!name || !dir) return res.status(400).json({ error: 'Give it a name and a folder.' });
@@ -688,6 +811,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     }
     job.restore = restore;
     job.status = 'applied';
+    if (cb.id === 'hub' && job.needsRestart) restartPending = true;
     save();
     logActivity('done', `Code update applied (${cb.name}): ${job.request.slice(0, 80)}${job.needsRestart ? ` (${cb.restartHint} to finish)` : ''}`);
     onApplied(job, cb);
@@ -718,6 +842,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
       }
     }
     job.status = 'undone';
+    if (cb.id === 'hub' && job.needsRestart) restartPending = true;
     save();
     logActivity('done', `Code update undone (${cb.name}): ${job.request.slice(0, 80)}`);
     res.json({ ok: true, needsRestart: !!job.needsRestart, restartHint: cb.restartHint });
@@ -777,11 +902,15 @@ let ideaSets: Record<string, IdeaSet> = {};
 try {
   ideaSets = JSON.parse(fs.readFileSync(IDEAS_FILE, 'utf-8'));
   for (const s of Object.values(ideaSets)) s.running = false;
-} catch {}
+} catch (err: any) {
+  fileProblem('load your saved update ideas', err);
+}
 const saveIdeas = () => {
   try {
     fs.writeFileSync(IDEAS_FILE, JSON.stringify(ideaSets, null, 2), 'utf-8');
-  } catch {}
+  } catch (err: any) {
+    fileProblem('save your update ideas', err);
+  }
 };
 const ideaSet = (id: string) => (ideaSets[id] ||= { ideas: [], dismissed: [] });
 const IDEAS_MAX_AGE = 24 * 60 * 60 * 1000;
@@ -820,7 +949,7 @@ async function generateIdeas(cb: Codebase) {
   try {
     const text = await new Promise<string>((resolve, reject) => {
       const args = ['-p', '--output-format', 'json', '--permission-mode', 'default', '--tools', 'Read,Glob,Grep', '--model', 'claude-sonnet-5-5'];
-      const child = spawn('claude', args, { cwd: cb.dir, shell: true, windowsHide: true });
+      const child = spawn(['claude', ...args].join(' '), { cwd: cb.dir, shell: true, windowsHide: true });
       let out = '';
       let err = '';
       const timer = setTimeout(() => {
@@ -870,7 +999,7 @@ async function generateIdeas(cb: Codebase) {
 
 function registerIdeaRoutes(app: Express, guard: (req: Request) => string) {
   app.get('/api/updates/ideas', (req, res) => {
-    if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
+    if (!mayView(req)) return res.status(403).json({ error: LOCKED });
     const cb = findCodebase(String(req.query.codebaseId || 'hub'));
     if (!cb) return res.status(404).json({ error: 'Unknown codebase.' });
     const set = ideaSet(cb.id);

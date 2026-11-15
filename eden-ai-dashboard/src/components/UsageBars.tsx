@@ -48,15 +48,37 @@ export function useProviderUsage(): ProviderUsage[] {
   return usage;
 }
 
-export const RefreshUsageButton: React.FC<{ label?: boolean }> = ({ label = false }) => {
+// How much of its limit an AI has used (0-100). One place, so the bars and the "almost at the limit" warning agree.
+export const usagePercent = (u: ProviderUsage): number => {
+  const real = u.real?.source === 'plan' ? u.real : undefined;
+  const limited = !!real?.limited || !!u.limitNote;
+  return real?.usedPercent !== undefined ? real.usedPercent : limited ? 100 : Math.min(100, Math.round((u.messages / u.limit) * 100));
+};
+
+// Runs a refresh and keeps `busy` true for at least 0.7s, so the spinning icon is always seen (a fast
+// refresh used to finish before the eye caught it, which looked like the button did nothing).
+export function useSpin(run: () => Promise<unknown> | unknown): [boolean, () => Promise<void>] {
   const [busy, setBusy] = useState(false);
+  const go = async () => {
+    if (busy) return;
+    setBusy(true);
+    const started = Date.now();
+    try {
+      await run();
+    } catch {
+    } finally {
+      setTimeout(() => setBusy(false), Math.max(0, 700 - (Date.now() - started)));
+    }
+  };
+  return [busy, go];
+}
+
+export const RefreshUsageButton: React.FC<{ label?: boolean }> = ({ label = false }) => {
+  const [busy, refresh] = useSpin(() => refreshUsage(true));
   return (
     <button
-      onClick={async () => {
-        setBusy(true);
-        await refreshUsage(true);
-        setBusy(false);
-      }}
+      onClick={refresh}
+      disabled={busy}
       aria-label="Refresh usage and sign-in status"
       title="Check usage and sign-ins again"
       className="flex items-center gap-1 rounded px-1 py-0.5 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-200"
@@ -71,7 +93,7 @@ export const UsageBar: React.FC<{ u: ProviderUsage; compact?: boolean }> = ({ u,
   const off = u.mode === 'off';
   const real = u.real?.source === 'plan' ? u.real : undefined;
   const limited = !!real?.limited || !!u.limitNote;
-  const pct = real?.usedPercent !== undefined ? real.usedPercent : limited ? 100 : Math.min(100, Math.round((u.messages / u.limit) * 100));
+  const pct = usagePercent(u);
   const color = off
     ? 'bg-slate-300 dark:bg-slate-700'
     : limited || pct >= 90

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
-import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, ListPlus, Lightbulb, RefreshCw, X, Pencil } from 'lucide-react';
+import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, ListPlus, Lightbulb, RefreshCw, X, Pencil, Lock } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
 
 interface Job {
@@ -19,6 +19,7 @@ interface Job {
   hasRestorePoint?: boolean;
   codebaseName?: string;
   codebaseId?: string;
+  interrupted?: boolean; // stopped because the hub restarted while it ran
 }
 
 interface CodebaseInfo {
@@ -217,18 +218,52 @@ export const UpdatesView: React.FC = () => {
   const [showDiff, setShowDiff] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
   const [confirmUndo, setConfirmUndo] = useState<Job | null>(null); // the applied update waiting for "Yes, undo it"
+  const [confirmApply, setConfirmApply] = useState<Job | null>(null); // on a phone or tablet: "Yes, apply it"
+  const [locked, setLocked] = useState(''); // this device isn't allowed to use Code updates (the reason)
+  const [remote, setRemote] = useState(false); // this is a paired phone or tablet, not the PC
+  const [restartPending, setRestartPending] = useState(false); // an applied update needs the hub restarted
+  const [restarting, setRestarting] = useState(false);
   const live = useRef(false);
 
   const load = async () => {
     try {
-      const d = await fetch('/api/updates').then((r) => r.json());
+      const res = await fetch('/api/updates');
+      const d = await res.json();
+      if (res.status === 403) return setLocked(d.error || 'Code updates are kept to the computer running the hub.');
       if (d.error) return setError(d.error);
+      setLocked('');
       setJobs(d.jobs);
       setBusy(d.busy);
       setClaudeReady(d.claudeReady);
       setCodebases(d.codebases || []);
+      setRemote(!!d.remote);
+      setRestartPending(!!d.restartPending);
       live.current = d.busy;
     } catch {}
+  };
+
+  // Asks the hub to restart, waits for it to stop and come back, then reloads the page.
+  const restartHub = async () => {
+    setError('');
+    setRestarting(true);
+    try {
+      await post('/api/restart');
+    } catch (err: any) {
+      setError(err.message);
+      setRestarting(false);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 2500)); // give the old copy time to close
+    const until = Date.now() + 2 * 60 * 1000;
+    while (Date.now() < until) {
+      try {
+        const r = await fetch('/api/models', { cache: 'no-store' });
+        if (r.status < 500) return window.location.reload();
+      } catch {}
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    setRestarting(false);
+    setError("The hub didn't come back after two minutes. Close and reopen Start Eden on the PC to bring it back.");
   };
 
   useEffect(() => {
@@ -266,9 +301,12 @@ export const UpdatesView: React.FC = () => {
     try {
       const d = await post(`/api/updates/${job.id}/${action}`);
       if (action !== 'discard') {
+        const hub = (job.codebaseId || 'hub') === 'hub';
         setNote(
           d.needsRestart
-            ? `${action === 'apply' ? 'Applied' : 'Undone'}. To finish: ${d.restartHint || 'restart the app'}.`
+            ? hub
+              ? `${action === 'apply' ? 'Applied' : 'Undone'}. Press "Restart Eden now" above to finish.`
+              : `${action === 'apply' ? 'Applied' : 'Undone'}. To finish: ${d.restartHint || 'restart the app'}.`
             : `${action === 'apply' ? 'Applied' : 'Undone'}. The page updates by itself in a moment.`
         );
       }
@@ -299,6 +337,24 @@ export const UpdatesView: React.FC = () => {
     }
   };
 
+  if (locked) {
+    return (
+      <div className="mx-auto max-w-3xl space-y-4 p-4 sm:p-8">
+        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+          <Wand2 className="h-6 w-6 text-indigo-500" /> Code updates
+        </h1>
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
+          <p className="flex items-center gap-2 font-semibold"><Lock className="h-4 w-4 shrink-0" /> Not switched on for this device</p>
+          <p className="mt-2">Code updates let the AI change the code on your PC, so a phone or tablet on Wi-Fi can't use them until you allow it. Two ways to use them here:</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            <li><b>On the PC:</b> open Devices, find this device under "Connected over Wi-Fi", and switch on <b>Code updates</b>. This page then works by itself.</li>
+            <li><b>Or plug this device into the PC with USB</b> and open the hub from Devices → "Open the hub on it".</li>
+          </ul>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-4 sm:p-8">
       <div>
@@ -324,7 +380,7 @@ export const UpdatesView: React.FC = () => {
               {c.name}
             </button>
           ))}
-          <button onClick={() => setAdding(!adding)} className="text-sm text-slate-500 hover:underline">+ Add a codebase</button>
+          {!remote && <button onClick={() => setAdding(!adding)} className="text-sm text-slate-500 hover:underline">+ Add a codebase</button>}
         </div>
         {adding && (
           <div className="mb-3 flex flex-wrap gap-2 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
@@ -400,6 +456,20 @@ export const UpdatesView: React.FC = () => {
         }}
       />
 
+      {(restartPending || restarting) && (
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium">{restarting ? 'Reconnecting…' : 'Restart needed'}</div>
+            <div className="text-xs opacity-90">
+              {restarting ? 'The hub is restarting. This page reloads by itself as soon as it answers.' : 'An update changed the server part of the hub, so it only takes effect after a restart. It takes a few seconds.'}
+            </div>
+          </div>
+          <button onClick={restartHub} disabled={restarting} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-500 disabled:opacity-60">
+            {restarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {restarting ? 'Reconnecting…' : 'Restart Eden now'}
+          </button>
+        </div>
+      )}
       {error && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{error}</p>}
       {note && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{note}</p>}
 
@@ -407,7 +477,7 @@ export const UpdatesView: React.FC = () => {
         <h2 className="font-semibold text-slate-900 dark:text-white">Updates</h2>
         {!jobs.length && <p className="text-sm text-slate-500 dark:text-slate-400">None yet.</p>}
         {jobs.map((job) => {
-          const open = openId === job.id || job.status === 'queued' || job.status === 'working' || job.status === 'checking' || job.status === 'ready';
+          const open = openId === job.id || job.status === 'queued' || job.status === 'working' || job.status === 'checking' || job.status === 'ready' || (job.status === 'failed' && !!job.interrupted);
           const st = STATUS[job.status];
           return (
             <article key={job.id} className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
@@ -435,7 +505,7 @@ export const UpdatesView: React.FC = () => {
                     </p>
                   )}
 
-                  {(job.status === 'working' || job.status === 'checking') && (
+                  {(job.status === 'working' || job.status === 'checking' || (job.status === 'failed' && job.interrupted)) && (
                     <ul className="max-h-48 space-y-0.5 overflow-y-auto font-mono text-xs text-slate-600 dark:text-slate-300">
                       {job.log.slice(-40).map((l, i) => (
                         <li key={i}>· {l}</li>
@@ -501,14 +571,14 @@ export const UpdatesView: React.FC = () => {
                   <div className="flex flex-wrap items-center gap-2">
                     {(job.status === 'ready' || job.status === 'undone') && job.hasDiff && (
                       <button
-                        onClick={() => act(job, 'apply')}
+                        onClick={() => (remote ? setConfirmApply(job) : act(job, 'apply'))}
                         disabled={acting === job.id}
                         className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${job.check?.ok === false ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
                       >
                         <Check className="h-4 w-4" /> {job.check?.ok === false ? 'Apply anyway' : 'Apply to the app'}
                       </button>
                     )}
-                    {job.status === 'applied' && (
+                    {job.status === 'applied' && job.hasDiff && (
                       <button onClick={() => setConfirmUndo(job)} disabled={acting === job.id} className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
                         <RotateCcw className="h-4 w-4" /> Undo
                       </button>
@@ -535,6 +605,43 @@ export const UpdatesView: React.FC = () => {
           );
         })}
       </section>
+
+      {confirmApply && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setConfirmApply(null)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="apply-title"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.key === 'Escape' && setConfirmApply(null)}
+            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-slate-900"
+          >
+            <h2 id="apply-title" className="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-white">
+              <Check className="h-5 w-5 text-emerald-500" /> Apply this to the app on your PC?
+            </h2>
+            <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">“{confirmApply.request.length > 140 ? `${confirmApply.request.slice(0, 140)}…` : confirmApply.request}”</p>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+              {confirmApply.files?.length || 'The'} changed file{confirmApply.files?.length === 1 ? ' is' : 's are'} copied into the real code on the PC. A restore point is saved first, so Undo puts everything back.
+              {confirmApply.check?.ok === false && ' The checks failed for this one, so it may break the app.'}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button autoFocus onClick={() => setConfirmApply(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+                Not yet
+              </button>
+              <button
+                onClick={() => {
+                  const job = confirmApply;
+                  setConfirmApply(null);
+                  act(job, 'apply');
+                }}
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500"
+              >
+                <Check className="h-4 w-4" /> Yes, apply it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {confirmUndo && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setConfirmUndo(null)}>

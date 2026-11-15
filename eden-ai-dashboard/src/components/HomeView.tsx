@@ -1,7 +1,17 @@
-import React, { useState } from 'react';
-import { ArrowRight, ChevronDown, GitBranch, FileText, GripVertical, Plus, Send } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, GitBranch, FileText, GripVertical, Plus, Send } from 'lucide-react';
 import type { Agent, Card, DAGPipeline, HostedFile, Project } from '../types/index.ts';
 import { UsageBar, useProviderUsage, RefreshUsageButton } from './UsageBars.tsx';
+import { openPanel } from '../panel.ts';
+
+// An [error] line from the activity log (see activity.ts).
+interface HomeError {
+  id: number;
+  at: string;
+  kind: string;
+  text: string;
+  hint?: { explain: string; action: string };
+}
 
 interface HomeViewProps {
   agents: Agent[];
@@ -13,7 +23,7 @@ interface HomeViewProps {
   ownerName?: string;
   onAsk: (text: string) => void; // open Chat and send this
   onTalkTo: (agent: Agent) => void; // open Chat addressed to this agent
-  onOpen: (tab: 'projects' | 'my-ai' | 'pipelines' | 'files' | 'settings') => void;
+  onOpen: (tab: 'projects' | 'my-ai' | 'pipelines' | 'files' | 'updates' | 'settings') => void;
 }
 
 // Starting points for a games and digital products studio. They fill the box so you can edit before sending.
@@ -32,8 +42,8 @@ const STARTERS = [
   },
 ];
 
-type PanelId = 'projects' | 'team' | 'ai' | 'workflows' | 'files';
-const DEFAULT_ORDER: PanelId[] = ['projects', 'team', 'ai', 'workflows', 'files'];
+type PanelId = 'projects' | 'team' | 'lyra' | 'ai' | 'workflows' | 'files';
+const DEFAULT_ORDER: PanelId[] = ['projects', 'team', 'lyra', 'ai', 'workflows', 'files'];
 const ORDER_KEY = 'eden_dashboard_order';
 const COLLAPSED_KEY = 'eden_dashboard_collapsed';
 
@@ -64,6 +74,45 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => load(COLLAPSED_KEY, {}));
   const [dragging, setDragging] = useState<PanelId | null>(null);
   const usage = useProviderUsage();
+  // What needs the owner: finished tasks in Review, code updates ready to apply, and errors from the last day.
+  const reviewCount = cards.filter((c) => c.column === 'review').length;
+  const [readyUpdates, setReadyUpdates] = useState(0);
+  const [errors, setErrors] = useState<HomeError[]>([]);
+  const [lyra, setLyra] = useState<{ connected: boolean; build?: { name: string } | null; tasks?: { id: string; label: string; status: string; needsOk: boolean; step: string }[] } | null>(null);
+  const [lyraEdits, setLyraEdits] = useState(0);
+  const [checked, setChecked] = useState(false); // the card waits for the first answer, so it never flashes "All clear"
+  useEffect(() => {
+    let alive = true;
+    // The first look always happens; after that, only while the page is on screen.
+    const load = async (first = false) => {
+      if (!first && document.visibilityState !== 'visible') return;
+      try {
+        const d = await fetch('/api/activity').then((r) => r.json());
+        if (alive && Array.isArray(d.entries)) setErrors(d.entries.filter((e: HomeError) => e.kind === 'error'));
+      } catch {}
+      try {
+        // Only available on this computer; elsewhere there is simply nothing to show.
+        const d = await fetch('/api/updates').then((r) => r.json());
+        if (alive) setReadyUpdates(Array.isArray(d.jobs) ? d.jobs.filter((j: { status: string }) => j.status === 'ready').length : 0);
+      } catch {}
+      try {
+        // LYRA (your local AI on this PC): what she's doing and how many of her edits wait for your OK
+        const [o, e] = await Promise.all([fetch('/api/lyra/overview').then((r) => r.json()), fetch('/api/lyra/edits').then((r) => r.json())]);
+        if (alive) { setLyra(o); setLyraEdits(Array.isArray(e.items) ? e.items.length : 0); }
+      } catch {}
+      if (alive) setChecked(true);
+    };
+    load(true);
+    const timer = setInterval(() => load(), 10000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  // "PC busy" and "AI paused" are states with their own banner and button, not problems to list here.
+  const recentErrors = errors.filter((e) => new Date(e.at).getTime() >= dayAgo && !/^(PC busy|AI paused)/.test(e.text));
+  const allClear = reviewCount === 0 && readyUpdates === 0 && recentErrors.length === 0 && lyraEdits === 0;
   const recentFiles = [...files].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 4);
 
   const submit = () => {
@@ -173,6 +222,33 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
         </div>
       ),
     },
+    lyra: {
+      title: 'LYRA',
+      count: lyra?.connected ? (lyra.tasks || []).filter((t) => t.status === 'running' || t.status === 'queued').length : undefined,
+      action: 'Open',
+      onAction: () => openPanel('lyra'),
+      body: !lyra ? (
+        <p className="text-sm text-slate-500">Checking…</p>
+      ) : !lyra.connected ? (
+        <p className="text-sm text-slate-500">LYRA isn't running. Open the LYRA panel to start her.</p>
+      ) : (
+        <div className="space-y-2 text-sm">
+          <p className="text-slate-500">
+            Your local AI{lyra.build ? ` · build ${lyra.build.name}` : ''}
+            {lyraEdits > 0 && <span className="text-amber-600 dark:text-amber-400"> · {lyraEdits} edit{lyraEdits === 1 ? '' : 's'} to approve</span>}
+          </p>
+          <ul className="space-y-1.5">
+            {(lyra.tasks || []).slice(0, 4).map((t) => (
+              <li key={t.id} className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
+                <span className="w-4 shrink-0 text-center">{t.needsOk ? '⏸' : t.status === 'running' ? '⚙' : t.status === 'queued' ? '⏳' : t.status === 'done' ? '✓' : '⚠'}</span>
+                <span className="truncate">{t.label.replace(/^(🎙|🤖)\s*/, '')}</span>
+              </li>
+            ))}
+            {!(lyra.tasks || []).length && <li className="text-slate-500">No tasks yet. Give her one from the LYRA panel.</li>}
+          </ul>
+        </div>
+      ),
+    },
     ai: {
       title: 'Your AI',
       action: 'Connect',
@@ -229,6 +305,73 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-4 sm:p-8">
+      {/* Needs you: finished tasks to review, code updates to apply, recent errors */}
+      {checked && <section aria-label="Needs you" className={`rounded-xl border p-5 ${allClear ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10' : 'border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10'}`}>
+        {allClear ? (
+          <p className="flex items-center gap-2 font-semibold text-emerald-800 dark:text-emerald-200">
+            <CheckCircle2 className="h-5 w-5 shrink-0" /> All clear
+            <span className="text-sm font-normal text-emerald-700 dark:text-emerald-300">Nothing is waiting for you.</span>
+          </p>
+        ) : (
+          <div className="space-y-3">
+            <h2 className="font-semibold text-slate-900 dark:text-white">Needs you</h2>
+            {reviewCount > 0 && (
+              <div className="flex flex-wrap items-center gap-2 text-sm text-slate-800 dark:text-slate-200">
+                <span className="min-w-0 flex-1">
+                  <b>{reviewCount}</b> finished {reviewCount === 1 ? 'task is' : 'tasks are'} waiting in Review.
+                </span>
+                <button onClick={() => openPanel('review')} className="rounded-lg bg-indigo-600 px-3 py-1.5 font-medium text-white hover:bg-indigo-500">
+                  Open Review
+                </button>
+              </div>
+            )}
+            {lyraEdits > 0 && (
+              <div className="flex flex-wrap items-center gap-2 text-sm text-slate-800 dark:text-slate-200">
+                <span className="min-w-0 flex-1">
+                  <b>{lyraEdits}</b> LYRA {lyraEdits === 1 ? 'edit is' : 'edits are'} waiting for your ✓.
+                </span>
+                <button onClick={() => openPanel('lyra')} className="rounded-lg bg-fuchsia-600 px-3 py-1.5 font-medium text-white hover:bg-fuchsia-500">
+                  Open LYRA
+                </button>
+              </div>
+            )}
+            {readyUpdates > 0 && (
+              <div className="flex flex-wrap items-center gap-2 text-sm text-slate-800 dark:text-slate-200">
+                <span className="min-w-0 flex-1">
+                  <b>{readyUpdates}</b> code {readyUpdates === 1 ? 'update is' : 'updates are'} ready to apply.
+                </span>
+                <button onClick={() => onOpen('updates')} className="rounded-lg bg-indigo-600 px-3 py-1.5 font-medium text-white hover:bg-indigo-500">
+                  Open Code updates
+                </button>
+              </div>
+            )}
+            {recentErrors.length > 0 && (
+              <div className="text-sm text-slate-800 dark:text-slate-200">
+                <p>
+                  <b>{recentErrors.length}</b> {recentErrors.length === 1 ? 'problem' : 'problems'} in the last 24 hours:
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {recentErrors.slice(-3).reverse().map((e) => (
+                    <li key={e.id} className="flex items-start gap-2 text-red-700 dark:text-red-300">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span className="min-w-0">
+                        {e.text}
+                        {e.hint && <span className="block text-slate-600 dark:text-slate-400">{e.hint.explain} {e.hint.action}</span>}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {recentErrors.length > 3 && (
+                  <button onClick={() => openPanel('activity')} className="mt-1 text-slate-600 underline dark:text-slate-300">
+                    …and {recentErrors.length - 3} more. Open Activity
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </section>}
+
       {/* Ask box */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">What are we working on{ownerName ? `, ${ownerName.split(' ')[0]}` : ''}?</h1>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { BookOpen, Search, FolderPlus, X, RefreshCw } from 'lucide-react';
 import { api } from '../api.ts';
+import { useSpin } from './UsageBars.tsx';
 
 interface Info {
   folders: string[];
@@ -25,6 +26,7 @@ export const KnowledgeCard: React.FC = () => {
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = () => api<Info>('GET', '/api/knowledge').then(setInfo).catch(() => {});
+  const [rereading, reread] = useSpin(() => api('POST', '/api/knowledge/rebuild').then(load));
   useEffect(() => {
     load();
   }, []);
@@ -60,8 +62,8 @@ export const KnowledgeCard: React.FC = () => {
           <span>{info.nexus} Nexus discussions and plans</span>
           <span>{info.projects} projects</span>
           <span>{info.files} files</span>
-          <button onClick={() => api('POST', '/api/knowledge/rebuild').then(load)} aria-label="Read everything again" title="Read everything again" className="ml-auto rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
-            <RefreshCw className="h-4 w-4" />
+          <button onClick={reread} disabled={rereading} aria-label="Read everything again" title="Read everything again" className="ml-auto rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+            <RefreshCw className={`h-4 w-4 ${rereading ? 'animate-spin' : ''}`} />
           </button>
         </div>
 

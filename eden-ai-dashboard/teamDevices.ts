@@ -81,17 +81,22 @@ export function showOnDevices(url: string): string[] {
   return shown;
 }
 
-// "SHOW: <link>" lines in a teammate's finished work.
-export function showFromResult(text: string): string[] {
-  const links = [...text.matchAll(/^\s*SHOW:\s*(https?:\/\/\S+)\s*$/gim)].map((m) => m[1]).slice(0, 2);
-  return links.flatMap((l) => showOnDevices(l));
+// "SHOW: <link>" lines in a teammate's finished work. AIs sometimes invent a plausible-looking web address, and a
+// made-up address must never open on your device. So a link is only opened when the teammate was actually given
+// it (`material`: the task, its notes, the project, the knowledge base), or when it is one of the hub's own pages.
+const OWN_PAGE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i;
+export function showFromResult(text: string, material = ''): string[] {
+  const links = [...text.matchAll(/^\s*SHOW:\s*(https?:\/\/\S+)\s*$/gim)].map((m) => m[1].replace(/[)\].,;]+$/, ''));
+  const given = links.filter((l) => OWN_PAGE.test(l) || material.includes(l));
+  return [...new Set(given)].slice(0, 2).flatMap((l) => showOnDevices(l));
 }
 
-// One line for teammates' briefs: which devices they can use right now.
-export function devicesNote(): string {
+// One line for a teammate's brief, only when there is a screen AND the material they were given contains a
+// link. With nothing to show, saying this would only tempt the AI into inventing one.
+export function devicesNote(material = ''): string {
   const screens = ready().filter((d) => roles[d.serial]?.screen);
-  if (!screens.length) return '';
-  return `\nThe owner has ${screens.map(label).join(' and ')} connected as a screen: if they should look at a web page or link (a store page, a build, a reference), add a line "SHOW: <link>" on its own and it opens there.`;
+  if (!screens.length || !/https?:\/\/\S+/i.test(material)) return '';
+  return `\nThe owner has ${screens.map(label).join(' and ')} connected as a screen. If one of the web links written in the task or the material above is something they should look at, you may end with a line "SHOW: <that exact link>" on its own, and it opens there. Only use a link that is already written above. Never invent or guess a link.`;
 }
 
 // ---- alerts from the activity log, batched ---------------------------------------------------------
@@ -112,6 +117,8 @@ const flush = () => {
 export function registerTeamDeviceRoutes(app: Express) {
   onActivity((kind, text) => {
     if (kind !== 'error' && !NEEDS_YOU.some((r) => r.test(text))) return;
+    // States you can see in the hub, not things to buzz a phone about: the PC being busy, and you pausing the AI yourself.
+    if (/^(PC busy|AI paused)/.test(text)) return;
     pending.push(text);
     // Gather for 20 seconds, and at most one alert every 2 minutes.
     if (!timer) timer = setTimeout(flush, Math.max(20000, 120000 - (Date.now() - lastSent))).unref?.() as any;

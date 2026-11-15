@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Wifi, Smartphone, Tablet, Laptop, Pencil, LogOut, Check, X, ChevronDown } from 'lucide-react';
+import { Wifi, Smartphone, Tablet, Laptop, Pencil, LogOut, Check, X, ChevronDown, Wand2 } from 'lucide-react';
 import { api } from '../api.ts';
 
 interface RemoteDevice {
@@ -11,6 +11,7 @@ interface RemoteDevice {
   pairedAt: string;
   lastSeen: string;
   online: boolean;
+  trusted?: boolean; // may make and apply code updates, back up and restart the hub
 }
 
 const ago = (iso: string) => {
@@ -41,7 +42,7 @@ export const RemoteDevices: React.FC<{ folded: string[]; onToggle: (id: string) 
     return () => clearInterval(t);
   }, []);
 
-  const act = async (id: string, action: 'rename' | 'forget', body?: unknown) => {
+  const act = async (id: string, action: 'rename' | 'forget' | 'trust', body?: unknown) => {
     setError('');
     try {
       await api('POST', `/api/remote-devices/${id}/${action}`, body ?? {});
@@ -133,6 +134,27 @@ export const RemoteDevices: React.FC<{ folded: string[]; onToggle: (id: string) 
                       </button>
                     </div>
                   )}
+                  <div className="flex w-full items-center gap-3 border-t border-slate-100 pt-3 text-sm dark:border-slate-800">
+                    <Wand2 className={`h-4 w-4 shrink-0 ${d.trusted ? 'text-indigo-500' : 'text-slate-400'}`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-slate-800 dark:text-slate-200">Code updates</div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                        {d.trusted
+                          ? 'On: this device can ask for, apply and undo code updates, back up, and restart the hub.'
+                          : 'Off: this device can use the hub, but only this PC can change its code.'}{' '}
+                        Only switch it on for your own device, on Wi-Fi you trust.
+                      </div>
+                    </div>
+                    <button
+                      role="switch"
+                      aria-checked={!!d.trusted}
+                      aria-label={`Code updates from ${shownName}`}
+                      onClick={() => act(d.id, 'trust', { trusted: !d.trusted })}
+                      className={`relative h-5 w-9 shrink-0 rounded-full transition ${d.trusted ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-700'}`}
+                    >
+                      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${d.trusted ? 'left-[18px]' : 'left-0.5'}`} />
+                    </button>
+                  </div>
                 </div>
               );
             })

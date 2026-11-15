@@ -7,7 +7,7 @@ export interface Agent {
   localModel?: string; // AI on this PC used offline and in local-first mode; empty = picked by role
   systemInstruction: string;
   color: string;
-  connectedTools: string[];
+  connectedTools: string[]; // abilities; 'web' = may search the web and read pages (Team page switch)
   webhookUrl?: string;
   githubRepo?: string;
   totalTokens: number;
@@ -138,8 +138,11 @@ export interface CardNote {
   author: string;
   text: string;
   at: string;
-  kind?: 'note' | 'result' | 'error'; // 'result' is a teammate's finished work
+  kind?: 'note' | 'result' | 'error' | 'feedback'; // 'result' is a teammate's finished work; 'feedback' is the owner sending it back
   via?: string; // set when another AI answered for the teammate
+  web?: boolean; // the teammate looked things up on the web for this result
+  revised?: boolean; // a result the owner sent back: a newer version replaces it
+  revisedAt?: string;
 }
 
 // Where a card came from, so it can be traced back.
@@ -169,6 +172,7 @@ export interface Card {
   startAfter?: string; // queued: the AI won't start it before this time
   reviewAt?: string; // when it last entered Review
   doneAt?: string; // when it was finished
+  deliverablePath?: string; // where its approved result was saved on this PC (Deliverables folder)
   runState?: 'running' | 'waiting' | 'failed'; // set by the card runner
   runMessage?: string;
   runStartedAt?: string;

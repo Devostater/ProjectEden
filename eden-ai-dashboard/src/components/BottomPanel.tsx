@@ -4,6 +4,7 @@ import type { Agent, Card, Project } from '../types/index.ts';
 import { FlowTab, WorkloadTab, ProgressTab } from './ProjectVisuals.tsx';
 import { ReviewTab, type ReviewProps } from './ReviewTab.tsx';
 import { LyraPanel, LyraChibi } from './LyraPanel.tsx';
+import { OPEN_PANEL_EVENT } from '../panel.ts';
 
 type PanelTab = 'flow' | 'workload' | 'progress' | 'review' | 'lyra' | 'activity' | 'terminal';
 const PROJECT_TABS: PanelTab[] = ['flow', 'workload', 'progress'];
@@ -231,6 +232,15 @@ export const BottomPanel: React.FC<{
       write(OPEN_KEY, '1');
     }
   };
+  // Lets the rest of the app open a tab here: the Dashboard's "Needs you" card, the top bar, voice commands.
+  useEffect(() => {
+    const show = (e: Event) => {
+      const want = (e as CustomEvent).detail as PanelTab;
+      if (want === 'review' || want === 'lyra' || want === 'activity' || want === 'terminal') pick(want);
+    };
+    window.addEventListener(OPEN_PANEL_EVENT, show);
+    return () => window.removeEventListener(OPEN_PANEL_EVENT, show);
+  }, [open]);
   const toggle = () => {
     write(OPEN_KEY, open ? '0' : '1');
     setOpen(!open);

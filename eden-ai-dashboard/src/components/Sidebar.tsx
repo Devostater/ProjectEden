@@ -197,7 +197,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <>
       {mobileOpen && <div className="fixed inset-0 z-40 bg-black/50 md:hidden" onClick={onCloseMobile} aria-hidden="true" />}
       <aside
-        className={`${mobileOpen ? 'fixed inset-y-0 left-0 z-50 flex shadow-xl' : 'hidden'} md:sticky md:top-0 md:z-auto md:flex md:shadow-none h-screen shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-150 dark:border-slate-800 dark:bg-slate-900 ${
+        className={`${mobileOpen ? 'fixed inset-y-0 left-0 z-50 flex shadow-xl' : 'hidden'} md:sticky md:top-0 md:z-auto md:flex md:shadow-none h-[100dvh] shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-150 dark:border-slate-800 dark:bg-slate-900 ${
           collapsed && !mobileOpen ? 'w-14' : 'w-64 md:w-56'
         }`}
       >

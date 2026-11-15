@@ -7,14 +7,16 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express } from 'express';
-import { logActivity } from './activity';
+import { logActivity, fileProblem } from './activity';
 
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-control.json');
 
 let paused = false;
 try {
   paused = !!JSON.parse(fs.readFileSync(FILE, 'utf-8')).paused;
-} catch {}
+} catch (err: any) {
+  fileProblem('load the Pause AI setting', err);
+}
 
 const listeners: Array<(paused: boolean) => void> = [];
 
@@ -26,7 +28,9 @@ export function setPaused(next: boolean, note?: string) {
   paused = next;
   try {
     fs.writeFileSync(FILE, JSON.stringify({ paused }), 'utf-8');
-  } catch {}
+  } catch (err: any) {
+    fileProblem('save the Pause AI setting', err);
+  }
   logActivity(paused ? 'error' : 'done', note || (paused ? 'AI paused.' : 'AI resumed.'));
   for (const fn of listeners) fn(paused);
 }
@@ -43,7 +47,9 @@ export function registerControlRoutes(app: Express, runningCount: () => { cards:
       paused = next;
       try {
         fs.writeFileSync(FILE, JSON.stringify({ paused }), 'utf-8');
-      } catch {}
+      } catch (err: any) {
+        fileProblem('save the Pause AI setting', err);
+      }
       logActivity(paused ? 'error' : 'done', paused ? 'AI paused: discussions stopped and no new card work will start.' : 'AI resumed.');
       for (const fn of listeners) fn(paused);
     }

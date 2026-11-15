@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar, type AppTab, type SidebarRequest } from './components/Sidebar.tsx';
 import { HomeView } from './components/HomeView.tsx';
 import { MyAIView } from './components/MyAIView.tsx';
@@ -11,11 +11,15 @@ import { NexusView } from './components/NexusView.tsx';
 import { UpdatesView } from './components/UpdatesView.tsx';
 import { DevicesView } from './components/DevicesView.tsx';
 import { StatusBar } from './components/StatusBar.tsx';
+import type { CommandActions } from './components/VoiceCommands.tsx';
 import { TITLES } from './components/Header.tsx';
 import { BusyBanner } from './components/BusyBanner.tsx';
 import { OfflineBanner } from './components/Offline.tsx';
+import { UsageWarningBanner } from './components/UsageWarning.tsx';
 import { RemoteView } from './components/RemoteView.tsx';
 import { MobileNav } from './components/MobileNav.tsx';
+import { MobilePanel } from './components/MobilePanel.tsx';
+import type { ReviewProps } from './components/ReviewTab.tsx';
 import { useNexusRooms } from './nexusRooms.ts';
 import { OUTDATED_EVENT } from './api.ts';
 import type { Agent, DAGPipeline, HostedFile } from './types/index.ts';
@@ -130,8 +134,67 @@ export default function App() {
 
   const mention = (agent: Agent) => `@${agent.name.split(' ')[0]} `;
 
+  // Pages you were on before, so "go back" (a voice or typed command) has somewhere to go.
+  const tabHistory = useRef<AppTab[]>([]);
+  const lastTab = useRef<AppTab>(activeTab);
+  const goingBack = useRef(false);
+  useEffect(() => {
+    if (lastTab.current === activeTab) return;
+    if (!goingBack.current) tabHistory.current = [...tabHistory.current.slice(-29), lastTab.current];
+    goingBack.current = false;
+    lastTab.current = activeTab;
+  }, [activeTab]);
+
+  // What the mic and the command box in the top bar can do (see commands.ts for what they understand).
+  const ask = (r: SidebarRequest) => setRequest({ ...r, n: (request?.n || 0) + 1 });
+  const commandActions: CommandActions = {
+    go: setActiveTab,
+    openAccount,
+    openChat,
+    setDark: (dark) => setDarkMode((now) => (dark === 'toggle' ? !now : dark)),
+    create: (what) => {
+      if (what === 'project') {
+        setActiveTab('projects');
+        ask({ kind: 'new-project' });
+      } else if (what === 'teammate') {
+        setActiveTab('my-ai');
+        ask({ kind: 'new-teammate' });
+      } else {
+        setActiveTab('nexus');
+        setNewRoomRequest((n) => n + 1);
+      }
+    },
+    openProject: (id) => {
+      projectsApi.setActiveId(id);
+      setActiveTab('projects');
+    },
+    back: () => {
+      const previous = tabHistory.current.pop();
+      if (!previous) return false;
+      goingBack.current = true;
+      setActiveTab(previous);
+      return true;
+    },
+    projects: projectsApi.projects.map((p) => ({ id: p.id, name: p.name })),
+    agents: agents.map((a) => ({ name: a.name })),
+  };
+
+  // Everything waiting for your review, for the bottom panel (and the full-screen sheet on phones).
+  const review: ReviewProps = {
+    cards: projectsApi.cards.filter((c) => c.column === 'review'),
+    projects: projectsApi.projects,
+    agents,
+    onApprove: (ids) => projectsApi.approveCards(ids),
+    onSendBack: (id, note) => projectsApi.sendBackCard(id, note),
+    onOpen: (card) => {
+      projectsApi.setActiveId(card.projectId);
+      projectsApi.setOpenCardId(card.id);
+      setActiveTab('projects');
+    },
+  };
+
   return (
-    <div className="flex h-[100dvh] w-screen overflow-hidden bg-slate-100 font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100">
+    <div className="flex h-[100dvh] w-full overflow-hidden bg-slate-100 font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100">
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -161,10 +224,11 @@ export default function App() {
           </div>
         )}
 
-        <StatusBar title={TITLES[activeTab] || ''} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} />
+        <StatusBar title={TITLES[activeTab] || ''} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} actions={commandActions} />
 
         <main className="relative z-10 min-h-0 flex-1 overflow-y-auto">
           <OfflineBanner />
+          <UsageWarningBanner />
           <BusyBanner />
           {activeTab === 'home' && (
             <HomeView
@@ -216,7 +280,7 @@ export default function App() {
           )}
 
           {activeTab === 'chat' && (
-            <div className="h-full p-4">
+            <div className="h-full p-2 md:p-4">
               <ChatView agents={agents} chat={chat} draft={chatDraft} onDraftUsed={() => setChatDraft(null)} />
             </div>
           )}
@@ -274,6 +338,7 @@ export default function App() {
         </main>
 
         <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} onMore={() => setDrawer(true)} reviewCount={reviewCount} />
+        <MobilePanel review={review} />
 
         <BottomPanel
           onOpenPreferences={() => openAccount('preferences')}
@@ -283,17 +348,7 @@ export default function App() {
             if (!card || card.runState !== 'failed') return false;
             return !!(await projectsApi.saveCard({ id, column: 'ready' }));
           }}
-          review={{
-            cards: projectsApi.cards.filter((c) => c.column === 'review'),
-            projects: projectsApi.projects,
-            agents,
-            onApprove: (id) => projectsApi.saveCard({ id, column: 'done' }),
-            onOpen: (card) => {
-              projectsApi.setActiveId(card.projectId);
-              projectsApi.setOpenCardId(card.id);
-              setActiveTab('projects');
-            },
-          }}
+          review={review}
           project={
             activeTab === 'projects' && projectsApi.active
               ? {
