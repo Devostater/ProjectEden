@@ -335,7 +335,7 @@ export const BottomPanel: React.FC<{
         />
       )}
       <div className="flex h-[3.25rem] shrink-0 items-center border-b border-slate-200 px-2 dark:border-slate-800">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        <div className="flex min-w-0 flex-1 items-center justify-evenly gap-1 overflow-x-auto">
         {project && tabButton('flow', 'Flow', Workflow)}
         {project && tabButton('workload', 'Workload', Users)}
         {project && tabButton('progress', 'Progress', TrendingUp)}

@@ -715,6 +715,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </Arrangeable>
           ))}
+          <button onClick={() => { setActiveTab('projects'); onRequest({ kind: 'new-project' }); }} aria-label="New project" title="New project" style={{ order: 9999 }} className={itemClass(false, collapsed)}>
+            <Plus className="h-5 w-5" />
+            {!collapsed && <span className="truncate">New project</span>}
+          </button>
         </nav>
 
         <div className={`border-t border-slate-200 dark:border-slate-800 ${collapsed ? 'p-2' : 'p-3'}`}>

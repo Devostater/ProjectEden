@@ -87,10 +87,13 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
   const pct = rm ? rm.pct : cards.length ? Math.round((done / cards.length) * 100) : 0;
   const r = 34, circ = 2 * Math.PI * r;
   const narrow = width < 520;
-  const square = 'flex aspect-square flex-col items-center justify-center gap-2 rounded-xl border-2 p-2 text-center text-sm font-medium transition-colors';
+  const square = 'flex h-16 flex-col items-center justify-center gap-2 rounded-xl border-2 p-2 text-center text-sm font-medium transition-colors';
 
   return (
-    <aside aria-label="Project panel" style={{ order: 3, width }} className="relative hidden shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-slate-50 xl:flex dark:border-slate-800 dark:bg-slate-950">
+    <aside aria-label="Project panel" style={{ order: 3, width: `min(${width}px, 50vw)`, minWidth: MIN_W }}
+      onDragOver={(e) => { if (e.dataTransfer.types.includes('text/plain')) e.preventDefault(); }}
+      onDrop={(e) => { const id = e.dataTransfer.getData('text/plain'); if (id && project.cards.some((c) => c.id === id)) { e.preventDefault(); project.onOpenCard(id); } }}
+      className="relative hidden shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-slate-50 xl:flex dark:border-slate-800 dark:bg-slate-950">
       <div
         role="separator"
         aria-orientation="vertical"
@@ -132,12 +135,12 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
         {/* The Projects page draws its buttons (Plan with Chief, AI works Ready cards, team, Settings, Sync, New AZI project) here. */}
         <div
           ref={boxRef}
-          className={`mt-3 grid gap-2 ${narrow ? 'grid-cols-3' : 'grid-cols-6'} [&>button]:!flex [&>button]:aspect-square [&>button]:!h-auto [&>button]:!flex-col [&>button]:!items-center [&>button]:!justify-center [&>button]:!gap-2 [&>button]:!whitespace-normal [&>button]:!rounded-xl [&>button]:!p-2 [&>button]:!text-center [&>button]:!text-xs [&>button_svg]:!h-6 [&>button_svg]:!w-6`}
+          className={`mt-3 grid grid-cols-[repeat(auto-fit,minmax(5.5rem,1fr))] gap-2 [&>button]:!flex [&>button]:!h-20 [&>button]:!flex-col [&>button]:!items-center [&>button]:!justify-center [&>button]:!gap-2 [&>button]:!whitespace-normal [&>button]:!rounded-xl [&>button]:!p-2 [&>button]:!text-center [&>button]:!text-xs [&>button_svg]:!h-6 [&>button_svg]:!w-6`}
         />
       </section>
 
       <section className="flex min-h-[280px] flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <div role="tablist" aria-label="Project tools" className={`grid gap-2 border-b border-slate-200 p-3 dark:border-slate-800 ${narrow ? 'grid-cols-3' : 'grid-cols-6'}`}>
+        <div role="tablist" aria-label="Project tools" className="grid grid-cols-[repeat(auto-fit,minmax(5rem,1fr))] gap-2 border-b border-slate-200 p-3 dark:border-slate-800">
           {ORDER.map((id) => {
             const t = SIDE_TABS.find((x) => x.id === id)!;
             const Icon = t.icon;
@@ -145,7 +148,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
             return (
               <button key={id} role="tab" aria-selected={on} onClick={() => setTab(id)} title={t.label}
                 className={`${square} ${on ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-slate-200 text-slate-700 hover:border-indigo-400 dark:border-slate-700 dark:text-slate-200 dark:hover:border-indigo-500'}`}>
-                <Icon className="h-7 w-7" />
+                <Icon className="h-5 w-5" />
                 {t.label}
                 {id === 'roadmap' && rm && <span className="text-xs tabular-nums opacity-80">{rm.pct}%</span>}
               </button>
