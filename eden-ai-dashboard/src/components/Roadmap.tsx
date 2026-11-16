@@ -123,7 +123,7 @@ export const Roadmap: React.FC<{ project: Project; onSave: (roadmap: RoadmapGoal
       {open && (
         <div className="border-t border-slate-200 px-4 pb-4 pt-3 dark:border-slate-800">
           <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">Click a block to move it along: Planned → Building → Done. These are your building blocks, not AI tasks.</p>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className={embedded ? "grid grid-cols-1 gap-3 @xl:grid-cols-2" : "grid gap-3 sm:grid-cols-2 xl:grid-cols-3"}>
             {roadmap.map((g) => {
               const pct = progressOf(g.blocks);
               const done = g.blocks.filter((b) => b.state === 'done').length;

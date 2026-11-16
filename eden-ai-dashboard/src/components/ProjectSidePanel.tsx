@@ -90,7 +90,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
   const square = 'flex aspect-square flex-col items-center justify-center gap-2 rounded-xl border-2 p-2 text-center text-sm font-medium transition-colors';
 
   return (
-    <aside aria-label="Project panel" style={{ order: 3, width }} className="relative hidden shrink-0 flex-col gap-3 overflow-y-auto border-l border-slate-200 bg-slate-50 p-3 xl:flex dark:border-slate-800 dark:bg-slate-950">
+    <aside aria-label="Project panel" style={{ order: 3, width }} className="relative hidden shrink-0 flex-col gap-3 overflow-hidden border-l border-slate-200 bg-slate-50 p-3 xl:flex dark:border-slate-800 dark:bg-slate-950">
       <div
         role="separator"
         aria-orientation="vertical"
@@ -101,7 +101,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
         className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-indigo-400/60"
       />
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+      <section className="shrink-0 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center justify-between">
           <Label>Project health</Label>
           <button onClick={toggle} title="Hide the project panel" aria-label="Hide the project panel" className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
@@ -125,7 +125,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
         </div>
       </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+      <section className="shrink-0 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
         <Label>Project</Label>
         {/* The Projects page draws its buttons (Plan with Chief, AI works Ready cards, team, Settings, Sync, New AZI project) here. */}
         <div
@@ -134,7 +134,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
         />
       </section>
 
-      <section className="flex min-h-[calc(100vh-8rem)] flex-1 flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <section className="flex min-h-[280px] flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div role="tablist" aria-label="Project tools" className={`grid gap-2 border-b border-slate-200 p-3 dark:border-slate-800 ${narrow ? 'grid-cols-3' : 'grid-cols-6'}`}>
           {ORDER.map((id) => {
             const t = SIDE_TABS.find((x) => x.id === id)!;
@@ -150,8 +150,8 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
             );
           })}
         </div>
-        <div className="min-h-0 flex-1 overflow-auto p-3">
-          {tab === 'roadmap' && <div className="h-full min-h-full"><Roadmap key={project.project.id} project={project.project} onSave={project.onSaveRoadmap} embedded /></div>}
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-3">
+          {tab === 'roadmap' && <div className="@container"><Roadmap key={project.project.id} project={project.project} onSave={project.onSaveRoadmap} embedded /></div>}
           {tab === 'progress' && <ProgressTab {...project} />}
           {tab === 'workload' && <WorkloadTab {...project} />}
           {tab === 'trail' && <WorkTrail key={project.project.id} project={project.project} cards={project.cards} agents={project.agents} onOpenCard={project.onOpenCard} />}

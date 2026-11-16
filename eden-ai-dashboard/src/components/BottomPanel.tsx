@@ -439,7 +439,7 @@ export const BottomPanel: React.FC<{
           {tab === 'workload' && <WorkloadTab {...project} />}
           {tab === 'progress' && <ProgressTab {...project} />}
           {tab === 'roadmap' && (
-            <div className="h-full overflow-y-auto">
+            <div className="@container h-full overflow-y-auto">
               <Roadmap key={project.project.id} project={project.project} onSave={project.onSaveRoadmap} embedded />
             </div>
           )}
