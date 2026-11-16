@@ -150,6 +150,7 @@ interface UpdateJob {
   error?: string;
   interruptions?: number; // how many times the hub closed while this was running
   olderBase?: string; // id of an update applied/undone after this one was checked: it still fits, but its checks ran on older code
+  baseApplied?: string[]; // this codebase's applied updates when the copy was made (see updateOverlap.ts)
   olderBaseSameFiles?: boolean; // that update changed a file this one changes too
   interrupted?: boolean; // stopped for that reason (after starting again once by itself)
   uncommitted?: number; // files in the codebase not yet saved to git (GitHub) when the update was asked for / started
@@ -580,6 +581,7 @@ async function process_(job: UpdateJob) {
     job.log.push(`Making a separate copy of ${cb.name} to work on`);
     save();
     const copy = makeCopy(cb, job.id);
+    job.baseApplied = jobs.filter((x) => x.codebaseId === cb.id && x.status === 'applied').map((x) => x.id);
     if (copy.uncommitted !== undefined) job.uncommitted = copy.uncommitted; // the count at the moment the copy was made
     if (copy.skippedLarge) job.log.push(`Left out ${copy.skippedLarge} large file${copy.skippedLarge === 1 ? '' : 's'} (over 5 MB) from the working copy`);
     try {
@@ -839,7 +841,15 @@ function recheckAfter(changed: UpdateJob, cb: Codebase) {
       return false;
     }
   };
-  const r = recheckWaiting(jobs, changed, fits);
+  const appliedNow = jobs.filter((x) => x.codebaseId === cb.id && x.status === 'applied').map((x) => x.id);
+  const r = recheckWaiting(jobs, changed, fits, appliedNow);
+  for (const id of r.current) {
+    const j = jobs.find((x) => x.id === id);
+    if (!j || !j.olderBase) continue;
+    delete j.olderBase;
+    delete j.olderBaseSameFiles;
+    j.log.push(`The code is back to what this was checked on, so its checks count again`);
+  }
   for (const id of r.stale) {
     const j = jobs.find((x) => x.id === id);
     if (!j) continue;
