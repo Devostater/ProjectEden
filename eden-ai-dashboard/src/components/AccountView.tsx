@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { User, Plug, SlidersHorizontal, Sun, Moon, Save, Loader2 } from 'lucide-react';
+import { User, Plug, GitBranch, SlidersHorizontal, Sun, Moon, Save, Loader2 } from 'lucide-react';
 import { SettingsView } from './SettingsView.tsx';
+import { ReposView } from './ReposView.tsx';
+import { DevicesView } from './DevicesView.tsx';
+import { RemoteView } from './RemoteView.tsx';
 import { useInstallApp } from '../installApp.ts';
 import { Download, CheckCircle2 } from 'lucide-react';
 
@@ -46,19 +49,21 @@ const InstallCard: React.FC = () => {
 };
 
 
-export type AccountTab = 'account' | 'connections' | 'preferences';
+export type AccountTab = 'account' | 'connections' | 'github' | 'preferences';
 
 interface AccountViewProps {
   tab: AccountTab;
   setTab: (tab: AccountTab) => void;
   darkMode: boolean;
   setDarkMode: (v: boolean) => void;
+  workflows?: React.ReactNode; // the Workflows editor, shown under Preferences
   onSaved: () => void; // reload anything that depends on settings (profile name, connections)
 }
 
 const TABS: { id: AccountTab; label: string; icon: React.ElementType }[] = [
   { id: 'account', label: 'Account', icon: User },
   { id: 'connections', label: 'Connections', icon: Plug },
+  { id: 'github', label: 'GitHub', icon: GitBranch },
   { id: 'preferences', label: 'Preferences', icon: SlidersHorizontal },
 ];
 
@@ -72,7 +77,7 @@ async function saveSettings(updates: Record<string, string>) {
   if (!res.ok) throw new Error(data.error || 'Could not save.');
 }
 
-export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode, setDarkMode, onSaved }) => {
+export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode, setDarkMode, onSaved, workflows }) => {
   const [name, setName] = useState('');
   const [studio, setStudio] = useState('');
   const [terminalOn, setTerminalOn] = useState(false);
@@ -162,10 +167,19 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
         </form>
       )}
 
-      {tab === 'connections' && <SettingsView onSaved={onSaved} />}
+      {tab === 'connections' && (
+        <div className="space-y-6">
+          <SettingsView onSaved={onSaved} />
+          <DevicesView />
+          <RemoteView />
+        </div>
+      )}
+
+      {tab === 'github' && <ReposView />}
 
       {tab === 'preferences' && (
         <div className="space-y-4">
+          {workflows && <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"><h2 className="px-5 pt-4 text-lg font-semibold text-slate-900 dark:text-white">Workflows</h2>{workflows}</section>}
           <InstallCard />
           <section className={cardClass}>
             <h2 className="font-semibold text-slate-900 dark:text-white">Appearance</h2>

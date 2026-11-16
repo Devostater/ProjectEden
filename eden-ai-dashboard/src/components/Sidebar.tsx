@@ -87,6 +87,15 @@ interface Problem {
   fileNames?: string[];
   moreFiles?: number;
 }
+// A "Save and push" the owner has been asked to confirm: what the hub counted, before anything is saved.
+interface PushPlan {
+  name: string; // folder name
+  projectId: string;
+  files: number;
+  fileNames: string[];
+  moreFiles: number;
+  target: string; // e.g. origin/main
+}
 const visibilityText = (r: AziRepo) => (r.private === true ? ' (private)' : r.private === false ? ' (public)' : '');
 const REPO_DOT: Record<AziRepo['state'], string> = {
   synced: 'bg-emerald-500',
@@ -168,6 +177,53 @@ function useAziRepos() {
       setTimeout(() => setMessage(''), 8000);
     }
   };
+  // "Save and push": first ask the hub to check the project and count the files (nothing is saved yet), then wait
+  // for the owner to confirm. Only after "Yes" does it commit and push. The result stays under the project.
+  const [plan, setPlan] = useState<PushPlan | null>(null);
+  const [pushing, setPushing] = useState(''); // folder name being checked or saved
+  const [pushResults, setPushResults] = useState<Record<string, { ok: boolean; text: string }>>({});
+  const setResult = (name: string, ok: boolean, text: string) => setPushResults((p) => ({ ...p, [name]: { ok, text } }));
+  const askPush = async (r: AziRepo) => {
+    if (!r.projectId || pushing) return;
+    setPushing(r.name);
+    setPlan(null);
+    setPushResults((p) => Object.fromEntries(Object.entries(p).filter(([k]) => k !== r.name)));
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(r.projectId)}/commit-push`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dryRun: true }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.ok) {
+        setPlan({ name: r.name, projectId: r.projectId, files: d.files || 0, fileNames: d.fileNames || [], moreFiles: d.moreFiles || 0, target: d.remote && d.branch ? `${d.remote}/${d.branch}` : 'GitHub' });
+      } else setResult(r.name, false, d.message || d.error || 'Could not check this project.');
+    } catch {
+      setResult(r.name, false, 'The hub did not answer.');
+    } finally {
+      setPushing('');
+    }
+  };
+  const confirmPush = async () => {
+    if (!plan || pushing) return;
+    const p = plan;
+    setPlan(null);
+    setPushing(p.name);
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(p.projectId)}/commit-push`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const d = await res.json().catch(() => ({}));
+      const ok = res.ok && d.ok === true;
+      setResult(p.name, ok, ok ? `Saved and pushed ✓ ${d.message || ''}`.trim() : d.message || d.error || 'Could not save and push.');
+      if (ok) setProblems((x) => Object.fromEntries(Object.entries(x).filter(([k]) => k !== p.name)));
+      setMessage(`${p.name}: ${ok ? 'saved and pushed ✓' : 'not pushed'}`);
+    } catch {
+      setResult(p.name, false, 'The hub did not answer.');
+    } finally {
+      setPushing('');
+      load(true);
+      setTimeout(() => setMessage(''), 8000);
+    }
+  };
   const clone = async (repo: string) => {
     setMessage(`Copying ${repo}…`);
     try {
@@ -199,7 +255,7 @@ function useAziRepos() {
       setMessage('The hub did not answer.');
     }
   };
-  return { repos, syncing, message, syncAll, clone, save, problems, auto, setAutoMode };
+  return { repos, syncing, message, syncAll, clone, save, problems, auto, setAutoMode, plan, setPlan, pushing, pushResults, askPush, confirmPush };
 }
 // Code updates that are running or waiting in the queue. Stays 0 on a device that isn't allowed to use Code updates.
 function useRunningUpdates() {
@@ -611,149 +667,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
           </Arrangeable>
 
-          <Arrangeable id="workflows" label="Workflows" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
-          {group(
-            'workflows',
-            'pipelines',
-            'Workflows',
-            GitBranch,
-            pipelines.length,
-            'Open workflows',
-            () => setActiveTab('pipelines'),
-            pipelines.map((p) => {
-              const current = activeTab === 'pipelines' && p.id === activePipelineId;
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => {
-                    setActiveTab('pipelines');
-                    onRequest({ kind: 'open-workflow', id: p.id });
-                  }}
-                  aria-current={current ? 'true' : undefined}
-                  title={p.name}
-                  className={`${subItemClass(current)} w-full gap-2 px-2 py-1.5 text-left`}
-                >
-                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                  {p.lastStatus === 'running' && <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-indigo-400" aria-label="running" />}
-                  {p.lastStatus === 'error' && <span className="text-[10px] text-red-500">failed</span>}
-                </button>
-              );
-            }),
-            undefined,
-            0,
-            Plus,
-            runningWorkflows
-          )}
-          </Arrangeable>
 
           <Arrangeable id="files" label="Files" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {navButton('files', 'Files', FolderGit2)}
           </Arrangeable>
           <Arrangeable id="updates" label="Code updates" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {navButton('updates', 'Code updates', Wand2, 0, runningUpdates)}
-          </Arrangeable>
-          <Arrangeable id="github" label="GitHub" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
-          {group(
-            'github',
-            'repos',
-            'GitHub',
-            GitBranch,
-            azi.repos.length,
-            azi.syncing ? 'Syncing…' : 'Sync all',
-            azi.syncAll,
-            <>
-              <label
-                className="flex items-center gap-1.5 px-2 py-1 text-xs text-slate-500 dark:text-slate-400"
-                title={`Pull and push every AZI repo by itself (never commits, never forces).${azi.auto.lastResult ? ` Last: ${azi.auto.lastResult}` : ''}${azi.auto.lastRun ? ` (${new Date(azi.auto.lastRun).toLocaleString()})` : ''}`}
-              >
-                Auto
-                <select
-                  value={azi.auto.mode}
-                  onChange={(e) => azi.setAutoMode(e.target.value)}
-                  className="min-w-0 flex-1 rounded border border-slate-200 bg-transparent px-1 py-0.5 text-xs dark:border-slate-700"
-                >
-                  <option value="off">Off</option>
-                  <option value="start">When Eden starts</option>
-                  <option value="daily">Once a day</option>
-                  <option value="both">Start + daily</option>
-                </select>
-              </label>
-              {azi.message && <p className="px-2 py-1 text-xs text-slate-500 dark:text-slate-400">{azi.message}</p>}
-              {azi.repos.map((r) => {
-                const key = r.folder || r.repo || r.name;
-                const label = r.name || r.repo?.split('/')[1] || '?';
-                // What is wrong, in plain words: what the last "Sync all" found, else what git shows right now.
-                const problem = r.state === 'changes' ? azi.problems[r.name] : undefined;
-                const reason = problem?.reason || r.reason;
-                const hint = problem?.hint || r.hint;
-                const files = reason === 'uncommitted' ? problem?.fileNames || [] : [];
-                const more = problem?.moreFiles || 0;
-                return (
-                  <div key={key}>
-                  <button
-                    title={repoTitle(r)}
-                    onClick={() => {
-                      if (r.state === 'not-on-pc' && r.repo) return azi.clone(r.repo);
-                      if (r.url) window.open(r.url, '_blank', 'noopener');
-                      else setActiveTab('repos');
-                    }}
-                    className={`${subItemClass(false)} w-full gap-2 px-2 py-1.5 text-left`}
-                  >
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${REPO_DOT[r.state]}`} />
-                    <span className={`min-w-0 flex-1 truncate ${r.state === 'not-on-pc' ? 'italic' : ''}`}>{label}</span>
-                    {r.state === 'changes' && (r.ahead > 0 || r.behind > 0) && (
-                      <span className="text-[10px] tabular-nums text-amber-600 dark:text-amber-400">
-                        {r.ahead > 0 && `↑${r.ahead}`}
-                        {r.behind > 0 && `↓${r.behind}`}
-                      </span>
-                    )}
-                    {r.private === true && <Lock className="h-3 w-3 shrink-0 text-slate-400" aria-label="private" />}
-                    {r.private === false && <Globe className="h-3 w-3 shrink-0 text-slate-400" aria-label="public" />}
-                    {r.state === 'not-on-pc' && <Download className="h-3 w-3 shrink-0 text-sky-500" />}
-                  </button>
-                  {r.state === 'changes' && hint && (
-                    <div className="px-2 pb-1.5 pl-6 text-[11px] leading-snug text-amber-700 dark:text-amber-400">
-                      <p>{hint}</p>
-                      {files.length > 0 && (
-                        <ul className="mt-0.5 text-slate-600 dark:text-slate-400">
-                          {files.map((f) => (
-                            <li key={f} className="truncate" title={f}>
-                              {f}
-                            </li>
-                          ))}
-                          {more > 0 && <li>and {more} more</li>}
-                        </ul>
-                      )}
-                      {reason && CAN_SAVE.includes(reason) && r.projectId && (
-                        <button
-                          onClick={() => azi.save(r)}
-                          title="Saves your changes and sends them to GitHub"
-                          className="mt-1 rounded bg-amber-500 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-amber-600"
-                        >
-                          {files.length > 0 ? 'Save and push these' : 'Save to GitHub'}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  </div>
-                );
-              })}
-            </>,
-            needsSync > 0 ? (
-              <span className="rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold tabular-nums text-white" title={`${needsSync} repo(s) not in sync with GitHub`}>
-                {needsSync}
-              </span>
-            ) : undefined,
-            needsSync,
-            RefreshCw,
-            azi.syncing ? 1 : 0
-          )}
-          </Arrangeable>
-          <Arrangeable id="devices" label="Devices" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
-          {navButton('devices', 'Devices', Tablet)}
-          </Arrangeable>
-          <Arrangeable id="remote" label="Remote" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
-          {navButton('remote', 'Remote', Wifi)}
           </Arrangeable>
         </nav>
 

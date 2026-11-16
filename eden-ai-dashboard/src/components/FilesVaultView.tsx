@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { HardDrive, Cloud } from 'lucide-react';
+import { ReposView } from './ReposView.tsx';
 import type { HostedFile } from '../types/index.ts';
 import {
   Folder,
@@ -32,6 +34,9 @@ export const FilesVaultView: React.FC<FilesVaultViewProps> = ({
   onDeleteFile,
   onSendFileToSwarm,
 }) => {
+  // Local = files saved in Eden on this PC; Cloud = your GitHub repos and online files.
+  const [source, setSourceState] = useState<'local' | 'cloud'>(() => { try { return localStorage.getItem('eden_files_source') === 'cloud' ? 'cloud' : 'local'; } catch { return 'local'; } });
+  const setSource = (v: 'local' | 'cloud') => { setSourceState(v); try { localStorage.setItem('eden_files_source', v); } catch {} };
   const [selectedFileId, setSelectedFileId] = useState<string>(files[0]?.id || '');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -192,6 +197,14 @@ export const FilesVaultView: React.FC<FilesVaultViewProps> = ({
         </div>
 
         <div className="flex items-center gap-3">
+          <div role="tablist" aria-label="Where files are" className="flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-700">
+            {([['local', 'On this PC', HardDrive], ['cloud', 'Online (GitHub)', Cloud]] as const).map(([id, label, Icon]) => (
+              <button key={id} role="tab" aria-selected={source === id} title={label} onClick={() => setSource(id)}
+                className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs ${source === id ? 'bg-indigo-600 font-medium text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
+                <Icon className="h-4 w-4" /> <span className="hidden sm:inline">{id === 'local' ? 'Local' : 'Cloud'}</span>
+              </button>
+            ))}
+          </div>
           <button
             onClick={() => setIsNewModalOpen(true)}
             className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-sm transition-colors flex items-center gap-1.5 whitespace-nowrap"
@@ -202,8 +215,10 @@ export const FilesVaultView: React.FC<FilesVaultViewProps> = ({
         </div>
       </div>
 
+      {source === 'cloud' && <ReposView />}
+
       {/* GitHub Quick Sync Strip */}
-      <div className="p-4 rounded-xl border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 space-y-3">
+      <div className={`${source === 'cloud' ? '' : 'hidden '}p-4 rounded-xl border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 space-y-3`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <GitPullRequest className="w-4 h-4 text-amber-500" />
@@ -277,7 +292,7 @@ export const FilesVaultView: React.FC<FilesVaultViewProps> = ({
       </div>
 
       {/* Main Vault Workspace (Split Tree & Viewer) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[550px]">
+      <div className={`${source === 'cloud' ? 'hidden ' : ''}grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[550px]`}>
         {/* Left Column: File Tree & Filters (4 cols) */}
         <div className="lg:col-span-4 rounded-xl border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 p-4 space-y-4 flex flex-col justify-between">
           <div className="space-y-3">

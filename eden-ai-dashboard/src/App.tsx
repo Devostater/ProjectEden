@@ -351,6 +351,7 @@ export default function App() {
               <AccountView
                 tab={accountTab}
                 setTab={setAccountTab}
+                workflows={<PipelineDAGView pipelines={pipelines} agents={agents} onSavePipeline={handleSavePipeline} onRefreshData={refreshAllData} openId={request?.kind === 'open-workflow' ? request.id : ''} openNonce={request?.n || 0} onSelected={setPipelineId} />}
                 darkMode={darkMode}
                 setDarkMode={setDarkMode}
                 onSaved={() => {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { RefreshCw, ChevronDown } from 'lucide-react';
+import { RefreshCw, ChevronDown, Info } from 'lucide-react';
 import type { UsageTotals } from '../types/index.ts';
 
 export interface ProviderUsage {
@@ -191,18 +191,32 @@ export const UsageBars: React.FC = () => {
       </div>
       {!minimized && usage.map((u) => <UsageBar key={u.provider} u={u} compact />)}
       {!minimized && (
-        <p className="text-xs text-slate-500 dark:text-slate-400" title="Today, on AIs billed per use. AIs on a plan or free count as $0 (covered by plan).">
-          About {money(usage.reduce((sum, u) => sum + (u.coveredByPlan === false ? u.cost || 0 : 0), 0))} on pay-per-use AIs today
-        </p>
-      )}
-      {!minimized && sharedTotals && (
-        <p
-          className="text-xs text-slate-500 dark:text-slate-400"
-          title="Estimates, not a bill. Rough prices per AI, only for AIs billed per use; plan and free AIs count as $0. The week total fills up over the first week after this was added."
-        >
-          Estimated: today {sharedTotals.today.tokens.toLocaleString()} tokens, about {money(sharedTotals.today.cost)} · this week {sharedTotals.week.tokens.toLocaleString()} tokens, about {money(sharedTotals.week.cost)}
-        </p>
+        <div className="flex items-start gap-1.5 text-xs tabular-nums text-slate-500 dark:text-slate-400">
+          <div className="grid flex-1 grid-cols-[auto_1fr] gap-x-2">
+            <span>About</span><span className="text-right">{money(usage.reduce((sum, u) => sum + (u.coveredByPlan === false ? u.cost || 0 : 0), 0))}</span>
+            {sharedTotals && <><span>Est: {sharedTotals.today.tokens.toLocaleString()}</span><span className="text-right">{money(sharedTotals.today.cost)}</span></>}
+            {sharedTotals && <><span>Wk: {sharedTotals.week.tokens.toLocaleString()}</span><span className="text-right">{money(sharedTotals.week.cost)}</span></>}
+          </div>
+          <InfoTip text="About: spent today on pay-per-use AIs. Est: tokens used today and their rough cost. Wk: the same for this week. Estimates, not a bill: AIs on a plan or free count as $0, and the week total fills up over the first week after this was added." />
+        </div>
       )}
     </div>
+  );
+};
+
+// An (i) icon that shows its text in a small box on hover, focus or tap.
+const InfoTip: React.FC<{ text: string }> = ({ text }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative shrink-0" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button type="button" aria-label="What these numbers mean" aria-expanded={open} onClick={() => setOpen((o) => !o)} onBlur={() => setOpen(false)} className="rounded p-0.5 hover:text-slate-800 dark:hover:text-slate-200">
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <span role="tooltip" className="absolute bottom-full right-0 z-50 mb-1 w-56 rounded-lg border border-slate-200 bg-white p-2 text-xs leading-snug text-slate-600 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+          {text}
+        </span>
+      )}
+    </span>
   );
 };
