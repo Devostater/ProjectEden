@@ -45,17 +45,11 @@ if /i "%~1"=="check" (
 )
 
 echo.
-echo === 3/4  Starting the AIs ===
-set "START_CLAUDE=Read %PROMPT_FILE% and follow it. You are agent: claude."
-set "START_CODEX=Read %PROMPT_FILE% and follow it. You are agent: codex."
-set "START_GEMINI=Read %PROMPT_FILE% and follow it. You are agent: gemini."
-where wt >nul 2>nul
-if errorlevel 1 (
-  start "Devostater - Swarm - Claude"  /D "%SWARM%\claude" cmd /k claude "%START_CLAUDE%"
-  start "Devostater - Swarm - Codex"   /D "%SWARM%\codex"  cmd /k codex "%START_CODEX%"
-  start "Devostater - Swarm - Gemini"  /D "%SWARM%\gemini" cmd /k gemini -i "%START_GEMINI%"
-) else (
-  wt -w swarm new-tab --title "Devostater - Swarm - Claude" --suppressApplicationTitle -d "%SWARM%\claude" cmd /k claude "%START_CLAUDE%" ; new-tab --title "Devostater - Swarm - Codex" --suppressApplicationTitle -d "%SWARM%\codex" cmd /k codex "%START_CODEX%" ; new-tab --title "Devostater - Swarm - Gemini" --suppressApplicationTitle -d "%SWARM%\gemini" cmd /k gemini -i "%START_GEMINI%"
+echo === 3/4  Starting the AIs (only the ones that are signed in) ===
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0launch.ps1" -Swarm "%SWARM%" -PromptFile "%PROMPT_FILE%"
+if errorlevel 2 (
+  pause
+  exit /b 2
 )
 if exist "%LOCALAPPDATA%\Programs\antigravity\Antigravity.exe" start "" "%LOCALAPPDATA%\Programs\antigravity\Antigravity.exe" "%SWARM%\gemini"
 
