@@ -27,6 +27,9 @@ import { usePanes } from './panes.ts';
 import { PaneFrame, PaneSwitch, SplitHandle } from './components/PaneFrame.tsx';
 import { ActiveWorkers, PauseAndWorkers } from './components/ActiveWorkers.tsx';
 import { openPanel } from './panel.ts';
+import { PROJECT_PANELS } from './panelMeta.ts';
+import { roadmapProgress } from './components/Roadmap.tsx';
+import type { PanelProject } from './components/BottomPanel.tsx';
 import type { ReviewProps } from './components/ReviewTab.tsx';
 import { useNexusRooms } from './nexusRooms.ts';
 import { OUTDATED_EVENT } from './api.ts';
@@ -224,6 +227,26 @@ export default function App() {
   };
 
 
+// The open project's data for the bottom bar's project tabs (and the phone's full-screen sheets).
+  const panelProject: PanelProject | null = projectsApi.active
+    ? {
+        project: projectsApi.active,
+        cards: projectsApi.cards.filter((c) => c.projectId === projectsApi.active!.id && projectsApi.visible(c)),
+        agents,
+        onOpenCard: projectsApi.setOpenCardId,
+        onSaveRoadmap: async (roadmap) => {
+          const id = projectsApi.active!.id;
+          try {
+            const r = await fetch(`/api/projects/${id}/roadmap`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roadmap }) });
+            if (!r.ok) projectsApi.setError((await r.json().catch(() => ({}))).error || 'Could not save the roadmap.');
+          } catch {
+            projectsApi.setError('Could not save the roadmap: the hub did not answer.');
+          }
+          await projectsApi.refresh();
+        },
+      }
+    : null;
+
   // Any page, by id: the same JSX as before, now drawn in whichever pane shows it. A plain function (not a
   // component), so pages never remount when the layout changes.
   const renderPage = (activeTab: AppTab): React.ReactNode => (
@@ -418,7 +441,7 @@ export default function App() {
         </main>
 
         <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} onMore={() => setMenuOpen(true)} moreOpen={menuOpen} reviewCount={reviewCount} />
-        <MobilePanel review={review} />
+        <MobilePanel review={review} project={panelProject} onGoProjects={() => setActiveTab('projects')} />
         <ActiveWorkers
           open={workersOpen}
           onClose={() => setWorkersOpen(false)}
@@ -453,6 +476,12 @@ export default function App() {
           darkMode={darkMode}
           setDarkMode={setDarkMode}
           onOpenDrawer={() => setDrawer(true)}
+          extraPanels={
+            projectsApi.active
+              ? PROJECT_PANELS.map((p) => ({ id: p.id, label: p.id === 'roadmap' && roadmapProgress(projectsApi.active!.roadmap) ? `Roadmap ${roadmapProgress(projectsApi.active!.roadmap)!.pct}%` : p.label, icon: p.icon, open: () => openPanel(p.id) }))
+              : []
+          }
+          extraTitle={projectsApi.active ? `This project: ${projectsApi.active.name}` : undefined}
         />
 
         <div className="eden-dock contents">
@@ -465,26 +494,7 @@ export default function App() {
             return !!(await projectsApi.saveCard({ id, column: 'ready' }));
           }}
           review={review}
-          project={
-            panes.includes('projects') && projectsApi.active
-              ? {
-                  project: projectsApi.active,
-                  cards: projectsApi.cards.filter((c) => c.projectId === projectsApi.active!.id && projectsApi.visible(c)),
-                  agents,
-                  onOpenCard: projectsApi.setOpenCardId,
-                  onSaveRoadmap: async (roadmap) => {
-                    const id = projectsApi.active!.id;
-                    try {
-                      const r = await fetch(`/api/projects/${id}/roadmap`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roadmap }) });
-                      if (!r.ok) projectsApi.setError((await r.json().catch(() => ({}))).error || 'Could not save the roadmap.');
-                    } catch {
-                      projectsApi.setError('Could not save the roadmap: the hub did not answer.');
-                    }
-                    await projectsApi.refresh();
-                  },
-                }
-              : null
-          }
+          project={panes.includes('projects') ? panelProject : null}
         />
         </div>
       </div>

@@ -23,11 +23,12 @@ interface Props {
   onOpenDrawer: () => void;
   // Extra panels (the project tabs) when a project is open; added in step 6.
   extraPanels?: { id: string; label: string; icon: React.ElementType; open: () => void }[];
+  extraTitle?: string; // heading for the extra panels, e.g. "This project: Nova"
 }
 
 const H3 = ({ children }: { children: React.ReactNode }) => <h3 className="px-4 pb-2 pt-5 text-sm font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">{children}</h3>;
 
-export const MobileMenu: React.FC<Props> = ({ open, onClose, activeTab, go, reviewCount, projects, activeProjectId, onPickProject, darkMode, setDarkMode, onOpenDrawer, extraPanels = [] }) => {
+export const MobileMenu: React.FC<Props> = ({ open, onClose, activeTab, go, reviewCount, projects, activeProjectId, onPickProject, darkMode, setDarkMode, onOpenDrawer, extraPanels = [], extraTitle }) => {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -73,12 +74,20 @@ export const MobileMenu: React.FC<Props> = ({ open, onClose, activeTab, go, revi
         <button onClick={then(() => openPanel('activity'))} className={tileClass(false)}>
           <Activity className="h-6 w-6 shrink-0" /> <span className="min-w-0 break-words leading-tight">Activity</span>
         </button>
-        {extraPanels.map((p) => (
-          <button key={p.id} onClick={then(p.open)} className={tileClass(false)}>
-            <p.icon className="h-6 w-6 shrink-0" /> <span className="min-w-0 break-words leading-tight">{p.label}</span>
-          </button>
-        ))}
       </div>
+
+      {extraPanels.length > 0 && (
+        <>
+          <H3>{extraTitle || 'This project'}</H3>
+          <div className="grid gap-2 px-4 [grid-template-columns:repeat(auto-fill,minmax(9rem,1fr))]">
+            {extraPanels.map((p) => (
+              <button key={p.id} onClick={then(p.open)} className={tileClass(false)}>
+                <p.icon className="h-6 w-6 shrink-0" /> <span className="min-w-0 break-words leading-tight">{p.label}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       {projects.length > 1 && (
         <>

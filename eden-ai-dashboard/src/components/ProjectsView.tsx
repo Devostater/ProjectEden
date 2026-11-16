@@ -8,6 +8,7 @@ import { RunPicker } from './RunPicker.tsx';
 import { WhyWaiting } from './WhyWaiting.tsx';
 import { Roadmap, roadmapProgress } from './Roadmap.tsx';
 import { openPanel } from '../panel.ts';
+import { PROJECT_PANELS } from '../panelMeta.ts';
 import { Toolbox } from './Toolbox.tsx';
 import { runsOf } from '../runs.ts';
 import type { Agent, Branch, Card, CardColumn, CardSource, Project } from '../types/index.ts';
@@ -1183,13 +1184,13 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
   }
 
   return (
-    <div className="flex h-full flex-col p-4">
+    <div className="flex min-h-full flex-col p-4 md:h-full">
       {active && (
         <>
           {/* Project header. Projects are picked in the sidebar. */}
           <div className="flex flex-wrap items-start gap-3">
             {/* At least 16rem for the name and goal: the buttons wrap to the next line instead of squeezing them. */}
-            <div className="min-w-[16rem] flex-1">
+            <div className="w-full md:w-auto md:min-w-[16rem] md:flex-1">
               <h1 className="text-xl font-bold text-slate-900 dark:text-white">
                 <WaveText text={active.name} />
                 {active.status !== 'active' && <span className="ml-2 text-sm font-normal text-slate-400">({STATUS_LABEL[active.status]})</span>}
@@ -1282,21 +1283,14 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
               </div>
             );
           })()}
-          <div className="md:hidden">
-            <Roadmap
-              key={active.id}
-              project={active}
-              onSave={async (roadmap) => {
-                try {
-                  const r = await fetch(`/api/projects/${active.id}/roadmap`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roadmap }) });
-                  if (!r.ok) api.setError((await r.json().catch(() => ({}))).error || 'Could not save the roadmap.');
-                } catch {
-                  api.setError('Could not save the roadmap: the hub did not answer.');
-                }
-                await api.refresh();
-              }}
-            />
-            <Toolbox key={`tb-${active.id}`} project={active} />
+          {/* Phones: each project tool opens full screen (MobilePanel), so the page stays short and readable. */}
+          <div className="mt-3 flex flex-wrap gap-2 md:hidden">
+            {PROJECT_PANELS.map(({ id, label, icon: Icon }) => (
+              <button key={id} onClick={() => openPanel(id)} className="flex min-h-11 items-center gap-2 rounded-lg border border-slate-300 px-4 text-sm font-medium text-slate-800 dark:border-slate-700 dark:text-slate-100">
+                <Icon className="h-5 w-5" /> {label}
+                {id === 'roadmap' && roadmapProgress(active.roadmap) && <span className="tabular-nums text-slate-600 dark:text-slate-300">{roadmapProgress(active.roadmap)!.pct}%</span>}
+              </button>
+            ))}
           </div>
 
           <WhyWaiting
@@ -1332,7 +1326,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
           {showTeam && <TeamStrip cards={branchFilter ? cards.filter((c) => c.branchId === branchFilter) : cards} agents={agents} filter={whoFilter} onFilter={setWhoFilter} />}
 
           {/* Board */}
-          <div className="mt-4 flex min-h-0 flex-1 gap-3 overflow-x-auto pb-2">
+          {/* Phones: the board gets nearly a full screen and shows one column at a time (swipe; snaps). */}
+          <div className="mt-4 flex h-[calc(100dvh-11rem)] shrink-0 snap-x snap-mandatory gap-3 overflow-x-auto pb-2 md:h-auto md:min-h-0 md:flex-1 md:shrink md:snap-none">
             {COLUMNS.map((col) => {
               const colCards = cards.filter((c) => c.column === col.id && (!whoFilter || c.assigneeId === whoFilter) && (!branchFilter || c.branchId === branchFilter)).sort((a, b) => a.order - b.order);
               return (
@@ -1352,7 +1347,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                     setDragId(null);
                     setOverColumn(null);
                   }}
-                  className={`flex min-w-[15rem] flex-1 basis-0 flex-col rounded-xl border p-2 ${
+                  className={`flex min-w-[85vw] snap-center flex-1 basis-0 flex-col rounded-xl border p-2 md:min-w-[15rem] ${
                     overColumn === col.id ? 'border-indigo-400 bg-indigo-50/60 dark:bg-indigo-950/30' : 'border-slate-200 bg-white/70 dark:border-slate-800 dark:bg-slate-900/70'
                   }`}
                 >

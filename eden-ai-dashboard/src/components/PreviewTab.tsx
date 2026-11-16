@@ -213,9 +213,9 @@ export const PreviewTab: React.FC<{ project: Project }> = ({ project }) => {
   const join = (name: string) => (dir ? `${dir}/${name}` : name);
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 flex-col sm:flex-row">
       {/* Files */}
-      <div className="flex w-72 shrink-0 flex-col border-r border-slate-200 dark:border-slate-800">
+      <div className="flex max-h-[40%] w-full shrink-0 flex-col border-b border-slate-200 sm:max-h-none sm:w-72 sm:border-b-0 sm:border-r dark:border-slate-800">
         <div className="flex items-center gap-1 border-b border-slate-200 px-2 py-1.5 text-xs dark:border-slate-800">
           <button onClick={() => load('')} className="truncate font-medium text-indigo-600 hover:underline dark:text-indigo-400" title={root}>
             {root.split(/[\\/]/).pop() || project.name}
