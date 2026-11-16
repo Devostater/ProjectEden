@@ -14,12 +14,25 @@ export function localAgentModel(): string | null {
 }
 
 // Environment for a `claude` process so it talks to Ollama instead of Anthropic.
-export function localClaudeEnv(): NodeJS.ProcessEnv {
-  return {
+export function localClaudeEnv(model?: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     ANTHROPIC_BASE_URL: OLLAMA,
     ANTHROPIC_AUTH_TOKEN: 'ollama',
-    ANTHROPIC_API_KEY: '',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   };
+  // Removed, not blanked: a set-but-empty key still makes Claude Code warn and skip your claude.ai login.
+  delete env.ANTHROPIC_API_KEY;
+  // Claude Code only accepts Claude model names, so the run asks for "sonnet" and these point every Claude
+  // name at the local model (what `ollama launch claude` does).
+  if (model) for (const k of ['ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL']) env[k] = model;
+  return env;
+}
+
+// A `claude` process on your Claude plan: without an API key, so it uses your claude.ai login (a key saved in
+// Eden's settings would otherwise take over, switching off your plan and connectors).
+export function planClaudeEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.ANTHROPIC_API_KEY;
+  return env;
 }

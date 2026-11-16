@@ -455,6 +455,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Re-arrange the pages in this bar (saved per device). Arrange mode shows Up/Down buttons on each entry.
   const custom = useCustomTabs();
+  // Drag the right edge to make the bar wider or narrower (saved on this device; double-click resets).
+  const [barWidth, setBarWidth] = useState(() => { try { return Math.min(420, Math.max(180, Number(localStorage.getItem('eden_sidebar_width')) || 224)); } catch { return 224; } });
+  const startBarDrag = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX, startW = barWidth;
+    let w = startW;
+    const move = (ev: PointerEvent) => { w = Math.round(Math.min(420, Math.max(180, startW + ev.clientX - startX))); setBarWidth(w); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); try { localStorage.setItem('eden_sidebar_width', String(w)); } catch {} };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
   const sideProfile = useProfile();
   // Left-bar pages you hid in Arrange mode (saved on this device).
   const [sideHidden, setSideHidden] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_sidebar_hidden') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
@@ -466,10 +477,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <>
       {mobileOpen && <div className="fixed inset-0 z-40 bg-black/50 md:hidden" onClick={onCloseMobile} aria-hidden="true" />}
       <aside
-        className={`${mobileOpen ? 'fixed inset-y-0 left-0 z-50 flex shadow-xl' : 'hidden'} md:sticky md:top-0 md:z-auto md:flex md:shadow-none h-[100dvh] shrink-0 flex-col border-r border-slate-200 bg-white transition-[width] duration-150 dark:border-slate-800 dark:bg-slate-900 ${
-          collapsed && !mobileOpen ? 'w-14' : 'w-64 md:w-56'
+        className={`${mobileOpen ? 'fixed inset-y-0 left-0 z-50 flex shadow-xl' : 'hidden'} md:sticky md:top-0 md:z-auto md:flex md:shadow-none h-[100dvh] shrink-0 flex-col border-r border-slate-200 bg-white relative dark:border-slate-800 dark:bg-slate-900 ${
+          collapsed && !mobileOpen ? 'w-14' : 'w-64 md:w-[var(--eden-bar-w)]'
         }`}
+        style={{ ['--eden-bar-w' as string]: `${barWidth}px` }}
       >
+        {!collapsed && (
+          <div role="separator" aria-orientation="vertical" aria-label="Drag to resize the left bar" title="Drag to resize" onPointerDown={startBarDrag}
+            onDoubleClick={() => { setBarWidth(224); try { localStorage.setItem('eden_sidebar_width', '224'); } catch {} }}
+            className="absolute inset-y-0 -right-1 z-20 hidden w-2 cursor-col-resize hover:bg-indigo-400/50 md:block" />
+        )}
         <div className={`flex items-center border-b border-slate-200 dark:border-slate-800 ${collapsed ? 'flex-col gap-2 px-2 py-3' : 'gap-1 py-3 pl-4 pr-2'}`}>
           <button onClick={() => setActiveTab('home')} className="flex min-w-0 flex-1 items-center gap-2.5" aria-label="Eden AI Hub, go to Dashboard">
             <div className="eden-logo flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">

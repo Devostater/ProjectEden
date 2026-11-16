@@ -134,7 +134,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
         />
       </section>
 
-      <section className="flex min-h-[420px] flex-1 flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <section className="flex min-h-[calc(100vh-8rem)] flex-1 flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div role="tablist" aria-label="Project tools" className={`grid gap-2 border-b border-slate-200 p-3 dark:border-slate-800 ${narrow ? 'grid-cols-3' : 'grid-cols-6'}`}>
           {ORDER.map((id) => {
             const t = SIDE_TABS.find((x) => x.id === id)!;
@@ -151,7 +151,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
           })}
         </div>
         <div className="min-h-0 flex-1 overflow-auto p-3">
-          {tab === 'roadmap' && <Roadmap key={project.project.id} project={project.project} onSave={project.onSaveRoadmap} embedded />}
+          {tab === 'roadmap' && <div className="h-full min-h-full"><Roadmap key={project.project.id} project={project.project} onSave={project.onSaveRoadmap} embedded /></div>}
           {tab === 'progress' && <ProgressTab {...project} />}
           {tab === 'workload' && <WorkloadTab {...project} />}
           {tab === 'trail' && <WorkTrail key={project.project.id} project={project.project} cards={project.cards} agents={project.agents} onOpenCard={project.onOpenCard} />}

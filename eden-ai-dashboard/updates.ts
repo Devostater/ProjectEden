@@ -19,7 +19,7 @@ import { holdForApply } from './control';
 import { cliSignedIn, providerUnavailable, recordFailure } from './providers';
 import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
-import { localAgentModel, localClaudeEnv } from './localClaude';
+import { localAgentModel, localClaudeEnv, planClaudeEnv } from './localClaude';
 import { mayView, mayManage } from './pairing';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -394,9 +394,9 @@ async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: st
   }
   job.summary = undefined;
   job.lastAiMessage = undefined; // a fresh run (for example "Try again") starts without the old message
-  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--tools', 'Read,Edit,Write,Glob,Grep', '--model', local || 'claude-sonnet-5-5'];
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--tools', 'Read,Edit,Write,Glob,Grep', '--model', local ? 'sonnet' : 'claude-sonnet-5-5'];
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(['claude', ...args].join(' '), { cwd: appDir, shell: true, windowsHide: true, env: local ? localClaudeEnv() : process.env });
+    const child = spawn(['claude', ...args].join(' '), { cwd: appDir, shell: true, windowsHide: true, env: local ? localClaudeEnv(local) : planClaudeEnv() });
     let buffer = '';
     let errText = '';
     const timer = setTimeout(() => {
@@ -429,7 +429,8 @@ async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: st
         } catch {}
       }
     });
-    child.stderr.on('data', (d) => (errText += d.toString()));
+    // Warnings (the model-name note, the connectors note) are not failures: only keep real error lines.
+    child.stderr.on('data', (d) => (errText += d.toString().split(/\r?\n/).filter((l: string) => l.trim() && !/^\s*⚠|unrecognized_model|doesn't recognize the model|connectors are disabled/i.test(l)).map((l: string) => l + '\n').join('')));
     child.on('error', (e) => {
       clearTimeout(timer);
       reject(e);
@@ -1200,7 +1201,7 @@ async function runIdeas(cb: Codebase) {
   try {
     const text = await new Promise<string>((resolve, reject) => {
       const args = ['-p', '--output-format', 'json', '--permission-mode', 'default', '--tools', 'Read,Glob,Grep', '--model', 'claude-sonnet-5-5'];
-      const child = spawn(['claude', ...args].join(' '), { cwd: cb.dir, shell: true, windowsHide: true });
+      const child = spawn(['claude', ...args].join(' '), { cwd: cb.dir, shell: true, windowsHide: true, env: planClaudeEnv() });
       let out = '';
       let err = '';
       const timer = setTimeout(() => {

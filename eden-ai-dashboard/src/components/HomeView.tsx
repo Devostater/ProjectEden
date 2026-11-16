@@ -123,7 +123,10 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
       clearInterval(timer);
     };
   }, []);
-  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  // "Mark all seen" hides problems up to now (saved on this device); new ones still show.
+  const [seenAt, setSeenAt] = useState(() => { try { return Number(localStorage.getItem('eden_errors_seen_at')) || 0; } catch { return 0; } });
+  const markSeen = () => { const now = Date.now(); setSeenAt(now); try { localStorage.setItem('eden_errors_seen_at', String(now)); } catch {} };
+  const dayAgo = Math.max(Date.now() - 24 * 60 * 60 * 1000, seenAt);
   // "PC busy" and "AI paused" are states with their own banner and button, not problems to list here.
   const recentErrors = errors.filter((e) => new Date(e.at).getTime() >= dayAgo && !/^(PC busy|AI paused)/.test(e.text));
   const allClear = reviewCount === 0 && readyUpdates === 0 && recentErrors.length === 0 && lyraEdits === 0;
@@ -536,6 +539,9 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                   <p className="min-w-0 flex-1">
                     <b>{recentErrors.length}</b> {recentErrors.length === 1 ? 'problem' : 'problems'} in the last 24 hours:
                   </p>
+                  <button onClick={markSeen} title="Hide these (they stay in Activity). New problems still show here." className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">
+                    Mark all seen
+                  </button>
                   <button
                     onClick={fixAll}
                     disabled={fixing || toFix.length === 0}
