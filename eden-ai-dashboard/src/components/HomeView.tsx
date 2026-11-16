@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, GitBranch, FileText, GripVertical, Plus, Send } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, GitBranch, FileText, GripVertical, Plus, Send, SlidersHorizontal, Eye, EyeOff } from 'lucide-react';
 import type { Agent, Card, DAGPipeline, HostedFile, Project } from '../types/index.ts';
 import { newlineOnCtrlEnter } from '../textbox.ts';
 import { UsageBar, useProviderUsage, RefreshUsageButton } from './UsageBars.tsx';
@@ -87,6 +87,12 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
   const [order, setOrder] = useState<PanelId[]>(loadOrder);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => load(COLLAPSED_KEY, {}));
   const [dragging, setDragging] = useState<PanelId | null>(null);
+  // Your dashboard layout (saved on this device): which panels show, how many columns, how tall, and the top cards.
+  const [prefs, setPrefsState] = useState(() => load('eden_dashboard_prefs', { hidden: [] as string[], cols: 2, height: 'md', needsYou: true, ask: true }));
+  const setPrefs = (patch: Partial<typeof prefs>) => setPrefsState((p) => { const next = { ...p, ...patch }; save('eden_dashboard_prefs', next); return next; });
+  const [customizing, setCustomizing] = useState(false);
+  const HEIGHTS: Record<string, string> = { sm: 'h-60', md: 'h-80', lg: 'h-[28rem]' };
+  const COLS: Record<number, string> = { 1: 'md:grid-cols-1', 2: 'md:grid-cols-2', 3: 'md:grid-cols-2 xl:grid-cols-3' };
   const usage = useProviderUsage();
   // What needs the owner: finished tasks in Review, code updates ready to apply, and errors from the last day.
   const reviewCount = cards.filter((c) => c.column === 'review').length;
@@ -484,9 +490,9 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
   };
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-4 sm:p-8">
+    <div className={`mx-auto ${prefs.cols === 3 ? 'max-w-7xl' : 'max-w-4xl'} space-y-6 p-4 sm:p-8`}>
       {/* Needs you: finished tasks to review, code updates to apply, recent errors */}
-      {checked && <section aria-label="Needs you" className={`rounded-xl border p-5 ${allClear ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10' : 'border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10'}`}>
+      {checked && prefs.needsYou && <section aria-label="Needs you" className={`rounded-xl border p-5 ${allClear ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10' : 'border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10'}`}>
         {allClear ? (
           <p className="flex items-center gap-2 font-semibold text-emerald-800 dark:text-emerald-200">
             <CheckCircle2 className="h-5 w-5 shrink-0" /> All clear
@@ -576,7 +582,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
       </section>}
 
       {/* Ask box */}
-      <div>
+      {prefs.ask && <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">What are we working on{ownerName ? `, ${ownerName.split(' ')[0]}` : ''}?</h1>
         <div className="mt-4 rounded-xl border border-slate-300 bg-white p-3 focus-within:border-indigo-500 dark:border-slate-700 dark:bg-slate-900">
           <textarea
@@ -612,11 +618,53 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
             </button>
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* Panels: collapse with the arrow, drag by the grip to rearrange (or focus the grip and use arrow keys) */}
-      <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2">
-        {order.map((id) => {
+      <div className="flex justify-end">
+        <button onClick={() => setCustomizing((v) => !v)} aria-expanded={customizing} className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm ${customizing ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
+          <SlidersHorizontal className="h-4 w-4" /> {customizing ? 'Done' : 'Customize'}
+        </button>
+      </div>
+      {customizing && (
+        <section aria-label="Customize the dashboard" className="space-y-4 rounded-xl border border-indigo-300 bg-white p-4 text-sm dark:border-indigo-700 dark:bg-slate-900">
+          <div>
+            <h3 className="font-semibold text-slate-900 dark:text-white">Show</h3>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {([['needsYou', 'Needs you'], ['ask', 'Ask box']] as const).map(([k, label]) => (
+                <button key={k} onClick={() => setPrefs({ [k]: !prefs[k] } as any)} aria-pressed={prefs[k]} className={`flex items-center gap-1.5 rounded-full border px-3 py-1 ${prefs[k] ? 'border-indigo-500 text-indigo-700 dark:text-indigo-300' : 'border-slate-300 text-slate-400 dark:border-slate-700'}`}>
+                  {prefs[k] ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />} {label}
+                </button>
+              ))}
+              {order.map((id) => {
+                const on = !prefs.hidden.includes(id);
+                return (
+                  <button key={id} onClick={() => setPrefs({ hidden: on ? [...prefs.hidden, id] : prefs.hidden.filter((x) => x !== id) })} aria-pressed={on} className={`flex items-center gap-1.5 rounded-full border px-3 py-1 ${on ? 'border-indigo-500 text-indigo-700 dark:text-indigo-300' : 'border-slate-300 text-slate-400 dark:border-slate-700'}`}>
+                    {on ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />} {panels[id].title}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-6">
+            <div>
+              <h3 className="font-semibold text-slate-900 dark:text-white">Columns</h3>
+              <div className="mt-2 flex gap-1">
+                {[1, 2, 3].map((n) => <button key={n} onClick={() => setPrefs({ cols: n })} aria-pressed={prefs.cols === n} className={`h-9 w-9 rounded-lg border-2 font-semibold ${prefs.cols === n ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-slate-200 dark:border-slate-700'}`}>{n}</button>)}
+              </div>
+            </div>
+            <div>
+              <h3 className="font-semibold text-slate-900 dark:text-white">Panel height</h3>
+              <div className="mt-2 flex gap-1">
+                {([['sm', 'Short'], ['md', 'Medium'], ['lg', 'Tall']] as const).map(([k, label]) => <button key={k} onClick={() => setPrefs({ height: k })} aria-pressed={prefs.height === k} className={`rounded-lg border-2 px-3 py-1.5 ${prefs.height === k ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-slate-200 dark:border-slate-700'}`}>{label}</button>)}
+              </div>
+            </div>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Drag a panel by its grip to move it. Saved on this device.</p>
+        </section>
+      )}
+      <div className={`grid grid-cols-1 items-start gap-4 ${COLS[prefs.cols] || COLS[2]}`}>
+        {order.filter((id) => !prefs.hidden.includes(id)).map((id) => {
           const p = panels[id];
           const isCollapsed = !!collapsed[id];
           return (
@@ -631,7 +679,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                 e.preventDefault();
                 setDragging(null);
               }}
-              className={`flex flex-col rounded-xl border bg-white p-5 transition-shadow dark:bg-slate-900 ${isCollapsed ? '' : 'h-80'} ${
+              className={`flex flex-col rounded-xl border bg-white p-5 transition-shadow dark:bg-slate-900 ${isCollapsed ? '' : HEIGHTS[prefs.height] || 'h-80'} ${
                 dragging === id ? 'border-indigo-500 opacity-60 shadow-lg' : 'border-slate-200 dark:border-slate-800'
               }`}
             >

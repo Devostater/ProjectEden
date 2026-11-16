@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { THEMES } from '../themes.ts';
 import { User, Plug, Bot, GitBranch, SlidersHorizontal, Sun, Moon, Save, Loader2 } from 'lucide-react';
 import { SettingsView } from './SettingsView.tsx';
 import { ReposView } from './ReposView.tsx';
@@ -56,6 +57,8 @@ interface AccountViewProps {
   tab: AccountTab;
   setTab: (tab: AccountTab) => void;
   darkMode: boolean;
+  theme?: string;
+  setTheme?: (id: string) => void;
   setDarkMode: (v: boolean) => void;
   team?: React.ReactNode; // the Team page (set up your AI teammates), shown under Team & AI
   workflows?: React.ReactNode; // the Workflows editor, shown under Preferences
@@ -80,7 +83,7 @@ async function saveSettings(updates: Record<string, string>) {
   if (!res.ok) throw new Error(data.error || 'Could not save.');
 }
 
-export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode, setDarkMode, onSaved, workflows, team }) => {
+export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode, setDarkMode, onSaved, workflows, team, theme, setTheme }) => {
   const [name, setName] = useState('');
   const [studio, setStudio] = useState('');
   const [terminalOn, setTerminalOn] = useState(false);
@@ -194,23 +197,25 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
           {workflows && <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"><h2 className="px-5 pt-4 text-lg font-semibold text-slate-900 dark:text-white">Workflows</h2>{workflows}</section>}
           <InstallCard />
           <section className={cardClass}>
-            <h2 className="font-semibold text-slate-900 dark:text-white">Appearance</h2>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              {[
-                { dark: false, label: 'Light', icon: Sun },
-                { dark: true, label: 'Dark', icon: Moon },
-              ].map(({ dark, label, icon: Icon }) => (
-                <button
-                  key={label}
-                  onClick={() => setDarkMode(dark)}
-                  aria-pressed={darkMode === dark}
-                  className={`flex items-center justify-center gap-2 rounded-lg border-2 px-3 py-2.5 text-sm ${
-                    darkMode === dark ? 'border-indigo-500 bg-indigo-50 font-medium text-slate-900 dark:bg-indigo-950/40 dark:text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:text-slate-400'
-                  }`}
-                >
-                  <Icon className="h-4 w-4" /> {label}
-                </button>
-              ))}
+            <h2 className="font-semibold text-slate-900 dark:text-white">Theme</h2>
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {THEMES.map((t) => {
+                const on = (theme || (darkMode ? 'dark' : 'light')) === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => (setTheme ? setTheme(t.id) : setDarkMode(t.dark))}
+                    aria-pressed={on}
+                    className={`flex items-center gap-2 rounded-lg border-2 px-3 py-2.5 text-sm ${on ? 'border-indigo-500 font-medium text-slate-900 dark:text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:text-slate-400'}`}
+                  >
+                    <span className="flex h-5 w-5 shrink-0 overflow-hidden rounded-full border border-slate-300 dark:border-slate-600" aria-hidden>
+                      <span className="h-full w-1/2" style={{ background: t.swatch[0] }} />
+                      <span className="h-full w-1/2" style={{ background: t.swatch[1] }} />
+                    </span>
+                    {t.label}
+                  </button>
+                );
+              })}
             </div>
           </section>
 

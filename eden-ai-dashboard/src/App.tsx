@@ -1,3 +1,4 @@
+import { THEMES, loadTheme, applyTheme } from './themes.ts';
 import { textScale, rootPx, useTextSize } from './textSize.ts'; // first: sets the saved text size before anything paints
 import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar, type AppTab, type SidebarRequest } from './components/Sidebar.tsx';
@@ -51,7 +52,13 @@ try {
 } catch {}
 
 export default function App() {
-  const [darkMode, setDarkMode] = useState<boolean>(() => localStorage.getItem('nexus_theme') !== 'light');
+  // Eden theme (Account → Preferences). darkMode / setDarkMode stay for the voice commands ("dark mode", "light mode").
+  const [theme, setTheme] = useState<string>(loadTheme);
+  const darkMode = THEMES.find((t) => t.id === theme)?.dark ?? true;
+  const setDarkMode = (v: boolean | ((now: boolean) => boolean)) => {
+    const dark = typeof v === 'function' ? v(darkMode) : v;
+    if (dark !== darkMode) setTheme(dark ? 'dark' : 'light');
+  };
   // One or two pages side by side (panes.ts). setActiveTab drives the pane you are in; reveal (links inside a page)
   // opens in the other pane when two are open.
   const { panes, focus, activeTab, split, picking, ratio, setRatio, navigate, reveal, openBeside, startPicking, cancelPicking, close, swap, setFocus, back } = usePanes();
@@ -139,9 +146,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    document.documentElement.classList.toggle('dark', darkMode);
-    localStorage.setItem('nexus_theme', darkMode ? 'dark' : 'light');
-  }, [darkMode]);
+    applyTheme(theme);
+  }, [theme]);
 
   const refreshAllData = async () => {
     try {
@@ -362,6 +368,8 @@ export default function App() {
                 workflows={<PipelineDAGView pipelines={pipelines} agents={agents} onSavePipeline={handleSavePipeline} onRefreshData={refreshAllData} openId={request?.kind === 'open-workflow' ? request.id : ''} openNonce={request?.n || 0} onSelected={setPipelineId} />}
                 darkMode={darkMode}
                 setDarkMode={setDarkMode}
+                theme={theme}
+                setTheme={setTheme}
                 onSaved={() => {
                   refreshAllData();
                   loadProfile();

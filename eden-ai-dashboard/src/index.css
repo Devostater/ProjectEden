@@ -380,3 +380,29 @@ button[aria-busy='true'] svg.lucide-refresh-cw {
 .eden-pane[data-tight] [class*='sm:grid-cols-'] {
   grid-template-columns: minmax(0, 1fr);
 }
+
+/* ---- Eden themes (themes.ts): re-point the accent (indigo) and background (slate) colours ---- */
+html[data-eden-theme='midnight'] {
+  --color-indigo-300: #c4b5fd; --color-indigo-400: #a78bfa; --color-indigo-500: #8b5cf6; --color-indigo-600: #7c3aed; --color-indigo-700: #6d28d9;
+  --color-slate-800: #1a1b26; --color-slate-900: #0d0e15; --color-slate-950: #05060a;
+}
+html[data-eden-theme='octo'] {
+  --color-indigo-50: #fff7ed; --color-indigo-100: #ffedd5; --color-indigo-300: #fdba74; --color-indigo-400: #fb923c; --color-indigo-500: #f97316; --color-indigo-600: #ea580c; --color-indigo-700: #c2410c; --color-indigo-950: #431407;
+  --color-slate-700: #2e2e33; --color-slate-800: #1d1d21; --color-slate-900: #131316; --color-slate-950: #0b0b0d;
+}
+html[data-eden-theme='forest'] {
+  --color-indigo-50: #ecfdf5; --color-indigo-100: #d1fae5; --color-indigo-300: #6ee7b7; --color-indigo-400: #34d399; --color-indigo-500: #10b981; --color-indigo-600: #059669; --color-indigo-700: #047857; --color-indigo-950: #022c22;
+  --color-slate-800: #12261d; --color-slate-900: #0a1a13; --color-slate-950: #06130d;
+}
+html[data-eden-theme='ocean'] {
+  --color-indigo-50: #ecfeff; --color-indigo-100: #cffafe; --color-indigo-300: #67e8f9; --color-indigo-400: #22d3ee; --color-indigo-500: #06b6d4; --color-indigo-600: #0891b2; --color-indigo-700: #0e7490; --color-indigo-950: #083344;
+  --color-slate-800: #0f2333; --color-slate-900: #081826; --color-slate-950: #04111c;
+}
+html[data-eden-theme='rose'] {
+  --color-indigo-50: #fff1f2; --color-indigo-100: #ffe4e6; --color-indigo-300: #fda4af; --color-indigo-400: #fb7185; --color-indigo-500: #f43f5e; --color-indigo-600: #e11d48; --color-indigo-700: #be123c; --color-indigo-950: #4c0519;
+  --color-slate-800: #2a1219; --color-slate-900: #1c0b10; --color-slate-950: #14070b;
+}
+html[data-eden-theme='sunrise'] {
+  --color-indigo-50: #fffbeb; --color-indigo-100: #fef3c7; --color-indigo-300: #fcd34d; --color-indigo-400: #fbbf24; --color-indigo-500: #f59e0b; --color-indigo-600: #d97706; --color-indigo-700: #b45309; --color-indigo-950: #451a03;
+  --color-white: #fffdf7; --color-slate-50: #fdf8ee;
+}
