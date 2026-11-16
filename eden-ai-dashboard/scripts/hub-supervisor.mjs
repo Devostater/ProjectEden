@@ -16,6 +16,7 @@ const HEALTH = `http://127.0.0.1:${PORT}/api/models`;
 const LOG_DIR = path.join(APP, '.eden-logs');
 const LOG = path.join(LOG_DIR, 'hub.log');
 const LOCK = path.join(LOG_DIR, 'supervisor.pid');
+const STOP_CODE = 64; // the hub exits with this when asked to stop (restart.ts)
 const OPEN_APP = process.argv.includes('--open');
 
 fs.mkdirSync(LOG_DIR, { recursive: true });
@@ -63,11 +64,14 @@ function openApp() {
 // ---- one copy only ----
 try {
   const other = Number(fs.readFileSync(LOCK, 'utf-8'));
-  if (other && other !== process.pid && alive(other)) {
+  // Only trust the lock if the hub is actually answering: after a hard stop (Task Manager, crash, power loss)
+  // the lock is left behind, and Windows can reuse that process ID for an unrelated program.
+  if (other && other !== process.pid && alive(other) && (await answering(6000))) {
     log(`Already being kept running (supervisor ${other}).`);
     if (OPEN_APP) openApp();
     process.exit(0);
   }
+  if (other && other !== process.pid) log(`Found a leftover lock (process ${other}) with no hub answering. Taking over.`);
 } catch {}
 // A hub started some other way (an old window, a developer tool) isn't touched: it is watched, and when it
 // stops, the hub is started here, so from now on it is kept running like any other.
@@ -111,6 +115,14 @@ function start() {
   child.on('exit', (code, signal) => {
     child = null;
     if (stopping) return;
+    if (code === STOP_CODE) {
+      // "Stop the server" in Settings: stop for real. Open Eden or Start Eden starts it again.
+      log('The hub was stopped from Settings. Not restarting it; open Eden to start it again.');
+      try {
+        if (Number(fs.readFileSync(LOCK, 'utf-8')) === process.pid) fs.rmSync(LOCK);
+      } catch {}
+      return void setTimeout(() => process.exit(0), 300);
+    }
     const ranFor = Math.round((Date.now() - startedAt) / 1000);
     log(`The hub stopped (${signal ? `signal ${signal}` : `exit code ${code}`}) after ${ranFor}s.${code === 0 ? ' (It asked to restart.)' : ''}`);
     quickCrashes = code !== 0 && ranFor < 30 ? quickCrashes + 1 : 0;
