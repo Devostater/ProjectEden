@@ -40,3 +40,16 @@ A folder that already exists? Tick **Use the existing folder**: it gets set up, 
 **Needs:** a GitHub token with the `repo` scope in Settings → Connect AI (or `gh auth login`). Without one, projects are still made on this PC, and the report says how to publish them from GitHub Desktop.
 
 Code: `newproject.ts` (server), `src/components/ProjectsView.tsx` and `Sidebar.tsx` (UI), `src/commands.ts` (voice). Spec and log: `C:\AZI\AI handoff\2026-11-16-eden-new-project-plugin.md`.
+
+## Roadmaps and the project Toolbox
+
+**Roadmap ("Under construction").** Each project page has long-term goals made of building blocks. Click a block to move it Planned → Building → Done. This is planning, not AI work. The Dashboard's first panel shows every project's roadmap and the overall progress. New roadmaps start from 🚀 Release, 🔧 Feature or Blank. Code: `src/components/Roadmap.tsx`, `POST /api/projects/:id/roadmap`.
+
+**Toolbox (per project).** Tools, keys and links that belong to one project only:
+- **Tools:** a name and a command (and an optional subfolder). They run in the project's folder in `C:\AZI`, with a Run button and the output on the page.
+- **Connections:** keys and endpoints for this project (pick a service such as Azure AI to add its key names). Values are saved to `C:\AZI\Security\Keys\<project folder>\.env` and never shown again; the page only lists the names.
+- **Isolation:** a tool gets its own project's keys plus `AZI_PROJECT` and `AZI_PROJECT_DIR`. Eden's own keys (GitHub, Gemini, Claude, OpenAI) are removed from its environment, and another project's keys are never loaded.
+- **Links:** docs, dashboards, portals.
+- Changing tools or keys and running tools only works from this PC, and not from another website open in the browser.
+
+Code: `toolbox.ts`, `src/components/Toolbox.tsx`. Not built yet: Eden's AI teammates using a project's own AI connection (today the keys reach the project's tools and scripts only).
