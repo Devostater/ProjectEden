@@ -11,6 +11,7 @@ export const TITLES: Record<AppTab, string> = {
   pipelines: 'Workflows',
   files: 'Files',
   updates: 'Code updates',
+  repos: 'GitHub',
   devices: 'Devices',
   remote: 'Remote',
   settings: 'Connect',

@@ -1,6 +1,0 @@
-{
-  "name": "Aether Room XR: Living Room Fleet Command",
-  "description": "Quest 3 Passthrough WebXR real-time tactical spaceship defense game with holographic wireframe fleets, 3-tier base building, titan carriers, voice commands, and haptic explosions.",
-  "requestFramePermissions": ["camera", "microphone", "xr-spatial-tracking"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

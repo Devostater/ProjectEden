@@ -342,9 +342,18 @@ export async function tabletAIs(): Promise<{ serial: string; name: string; baseU
     await termux(d.serial, 'curl -s -m 2 127.0.0.1:11434/api/version >/dev/null || (OLLAMA_HOST=127.0.0.1:11434 OLLAMA_KEEP_ALIVE=10m OLLAMA_NUM_PARALLEL=1 setsid nohup ollama serve > ~/ollama.log 2>&1 < /dev/null &); echo ok', 20000);
     const port = TABLET_AI_PORT(d.serial);
     await adbRun(d.serial, ['forward', `tcp:${port}`, 'tcp:11434'], 15000);
+    tabletPorts.set(port, d.serial);
     out.push({ serial: d.serial, name: d.name || d.model || 'tablet', baseUrl: `http://127.0.0.1:${port}/v1` });
   }
   return out;
+}
+// The cable route from this PC to a tablet is lost whenever adb's background service restarts, so it is
+// set again right before each call (it takes a moment, and does nothing if it is already there).
+const tabletPorts = new Map<number, string>();
+export async function ensureTabletRoute(baseUrl: string) {
+  const port = Number(baseUrl.match(/:(\d+)\//)?.[1]);
+  const serial = tabletPorts.get(port);
+  if (serial) await adbRun(serial, ['forward', `tcp:${port}`, 'tcp:11434'], 10000);
 }
 
 export function registerDeviceHubRoutes(app: Express) {

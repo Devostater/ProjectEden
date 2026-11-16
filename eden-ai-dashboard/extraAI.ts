@@ -17,7 +17,7 @@ import { fileURLToPath } from 'url';
 import { pcBusy } from './busy';
 import { fileProblem } from './activity';
 import { isOffline } from './offline';
-import { tabletAIs } from './deviceHub';
+import { tabletAIs, ensureTabletRoute } from './deviceHub';
 
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-ai.json');
 
@@ -261,13 +261,14 @@ export async function callExtra(id: string, req: { system?: string; messages: { 
   const { provider, model } = parsed;
   const messages = [...(req.system ? [{ role: 'system', content: req.system }] : []), ...req.messages];
   let res: Response;
+  if (provider.device) await ensureTabletRoute(provider.baseUrl).catch(() => {});
   try {
     res = await fetch(`${provider.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(keyOf(provider) ? { authorization: `Bearer ${keyOf(provider)}` } : {}) },
       // Small models on this PC answer much faster (and don't run out of room) without "thinking" first.
       body: JSON.stringify({ model, messages, max_tokens: Math.min(req.maxTokens ?? 4096, 8192), stream: false, ...(provider.local ? { reasoning_effort: 'none' } : {}) }),
-      signal: AbortSignal.timeout(provider.local ? 10 * 60 * 1000 : 3 * 60 * 1000),
+      signal: AbortSignal.timeout(provider.local || provider.device ? 10 * 60 * 1000 : 3 * 60 * 1000),
     });
   } catch (err: any) {
     resting.set(id, Date.now() + REST_MS);

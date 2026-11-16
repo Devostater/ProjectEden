@@ -35,6 +35,7 @@ const PLACES: { to: Target; words: string[] }[] = [
   { to: { kind: 'page', tab: 'my-ai' }, words: ['team', 'my team', 'my ai', 'teammates', 'agents', 'ai team'] },
   { to: { kind: 'page', tab: 'pipelines' }, words: ['workflows', 'workflow', 'work flows', 'work flow', 'pipelines', 'pipeline'] },
   { to: { kind: 'page', tab: 'files' }, words: ['files', 'file', 'folders', 'documents'] },
+  { to: { kind: 'page', tab: 'repos' }, words: ['github', 'git hub', 'repos', 'repositories', 'sync my pc', 'sync github'] },
   { to: { kind: 'page', tab: 'updates' }, words: ['code updates', 'code update', 'updates', 'update', 'code'] },
   { to: { kind: 'page', tab: 'devices' }, words: ['devices', 'device', 'tablet', 'phone', 'phones', 'this pc', 'my pc', 'computer'] },
   { to: { kind: 'page', tab: 'remote' }, words: ['remote', 'remote connection', 'pairing', 'pair', 'qr code'] },

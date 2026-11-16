@@ -27,7 +27,7 @@ import type { ProjectsApi } from '../projectsStore.ts';
 import { RoomList } from './NexusRooms.tsx';
 import type { Agent, DAGPipeline } from '../types/index.ts';
 
-export type AppTab = 'home' | 'projects' | 'nexus' | 'chat' | 'my-ai' | 'pipelines' | 'files' | 'updates' | 'devices' | 'remote' | 'settings';
+export type AppTab = 'home' | 'projects' | 'nexus' | 'chat' | 'my-ai' | 'pipelines' | 'files' | 'updates' | 'repos' | 'devices' | 'remote' | 'settings';
 
 // What the sidebar asks a page to open, e.g. "the new-project form" or "this teammate".
 export type SidebarRequest =
@@ -399,6 +399,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {navButton('files', 'Files', FolderGit2)}
           {navButton('updates', 'Code updates', Wand2)}
+          {navButton('repos', 'GitHub', GitBranch)}
           {navButton('devices', 'Devices', Tablet)}
           {navButton('remote', 'Remote', Wifi)}
         </nav>

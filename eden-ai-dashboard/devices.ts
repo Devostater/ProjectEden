@@ -259,7 +259,23 @@ export function registerDeviceRoutes(app: Express) {
     for (const t of tablets) {
       if (!connect(t.serial)) continue;
       adb(['-s', t.serial, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP']);
-      if (adb(['-s', t.serial, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', 'http://localhost:4777/?eden']).ok) opened.push(t.name || t.model || t.serial);
+      const url = 'http://localhost:4777/?eden';
+      // LYRA installed as an app (a Chrome "WebAPK"): open that app, brought to the front. A plain link
+      // would go to Chrome and can stay behind whatever is on screen.
+      const app = adb(['-s', t.serial, 'shell', 'cmd', 'package', 'query-activities', '--brief', '-a', 'android.intent.action.VIEW', '-d', url]).out.match(/(org\.chromium\.webapk\.[\w.]+)\//)?.[1];
+      const pkg = app ? ['-p', app] : [];
+      // 0x14000000 = new task + clear top: reuse LYRA's window, in front. Checked afterwards, because the
+      // tablet can ignore it while a screen is changing (unlocking, the recent-apps view); then tried again.
+      const inFront = () => /webapps\.WebappActivity|webapk/.test(adb(['-s', t.serial, 'shell', 'dumpsys', 'activity', 'activities']).out.match(/topResumedActivity=.*/)?.[0] || '');
+      for (let i = 0; i < 3; i++) {
+        adb(['-s', t.serial, 'shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d', url, ...pkg, '-f', '0x14000000'], 20000);
+        await new Promise((r) => setTimeout(r, 1500));
+        if (inFront()) {
+          opened.push(t.name || t.model || t.serial);
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 1500));
+      }
     }
     if (opened.length) logActivity('info', `Opened LYRA on ${opened.join(', ')}.`);
     res.json({ ok: opened.length > 0, opened, error: opened.length ? undefined : 'Could not open LYRA on the tablet.' });

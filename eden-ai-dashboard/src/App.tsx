@@ -10,6 +10,7 @@ import { BottomPanel } from './components/BottomPanel.tsx';
 import { NexusView } from './components/NexusView.tsx';
 import { UpdatesView } from './components/UpdatesView.tsx';
 import { DevicesView } from './components/DevicesView.tsx';
+import { ReposView } from './components/ReposView.tsx';
 import { StatusBar } from './components/StatusBar.tsx';
 import type { CommandActions } from './components/VoiceCommands.tsx';
 import { TITLES } from './components/Header.tsx';
@@ -31,7 +32,7 @@ export default function App() {
   const [darkMode, setDarkMode] = useState<boolean>(() => localStorage.getItem('nexus_theme') !== 'light');
   const [activeTab, setActiveTab] = useState<AppTab>(() => {
     const wanted = new URLSearchParams(window.location.search).get('tab');
-    return (['home', 'projects', 'nexus', 'chat', 'my-ai', 'pipelines', 'files', 'updates', 'devices', 'remote', 'settings'] as AppTab[]).includes(wanted as AppTab) ? (wanted as AppTab) : 'home';
+    return (['home', 'projects', 'nexus', 'chat', 'my-ai', 'pipelines', 'files', 'updates', 'repos', 'devices', 'remote', 'settings'] as AppTab[]).includes(wanted as AppTab) ? (wanted as AppTab) : 'home';
   });
 
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -319,6 +320,7 @@ export default function App() {
 
           {activeTab === 'updates' && <UpdatesView />}
 
+          {activeTab === 'repos' && <ReposView />}
           {activeTab === 'devices' && <DevicesView />}
 
           {activeTab === 'remote' && <RemoteView />}
