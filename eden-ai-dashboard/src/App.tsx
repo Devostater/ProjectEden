@@ -253,6 +253,7 @@ export default function App() {
     <>
             {activeTab === 'home' && (
               <HomeView
+                onRetryCard={retryCard}
                 agents={agents}
                 pipelines={pipelines}
                 files={files}
@@ -360,6 +361,13 @@ export default function App() {
             )}
     </>
   );
+
+  // Only a card that is still stuck on its failure goes back to Ready; one you already moved is left alone.
+  const retryCard = async (id: string) => {
+    const card = projectsApi.cards.find((c) => c.id === id);
+    if (!card || card.runState !== 'failed') return false;
+    return !!(await projectsApi.saveCard({ id, column: 'ready' }));
+  };
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-slate-100 font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100">
@@ -487,12 +495,7 @@ export default function App() {
         <div className="eden-dock contents">
         <BottomPanel
           onOpenPreferences={() => openAccount('preferences')}
-          onRetryCard={async (id) => {
-            // Only a card that is still stuck on its failure goes back to Ready; one you already moved is left alone.
-            const card = projectsApi.cards.find((c) => c.id === id);
-            if (!card || card.runState !== 'failed') return false;
-            return !!(await projectsApi.saveCard({ id, column: 'ready' }));
-          }}
+          onRetryCard={retryCard}
           review={review}
           project={panes.includes('projects') ? panelProject : null}
         />

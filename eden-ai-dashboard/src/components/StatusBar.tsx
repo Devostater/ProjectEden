@@ -10,6 +10,7 @@ interface Status {
   busy?: { active: boolean; enabled: boolean; cpuPercent: number; freeGb: number; reason: string };
   devices?: number;
   paused?: boolean;
+  pausedForUpdate?: boolean; // paused by a running code update; resumes by itself
 }
 
 const get = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null)).catch(() => null);
@@ -25,6 +26,7 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
         busy: busy || undefined,
         devices: devices?.devices ? devices.devices.filter((d: any) => d.state === 'device').length : undefined,
         paused: pause?.paused,
+        pausedForUpdate: pause?.heldForUpdate,
       });
     };
     load();
@@ -84,7 +86,7 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
         )}
         {s.paused && (
           <span className={`${chip} flex border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200`}>
-            <PauseCircle className="h-4 w-4" /> AI paused
+            <PauseCircle className="h-4 w-4" /> {s.pausedForUpdate ? 'AI paused for a code update' : 'AI paused'}
           </span>
         )}
       </div>

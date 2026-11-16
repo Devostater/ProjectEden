@@ -13,6 +13,7 @@ interface HomeError {
   kind: string;
   text: string;
   hint?: { explain: string; action: string };
+  retry?: { kind: 'card' | 'update'; id: string }; // what "Try again" runs
 }
 
 interface HomeViewProps {
@@ -25,6 +26,7 @@ interface HomeViewProps {
   ownerName?: string;
   onAsk: (text: string) => void; // open Chat and send this
   onTalkTo: (agent: Agent) => void; // open Chat addressed to this agent
+  onRetryCard: (id: string) => Promise<boolean>; // sends a failed card back to Ready
   onOpen: (tab: 'projects' | 'my-ai' | 'pipelines' | 'files' | 'updates' | 'settings') => void;
 }
 
@@ -70,7 +72,7 @@ function loadOrder(): PanelId[] {
   return [...DEFAULT_ORDER.filter((id) => !saved.includes(id)), ...saved];
 }
 
-export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, projects, cards, onOpenProject, ownerName, onAsk, onTalkTo, onOpen }) => {
+export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, projects, cards, onOpenProject, ownerName, onAsk, onTalkTo, onOpen, onRetryCard }) => {
   const [text, setText] = useState('');
   const [order, setOrder] = useState<PanelId[]>(loadOrder);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => load(COLLAPSED_KEY, {}));
@@ -115,6 +117,61 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
   // "PC busy" and "AI paused" are states with their own banner and button, not problems to list here.
   const recentErrors = errors.filter((e) => new Date(e.at).getTime() >= dayAgo && !/^(PC busy|AI paused)/.test(e.text));
   const allClear = reviewCount === 0 && readyUpdates === 0 && recentErrors.length === 0 && lyraEdits === 0;
+  // "Fix all errors": try again what can be tried again, and ask Claude (as one Code update) to fix the rest.
+  const [fixing, setFixing] = useState(false);
+  const [fixNote, setFixNote] = useState('');
+  const [fixedIds, setFixedIds] = useState<number[]>([]);
+  const toFix = recentErrors.filter((e) => !fixedIds.includes(e.id));
+  const fixAll = async () => {
+    if (fixing || toFix.length === 0) return;
+    setFixing(true);
+    setFixNote('');
+    let cards = 0, updates = 0, skipped = 0;
+    const seen = new Set<string>();
+    const rest: string[] = [];
+    let limited = 0;
+    for (const e of toFix) {
+      // Out of AI usage: trying again now only fails again, so these wait for the limit to reset.
+      if (/hit your .*limit|usage limit|rate.?limit/i.test(e.text)) {
+        limited++;
+        continue;
+      }
+      if (e.retry) {
+        const key = e.retry.kind + ':' + e.retry.id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        try {
+          if (e.retry.kind === 'card') {
+            if (await onRetryCard(e.retry.id)) cards++; else skipped++;
+          } else {
+            const r = await fetch(`/api/updates/${e.retry.id}/retry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            if (r.ok) updates++; else skipped++;
+          }
+        } catch { skipped++; }
+      } else if (!rest.includes(e.text)) {
+        rest.push(e.text);
+      }
+    }
+    let asked = 0;
+    if (rest.length > 0) {
+      const request = "Fix the causes of these errors from Eden's activity log (last 24 hours). For each one, find why it happens and change the code so it stops. If an error is outside the code (a missing key, the PC was offline), make the message say clearly what the owner should do instead.\n\n" + rest.map((t) => '- ' + t).join('\n');
+      try {
+        const r = await fetch('/api/updates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request: request.slice(0, 4000), codebaseId: 'hub' }) });
+        if (r.ok) asked = rest.length;
+        else { const d = await r.json().catch(() => ({})); setFixNote(d.error || "Couldn't start the fix. Check the hub is running."); }
+      } catch { setFixNote("Couldn't start the fix. Check the hub is running."); }
+    }
+    const parts: string[] = [];
+    if (cards) parts.push(`sent ${cards} ${cards === 1 ? 'task' : 'tasks'} back to the team`);
+    if (updates) parts.push(`started ${updates} code ${updates === 1 ? 'update' : 'updates'} again`);
+    if (asked) parts.push(`asked Claude to fix ${asked} ${asked === 1 ? 'problem' : 'problems'} (see Code updates)`);
+    if (skipped) parts.push(`${skipped} already handled`);
+    if (limited) parts.push(`${limited} hit the AI usage limit, so press again after it resets`);
+    if (parts.length) setFixNote(parts.join(', ').replace(/^./, (c) => c.toUpperCase()) + '.');
+    // Usage-limit errors stay listed so the button can try them again once the limit resets.
+    setFixedIds((ids) => [...ids, ...toFix.filter((e) => !/hit your .*limit|usage limit|rate.?limit/i.test(e.text)).map((e) => e.id)]);
+    setFixing(false);
+  };
   const recentFiles = [...files].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 4);
 
   const submit = () => {
@@ -429,9 +486,20 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
             )}
             {recentErrors.length > 0 && (
               <div className="text-sm text-slate-800 dark:text-slate-200">
-                <p>
-                  <b>{recentErrors.length}</b> {recentErrors.length === 1 ? 'problem' : 'problems'} in the last 24 hours:
-                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="min-w-0 flex-1">
+                    <b>{recentErrors.length}</b> {recentErrors.length === 1 ? 'problem' : 'problems'} in the last 24 hours:
+                  </p>
+                  <button
+                    onClick={fixAll}
+                    disabled={fixing || toFix.length === 0}
+                    title="Tries again every task and code update that failed, and asks Claude to fix the rest as one Code update"
+                    className="rounded-lg bg-red-600 px-3 py-1.5 font-medium text-white hover:bg-red-500 disabled:opacity-50"
+                  >
+                    {fixing ? 'Fixing…' : toFix.length === 0 ? 'Fix started' : 'Fix all errors'}
+                  </button>
+                </div>
+                {fixNote && <p role="status" className="mt-1 text-slate-700 dark:text-slate-300">{fixNote}</p>}
                 <ul className="mt-1 space-y-1">
                   {recentErrors.slice(-3).reverse().map((e) => (
                     <li key={e.id} className="flex items-start gap-2 text-red-700 dark:text-red-300">
