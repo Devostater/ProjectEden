@@ -25,7 +25,8 @@ interface Job {
   interrupted?: boolean; // stopped because the hub restarted while it ran
   uncommitted?: number; // files not yet saved to GitHub when this update was based on the code
   stale?: boolean; // the code changed since this update was made, so it no longer fits
-  olderBase?: string; // still fits, but another update changed the same files after this one's checks ran
+  olderBase?: string; // still fits, but the code changed after this one's checks ran (another update was applied or undone)
+  olderBaseSameFiles?: boolean; // and that update changed a file this one changes too
   retryOf?: string; // started by "Try again" from this earlier update
   retriedAs?: string; // "Try again" was pressed: the newer update that took its place
   local?: boolean; // ran on an AI on this PC instead of your Claude plan
@@ -622,7 +623,7 @@ export const UpdatesView: React.FC = () => {
 
                   {!job.stale && job.olderBase && (job.status === 'ready' || job.status === 'undone') && (
                     <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-                      Another update changed the same files after this one was checked: "{jobs.find((j) => j.id === job.olderBase)?.request.slice(0, 80) || 'an earlier update'}". It still fits, but its checks ran on the older code. Press Try again to re-make it on the current code, or apply it if you're sure.
+                      {job.olderBaseSameFiles ? 'Another update changed the same files after this one was checked' : 'The code changed after this one was checked'}: "{jobs.find((j) => j.id === job.olderBase)?.request.slice(0, 80) || 'an earlier update'}". It still fits, but its checks ran on the older code{job.olderBaseSameFiles ? '' : ' (a change elsewhere, like a shared type, can still break it)'}. Press Try again to re-make it on the current code, or apply it if you're sure.
                     </p>
                   )}
                   {job.stale && (job.status === 'ready' || job.status === 'undone') && (
