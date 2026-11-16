@@ -5,7 +5,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import type { Express, Request } from 'express';
+import type { Express } from 'express';
 import { logActivity } from './activity';
 import { mayManage } from './pairing';
 
@@ -50,3 +50,10 @@ export function registerRestartRoutes(app: Express) {
   });
 
   app.post('/api/restart', (req, res) => {
+    if (!mayManage(req)) return res.status(403).json({ error: 'The hub can only be restarted from this computer, or from a device with "Code updates" switched on.' });
+    logActivity('work', 'Hub restarting (asked for from Settings).');
+    res.json({ ok: true });
+    // restartHub keeps this copy running if a new one can't be started, rather than leave you with no hub.
+    res.on('finish', () => restartHub());
+  });
+}
