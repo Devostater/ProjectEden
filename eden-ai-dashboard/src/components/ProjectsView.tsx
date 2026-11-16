@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useSideActionsTarget } from './ProjectSidePanel.tsx';
 import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, Eye, EyeOff, Bot, AlertTriangle, Sparkles, Link2, Network, Clock, Code2 } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
 import { ResultActions } from './ResultActions.tsx';
@@ -1101,6 +1103,7 @@ const SyncButton: React.FC<{ project: Project }> = ({ project }) => {
 
 // ---------------------------------------------------------------- page
 export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, newProjectRequest, aziProjectRequest, onOpenSource, onOpenBudgets }) => {
+  const sideActions = useSideActionsTarget();
   const { projects, active } = api;
   const [projectDialog, setProjectDialog] = useState<'new' | 'edit' | null>(null);
   const [aziDialog, setAziDialog] = useState(false);
@@ -1208,6 +1211,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                 </p>
               )}
             </div>
+            <PortalOr target={sideActions}>
             <button
               onClick={() => {
                 setPlanGoal('');
@@ -1249,6 +1253,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
             >
               <Plus className="h-4 w-4" /> New AZI project
             </button>
+                        </PortalOr>
             {aziDialog && <NewAziProjectDialog api={api} initialName={aziName} onClose={() => { setAziDialog(false); setAziName(''); }} />}
           </div>
 
@@ -1503,3 +1508,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
     </div>
   );
 };
+
+// Draws its children in the side panel's actions box when that box is showing, else right here.
+const PortalOr: React.FC<{ target: HTMLElement | null; children: React.ReactNode }> = ({ target, children }) =>
+  target ? createPortal(children, target) : <>{children}</>;

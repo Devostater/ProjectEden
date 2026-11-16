@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight, Copy, Check } from 'lucide-react';
+import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight, Copy, Check, SlidersHorizontal, EyeOff } from 'lucide-react';
 import type { Agent, Card, Project, RoadmapGoal } from '../types/index.ts';
 import { FlowTab, WorkloadTab, ProgressTab } from './ProjectVisuals.tsx';
 import { Roadmap, roadmapProgress } from './Roadmap.tsx';
@@ -11,6 +11,7 @@ import { ReviewTab, type ReviewProps } from './ReviewTab.tsx';
 import { LyraPanel, LyraChibi } from './LyraPanel.tsx';
 import { OPEN_PANEL_EVENT } from '../panel.ts';
 import { UsagePanel } from './UsageBars.tsx';
+import { useSideActionsTarget } from './ProjectSidePanel.tsx';
 import { PauseAI } from './PauseAI.tsx';
 
 type PanelTab = 'flow' | 'workload' | 'progress' | 'trail' | 'roadmap' | 'toolbox' | 'preview' | 'review' | 'lyra' | 'activity' | 'terminal';
@@ -290,7 +291,13 @@ export const BottomPanel: React.FC<{
   // The tabs can be put in any order (Arrange, next to Large screen); saved per device.
   const dockOrder = useArrangedOrder('eden_dock_order', ALL_TABS);
   const [arrangingDock, setArrangingDock] = useState(false);
-  const tabButton = (id: PanelTab, label: React.ReactNode, Icon: React.ElementType, dot = false) => (
+  // Tabs you hid with Customize (saved on this device). While the Projects side panel is open, its tools are
+  // already there, so those tabs leave the bottom bar (Preview stays: the side panel has no Preview).
+  const [hiddenTabs, setHiddenTabs] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_dock_hidden') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
+  const toggleHidden = (id: string) => setHiddenTabs((h) => { const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id]; try { localStorage.setItem('eden_dock_hidden', JSON.stringify(next)); } catch {} return next; });
+  const sidePanelOpen = !!useSideActionsTarget();
+  const inSidePanel = (id: PanelTab) => sidePanelOpen && PROJECT_TABS.includes(id) && id !== 'preview';
+  const tabButton = (id: PanelTab, label: React.ReactNode, Icon: React.ElementType, dot = false) => (inSidePanel(id) || (!arrangingDock && hiddenTabs.includes(id))) ? null : (
     <Arrangeable key={id} id={id} label={typeof label === 'string' ? label : id.charAt(0).toUpperCase() + id.slice(1)} arr={dockOrder} arranging={arrangingDock} horizontal showing={project ? ALL_TABS : ALL_TABS.filter((t) => !PROJECT_TABS.includes(t))} className="flex shrink-0">
       <button
         onClick={() => pick(id)}
@@ -304,6 +311,11 @@ export const BottomPanel: React.FC<{
         <Icon className="h-4 w-4" /> {label}
         {dot && <span className="h-2 w-2 rounded-full bg-indigo-500 ring-2 ring-white dark:ring-slate-900" aria-label="New activity" />}
       </button>
+      {arrangingDock && (
+        <button onClick={() => toggleHidden(id)} aria-pressed={!hiddenTabs.includes(id)} title={hiddenTabs.includes(id) ? 'Hidden: press to show this tab' : 'Showing: press to hide this tab'} className="ml-0.5 rounded p-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+          {hiddenTabs.includes(id) ? <EyeOff className="h-4 w-4 text-red-500" /> : <Eye className="h-4 w-4 text-emerald-500" />}
+        </button>
+      )}
     </Arrangeable>
   );
 
@@ -344,7 +356,7 @@ export const BottomPanel: React.FC<{
           )}
         {project && tabButton('toolbox', 'Toolbox', Wrench)}
         {project && tabButton('preview', 'Preview', Eye)}
-        {project && !arrangingDock && <span style={{ order: dockOrder.pos('review') }} className="mx-1.5 h-6 w-px shrink-0 bg-slate-200 dark:bg-slate-700" />}
+        {project && !arrangingDock && !sidePanelOpen && <span style={{ order: dockOrder.pos('review') }} className="mx-1.5 h-6 w-px shrink-0 bg-slate-200 dark:bg-slate-700" />}
         {tabButton(
           'review',
           <>
@@ -373,11 +385,11 @@ export const BottomPanel: React.FC<{
           <button
             onClick={() => setArrangingDock((v) => !v)}
             aria-pressed={arrangingDock}
-            aria-label={arrangingDock ? 'Done arranging tabs' : 'Arrange the tabs'}
-            title={arrangingDock ? 'Done' : 'Arrange: move tabs left or right'}
+            aria-label={arrangingDock ? 'Done customizing' : 'Customize the bottom bar'}
+            title={arrangingDock ? 'Done' : 'Customize: move tabs, show or hide them'}
             className={`${toolClass} gap-1.5 px-2.5 text-sm ${arrangingDock ? 'bg-indigo-600 text-white hover:bg-indigo-500 hover:text-white dark:text-white' : ''}`}
           >
-            <ArrowLeftRight className="h-4 w-4" /> {arrangingDock ? 'Done' : <span className="sr-only">Arrange</span>}
+            <SlidersHorizontal className="h-4 w-4" /> {arrangingDock ? 'Done' : 'Customize'}
           </button>
           {open && tab === 'flow' && (
             <>
