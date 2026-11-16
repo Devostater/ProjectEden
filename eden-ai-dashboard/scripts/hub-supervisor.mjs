@@ -61,6 +61,19 @@ function openApp() {
   child.unref();
 }
 
+// With --open: the hub window is for this computer; the tablet gets LYRA, on her EDEN page.
+// Waits for the hub to answer first (it may still be starting), then asks it to do the opening.
+async function openLyraOnTablet() {
+  for (let i = 0; i < 45 && !(await answering(3000)); i++) await new Promise((r) => setTimeout(r, 2000));
+  try {
+    const r = await fetch(`http://127.0.0.1:${PORT}/api/devices/open-lyra-on-tablets`, { method: 'POST', signal: AbortSignal.timeout(180000) });
+    const j = await r.json().catch(() => ({}));
+    log(j.ok ? `Opened LYRA on the tablet (${(j.opened || []).join(', ')}).` : `LYRA was not opened on the tablet: ${j.error || `the hub answered ${r.status}`}`);
+  } catch (err) {
+    log(`LYRA was not opened on the tablet: ${err?.message || err}`);
+  }
+}
+
 // ---- one copy only ----
 try {
   const other = Number(fs.readFileSync(LOCK, 'utf-8'));
@@ -68,7 +81,10 @@ try {
   // the lock is left behind, and Windows can reuse that process ID for an unrelated program.
   if (other && other !== process.pid && alive(other) && (await answering(6000))) {
     log(`Already being kept running (supervisor ${other}).`);
-    if (OPEN_APP) openApp();
+    if (OPEN_APP) {
+      openApp();
+      await openLyraOnTablet();
+    }
     process.exit(0);
   }
   if (other && other !== process.pid) log(`Found a leftover lock (process ${other}) with no hub answering. Taking over.`);
@@ -172,4 +188,5 @@ process.on('SIGTERM', shutdown);
 process.on('SIGHUP', shutdown);
 
 if (!adopted) start();
+if (OPEN_APP) openLyraOnTablet();
 if (OPEN_APP) openApp(); // shows "Starting the hub…" until it answers, then loads by itself

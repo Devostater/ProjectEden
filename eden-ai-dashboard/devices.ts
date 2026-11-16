@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 import type { Express, Request, Response } from 'express';
 import { logActivity, fileProblem } from './activity';
 import { lanAddresses, pairingCode } from './pairing';
+import { ensureLyraRunning } from './lyra';
 
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-devices.json');
 const PORTS = [3000, 4777, 24678]; // the hub, LYRA, and the page's live-update connection
@@ -245,6 +246,23 @@ export function registerDeviceRoutes(app: Express) {
     if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
     const found = adb(['version']).ok;
     res.json({ adb: found, devices: found ? listDevices() : [] });
+  });
+
+  // "Start Eden" calls this: the hub opens on this computer, LYRA opens on the tablet, on her EDEN page.
+  app.post('/api/devices/open-lyra-on-tablets', async (req, res) => {
+    if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
+    const tablets = listDevices().filter((d) => d.state === 'device' && /tablet/.test(adb(['-s', d.serial, 'shell', 'getprop', 'ro.build.characteristics']).out));
+    if (!tablets.length) return res.json({ ok: false, error: 'No tablet is plugged in (with USB debugging allowed).' });
+    const lyra = await ensureLyraRunning();
+    if (!lyra.ok) return res.json({ ok: false, error: lyra.error });
+    const opened: string[] = [];
+    for (const t of tablets) {
+      if (!connect(t.serial)) continue;
+      adb(['-s', t.serial, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP']);
+      if (adb(['-s', t.serial, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', 'http://localhost:4777/?eden']).ok) opened.push(t.name || t.model || t.serial);
+    }
+    if (opened.length) logActivity('info', `Opened LYRA on ${opened.join(', ')}.`);
+    res.json({ ok: opened.length > 0, opened, error: opened.length ? undefined : 'Could not open LYRA on the tablet.' });
   });
 
   app.post('/api/devices/:serial/:action', (req, res) => {

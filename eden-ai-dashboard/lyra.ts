@@ -13,7 +13,8 @@ import { mayManage } from './pairing';
 function findNovaBat(): string | null {
   const candidates = [
     process.env.LYRA_START_PATH,
-    path.join(os.homedir(), 'OneDrive', 'Documents', 'Forge', 'Nova.bat'), // where LYRA lives now
+    'C:\\AZI\\Forge\\Nova.bat', // where LYRA lives now
+    path.join(os.homedir(), 'OneDrive', 'Documents', 'Forge', 'Nova.bat'),
     path.join(os.homedir(), 'Documents', 'Forge', 'Nova.bat'),
     path.join(os.homedir(), 'Documents', 'GITHUB', 'Project-Nova', 'Nova.bat'),
   ].filter((p): p is string => !!p && p.trim() !== '');
@@ -51,6 +52,25 @@ async function lyraJson(p: string, body?: unknown, ms = 8000): Promise<any> {
   return j;
 }
 const short = (t: unknown, n: number) => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+// Makes sure LYRA is running, without opening her page on this computer (used when she is opened on the tablet).
+// Waits up to about two minutes for her to answer.
+export async function ensureLyraRunning(): Promise<{ ok: boolean; error?: string }> {
+  await pingLyra();
+  if (lyraConnected()) return { ok: true };
+  if (process.platform !== 'win32') return { ok: false, error: 'LYRA is not running.' };
+  const bat = findNovaBat();
+  if (!bat) return { ok: false, error: "Couldn't find LYRA's Nova.bat." };
+  const child = spawn('cmd.exe', ['/c', 'start', 'LYRA', '/MIN', '/D', path.dirname(bat), 'cmd', '/k', bat], { detached: true, stdio: 'ignore', env: { ...process.env, NOVA_NO_OPEN: '1' } });
+  child.on('error', () => {});
+  child.unref();
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    await pingLyra();
+    if (lyraConnected()) return { ok: true };
+  }
+  return { ok: false, error: 'LYRA was started but is not answering yet.' };
+}
 
 export function registerLyraRoutes(app: Express) {
   // What LYRA is doing: her build, her task queue, what she made lately, her projects. Read-only.
