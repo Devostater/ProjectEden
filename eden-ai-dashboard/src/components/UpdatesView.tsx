@@ -25,6 +25,7 @@ interface Job {
   interrupted?: boolean; // stopped because the hub restarted while it ran
   uncommitted?: number; // files not yet saved to GitHub when this update was based on the code
   stale?: boolean; // the code changed since this update was made, so it no longer fits
+  olderBase?: string; // still fits, but another update changed the same files after this one's checks ran
   retryOf?: string; // started by "Try again" from this earlier update
   retriedAs?: string; // "Try again" was pressed: the newer update that took its place
   local?: boolean; // ran on an AI on this PC instead of your Claude plan
@@ -619,6 +620,11 @@ export const UpdatesView: React.FC = () => {
                     </div>
                   )}
 
+                  {!job.stale && job.olderBase && (job.status === 'ready' || job.status === 'undone') && (
+                    <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                      Another update changed the same files after this one was checked: "{jobs.find((j) => j.id === job.olderBase)?.request.slice(0, 80) || 'an earlier update'}". It still fits, but its checks ran on the older code. Press Try again to re-make it on the current code, or apply it if you're sure.
+                    </p>
+                  )}
                   {job.stale && (job.status === 'ready' || job.status === 'undone') && (
                     <p className="text-sm text-amber-700 dark:text-amber-300">The code has changed since this update was made, so it no longer fits. "Try again" redoes it on the current code.</p>
                   )}
@@ -691,7 +697,7 @@ export const UpdatesView: React.FC = () => {
                       </button>
                     )}
                     {/* The fix box above already offers running it again, so "Try again" only shows when it doesn't. */}
-                    {(job.status === 'failed' || job.status === 'discarded' || (job.stale && (job.status === 'ready' || job.status === 'undone'))) && !(fix && fix.action !== 'discard') && (
+                    {(job.status === 'failed' || job.status === 'discarded' || ((job.stale || job.olderBase) && (job.status === 'ready' || job.status === 'undone'))) && !(fix && fix.action !== 'discard') && (
                       <button
                         onClick={() => retry(job)}
                         disabled={acting === job.id || !claudeReady}
