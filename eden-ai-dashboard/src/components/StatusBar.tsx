@@ -4,6 +4,7 @@ import { Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Inbox
 import type { AppTab } from './Sidebar.tsx';
 import { VoiceCommands, type CommandActions } from './VoiceCommands.tsx';
 import { openPanel } from '../panel.ts';
+import type { KeepPage } from '../panes.ts';
 
 interface Status {
   offline?: { offline: boolean; mode: string; localFirst: boolean; week: { localPercent: number; local: number; cloud: number } };
@@ -16,7 +17,7 @@ interface Status {
 const get = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null)).catch(() => null);
 
 // Slim bar across the top: where things stand at a glance, each part a shortcut to where it's set.
-export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => void; darkMode: boolean; setDarkMode: (v: boolean) => void; reviewCount?: number; actions: CommandActions; split?: boolean; onToggleSplit?: () => void; pauseSlot?: React.ReactNode }> = ({ split = false, onToggleSplit, pauseSlot, title, setActiveTab, darkMode, setDarkMode, reviewCount = 0, actions }) => {
+export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => void; darkMode: boolean; setDarkMode: (v: boolean) => void; reviewCount?: number; actions: CommandActions; split?: boolean; onToggleSplit?: () => void; keepPage?: KeepPage; onKeepPage?: (v: KeepPage) => void; pauseSlot?: React.ReactNode }> = ({ split = false, onToggleSplit, keepPage = 'focused', onKeepPage, pauseSlot, title, setActiveTab, darkMode, setDarkMode, reviewCount = 0, actions }) => {
   const [s, setS] = useState<Status>({});
   useEffect(() => {
     const load = async () => {
@@ -91,11 +92,18 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
         )}
       </div>
       {pauseSlot}
+      {split && onKeepPage && (
+        <select value={keepPage} onChange={(e) => onKeepPage(e.target.value as KeepPage)} aria-label="When going back to one page, keep" title="When going back to one page, keep" className="hidden h-8 shrink-0 rounded-lg border border-slate-300 bg-white px-1 text-xs text-slate-700 md:block dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200">
+          <option value="focused">Keep: last used</option>
+          <option value="left">Keep: left</option>
+          <option value="right">Keep: right</option>
+        </select>
+      )}
       {onToggleSplit && (
         <button
           onClick={onToggleSplit}
           aria-pressed={split}
-          title={split ? 'Close the other page and keep the one you are on' : 'Open a second page beside this one'}
+          title={split ? (keepPage === 'left' ? 'One page: keep the left page' : keepPage === 'right' ? 'One page: keep the right page' : 'One page: keep the page you used last') : 'Open a second page beside this one'}
           className={`hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg border md:flex ${split ? 'border-indigo-300 bg-indigo-50 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-200' : 'border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800'}`}
         >
           {split ? <Square className="h-4 w-4" /> : <Columns2 className="h-4 w-4" />}<span className="sr-only">{split ? 'One page' : 'Two pages'}</span>

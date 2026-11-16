@@ -25,7 +25,7 @@ import { MobileNav } from './components/MobileNav.tsx';
 import { MobilePanel } from './components/MobilePanel.tsx';
 import { MobileMenu } from './components/MobileMenu.tsx';
 import { PageTiles } from './pages.tsx';
-import { usePanes } from './panes.ts';
+import { usePanes, readKeep, saveKeep, paneToClose, type KeepPage } from './panes.ts';
 import { PaneFrame, PaneSwitch, SplitHandle } from './components/PaneFrame.tsx';
 import { ActiveWorkers, PauseAndWorkers } from './components/ActiveWorkers.tsx';
 import { openPanel } from './panel.ts';
@@ -62,6 +62,7 @@ export default function App() {
   // One or two pages side by side (panes.ts). setActiveTab drives the pane you are in; reveal (links inside a page)
   // opens in the other pane when two are open.
   const { panes, focus, activeTab, split, picking, ratio, setRatio, navigate, reveal, openBeside, startPicking, cancelPicking, close, swap, setFocus, back } = usePanes();
+  const [keepPage, setKeepPage] = useState<KeepPage>(readKeep);
   const setActiveTab = navigate;
   // Room for two pages side by side: two 22rem panes plus the bar between them (more room needed at larger text).
   const mainRef = useRef<HTMLElement>(null);
@@ -417,7 +418,7 @@ export default function App() {
           </div>
         )}
 
-        <StatusBar title={split && wide ? '' : TITLES[activeTab] || ''} split={split || picking} onToggleSplit={() => (split ? close((1 - focus) as 0 | 1) : picking ? cancelPicking() : startPicking())} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} actions={commandActions} />
+        <StatusBar keepPage={keepPage} onKeepPage={(v) => { saveKeep(v); setKeepPage(v); }} title={split && wide ? '' : TITLES[activeTab] || ''} split={split || picking} onToggleSplit={() => (split ? close(paneToClose(keepPage, focus)) : picking ? cancelPicking() : startPicking())} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} actions={commandActions} />
 
         <main ref={mainRef} className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="shrink-0">
@@ -425,7 +426,7 @@ export default function App() {
             <UsageWarningBanner />
             <BusyBanner />
           </div>
-          {split && !wide && <PaneSwitch panes={panes} focus={focus} onFocus={setFocus} onCloseOther={() => close((1 - focus) as 0 | 1)} />}
+          {split && !wide && <PaneSwitch panes={panes} focus={focus} onFocus={setFocus} onCloseOther={() => close(paneToClose(keepPage, focus))} />}
           <div ref={paneRowRef} className="flex min-h-0 flex-1 overflow-hidden">
             {/* Drawn in a fixed order and placed with CSS order, so opening, swapping or closing never remounts the page that stays. */}
             {[...panes].sort().map((tab) => {
