@@ -54,5 +54,11 @@ Consult #5 and the **current source** before assigning work. The November 16 AZI
 ## Claude kickoff
 Pick one scoped issue in #5, create `claude/<topic>`, open a draft PR, and include tested behavior and known gaps. Use the PR as the point of handoff to ChatGPT for independent review.
 
+## Gemini / Google AI Studio (research, prototyping, multimodal)
+- **Access:** the AI Studio chat has no GitHub credentials or web access. The owner pastes files, or raw links such as `https://github.com/Devostater/ProjectEden/pull/<n>.diff`. Its code goes on `gemini/<topic>` branches.
+- **Does:** model evaluation, structured-output schemas, image/audio/video prototypes, research memos, test plans.
+- **Automatic PR review:** `.github/workflows/gemini-pr-review.yml` posts one advisory Gemini comment per PR (updated on each push) when the repo has the Actions secret `GEMINI_API_KEY` and variable `GEMINI_MODEL`. It is advice, not a passing check.
+- **Gate:** anything Gemini produces must pass `npx tsc --noEmit` and the relevant tests before merge, checked by the owner, Claude or Antigravity.
+
 ## SWRMsync: one button to sync and start every AI
 `swarm/SWRMsync.bat` (copy it to the Desktop) syncs the AZI repos, gives Claude, Codex (ChatGPT) and Gemini/Antigravity each their own fresh copy of this repo in `%USERPROFILE%\.eden-swarm\<name>`, and starts them. Each AI reads `swarm/AGENT_PROMPT.md`, then takes open issues whose title starts with its tag (`[claude]`, `[codex]`, `[gemini]`, `[all]`), one at a time, on its own branch with a draft PR. `SWRMsync.bat check` only syncs and prepares, without starting any AI.
