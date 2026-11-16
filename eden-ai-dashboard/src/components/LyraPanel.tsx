@@ -232,6 +232,13 @@ export const LyraPanel: React.FC = () => {
   const [thinking, setThinking] = useState(false); // LYRA is answering (maybe a message sent from another device)
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState('');
+  const [autoOpen, setAutoOpen] = useState<boolean | null>(null);
+  useEffect(() => { fetch('/api/lyra/auto-open').then((r) => r.json()).then((d) => setAutoOpen(!!d.autoOpen)).catch(() => {}); }, []);
+  const toggleAutoOpen = () => {
+    const next = !autoOpen;
+    fetch('/api/lyra/auto-open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ autoOpen: next }) })
+      .then((r) => r.json()).then((d) => setAutoOpen(!!d.autoOpen)).catch(() => {});
+  };
   const end = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -351,6 +358,11 @@ export const LyraPanel: React.FC = () => {
           <LyraChibi connected={!!connected} thinking={working}className="h-20 w-20" />
         </div>
         <div className="text-sm font-semibold text-slate-900 dark:text-white">LYRA</div>
+        {autoOpen !== null && (
+          <button onClick={toggleAutoOpen} aria-pressed={autoOpen} title="Open LYRA on the tablet when Eden starts. Takes effect on the next start." className="mt-1 rounded-full border border-slate-300 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+            Auto-open: {autoOpen ? 'On' : 'Off'}
+          </button>
+        )}
         <div className={`flex items-center gap-1.5 text-sm ${connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'}`}>
           <span className={`h-2 w-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-slate-400'}`} /> {status}
         </div>

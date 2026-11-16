@@ -66,7 +66,12 @@ function openApp() {
 
 // With --open: the hub window is for this computer; the tablet gets LYRA, on her EDEN page.
 // Waits for the hub to answer first (it may still be starting), then asks it to do the opening.
+// LYRA's auto-open setting (Eden -> LYRA tab). Off unless turned on; read at start.
+function lyraAutoOpen() {
+  try { return JSON.parse(fs.readFileSync(path.join(APP, '.eden-lyra-autoopen.json'), 'utf-8')).autoOpen === true; } catch { return false; }
+}
 async function openLyraOnTablet() {
+  if (!lyraAutoOpen()) return log('Auto-open LYRA is off (turn it on in Eden, LYRA tab).');
   for (let i = 0; i < 45 && !(await answering(3000)); i++) await new Promise((r) => setTimeout(r, 2000));
   try {
     const r = await fetch(`http://127.0.0.1:${PORT}/api/devices/open-lyra-on-tablets`, { method: 'POST', signal: AbortSignal.timeout(180000) });
