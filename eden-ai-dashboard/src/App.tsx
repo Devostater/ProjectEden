@@ -103,6 +103,11 @@ export default function App() {
   const [profile, setProfile] = useState({ name: '', studio: '' });
 
   // Your name and studio name, for the sidebar and the Dashboard greeting.
+  useEffect(() => {
+    const ask = (e: Event) => { const text = (e as CustomEvent<string>).detail; if (text) openChat(text, false); };
+    window.addEventListener('eden-ask', ask);
+    return () => window.removeEventListener('eden-ask', ask);
+  });
   const loadProfile = async () => {
     try {
       const d = await fetch('/api/settings').then((r) => r.json());

@@ -18,6 +18,7 @@ coverage/
 .eden-devices.json
 .eden-ai.json
 .eden-main.json
+.eden-profile.json
 .eden-ideas.json
 .eden-backup.json
 .eden-logs/

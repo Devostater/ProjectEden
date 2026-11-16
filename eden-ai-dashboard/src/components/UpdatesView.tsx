@@ -420,7 +420,7 @@ export const UpdatesView: React.FC = () => {
           <Wand2 className="h-6 w-6 text-indigo-500" /> Code updates
         </h1>
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-          Ask the AI to change the hub, LYRA, or another codebase. It works on a separate copy, the hub runs the checks, and you see every changed line before anything is applied.
+          Ask the AI for a change. Nothing is applied until you press Apply.
         </p>
       </div>
 
@@ -622,8 +622,6 @@ export const UpdatesView: React.FC = () => {
                   {job.stale && (job.status === 'ready' || job.status === 'undone') && (
                     <p className="text-sm text-amber-700 dark:text-amber-300">The code has changed since this update was made, so it no longer fits. "Try again" redoes it on the current code.</p>
                   )}
-                  {job.retryOf && <p className="text-xs text-slate-500 dark:text-slate-400">Started again from an earlier update.</p>}
-                  {job.retriedAs && jobs.some((j) => j.id === job.retriedAs) && <p className="text-xs text-slate-500 dark:text-slate-400">Tried again: see the newer update in the list.</p>}
 
                   {job.summary && (
                     <div className="rounded-lg bg-slate-50 p-3 text-slate-800 dark:bg-slate-800/60 dark:text-slate-100">
@@ -632,7 +630,7 @@ export const UpdatesView: React.FC = () => {
                     </div>
                   )}
 
-                  {job.files && (
+                  {job.files && !job.hasDiff && (
                     <div>
                       <div className="mb-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">Changed files</div>
                       <ul className="space-y-0.5 text-sm">
@@ -653,7 +651,6 @@ export const UpdatesView: React.FC = () => {
                       {job.check.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}
                       <div className="min-w-0">
                         {job.check.ok ? 'Checks passed.' : 'Checks failed: applying this would likely break it.'}
-                        {job.check.ok && job.check.output && <pre className="mt-1 whitespace-pre-wrap text-xs opacity-80">{job.check.output}</pre>}
                         {!job.check.ok && <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap text-xs">{job.check.output}</pre>}
                       </div>
                     </div>

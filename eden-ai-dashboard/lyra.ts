@@ -1,12 +1,13 @@
 // LYRA panel: lets the owner talk to LYRA directly from the bottom panel, without picking a teammate.
 // Like the terminal, it only answers from this computer and from the hub's own page.
-import type { Express, Request } from 'express';
+import type { Express, Request, Response } from 'express';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import { generate, lyraConnected, pingLyra } from './providers';
-import { logActivity } from './activity';
+import { logActivity, fileProblem } from './activity';
 import { mayManage } from './pairing';
 
 // Where LYRA's Nova.bat lives. The owner can set LYRA_START_PATH to its full path; otherwise we look in the usual place.
@@ -72,7 +73,80 @@ export async function ensureLyraRunning(): Promise<{ ok: boolean; error?: string
   return { ok: false, error: 'LYRA was started but is not answering yet.' };
 }
 
+// ---- The LYRA conversation, kept by the hub so every device shows the same one ----
+// Messages typed in the LYRA panel are saved here (in .eden-lyra-chat.json), and every open page (this
+// computer, the tablet, the phone) is told the moment one is added. LYRA gets this whole conversation
+// each time, so she continues the same thread wherever you write to her.
+interface LyraMsg {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  error?: boolean;
+  at: number;
+}
+const CHAT_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-lyra-chat.json');
+const MAX_SAVED = 200;
+let convo: { messages: LyraMsg[]; version: number } = { messages: [], version: 0 };
+let thinking = false; // LYRA is working on a reply right now
+try {
+  const saved = JSON.parse(fs.readFileSync(CHAT_FILE, 'utf-8'));
+  if (Array.isArray(saved.messages)) convo.messages = saved.messages.filter((m: any) => m && typeof m.id === 'string' && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string');
+} catch (err: any) {
+  if (err?.code !== 'ENOENT') fileProblem("load LYRA's conversation", err);
+}
+let chatSaveTimer: NodeJS.Timeout | null = null;
+const saveConvo = () => {
+  if (chatSaveTimer) return;
+  chatSaveTimer = setTimeout(() => {
+    chatSaveTimer = null;
+    try {
+      fs.writeFileSync(CHAT_FILE, JSON.stringify({ messages: convo.messages }), 'utf-8');
+    } catch (err: any) {
+      fileProblem("save LYRA's conversation", err);
+    }
+  }, 300);
+};
+const watchers = new Set<Response>();
+const tellWatchers = () => {
+  for (const res of watchers) res.write(`data: ${convo.version}\n\n`);
+};
+function changed() {
+  convo.version++;
+  saveConvo();
+  tellWatchers();
+}
+function addMsg(role: LyraMsg['role'], content: string, error = false): LyraMsg {
+  const m: LyraMsg = { id: `l-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, role, content, at: Date.now(), ...(error ? { error: true } : {}) };
+  convo.messages.push(m);
+  if (convo.messages.length > MAX_SAVED) convo.messages = convo.messages.slice(-MAX_SAVED);
+  changed();
+  return m;
+}
+
 export function registerLyraRoutes(app: Express) {
+  // The shared conversation, and whether LYRA is thinking. Any paired device can read it.
+  app.get('/api/lyra/conversation', (_req, res) => res.json({ messages: convo.messages, thinking, version: convo.version }));
+
+  // Tells a page the moment something changes (a new message, a reply, LYRA starting to think, a clear).
+  app.get('/api/lyra/conversation/events', (req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.write(`data: ${convo.version}\n\n`);
+    watchers.add(res);
+    const ping = setInterval(() => res.write(': ping\n\n'), 25000);
+    req.on('close', () => {
+      clearInterval(ping);
+      watchers.delete(res);
+    });
+  });
+
+  // Start the conversation over, on every device.
+  app.delete('/api/lyra/conversation', (req, res) => {
+    if (!fromThisComputer(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'The LYRA conversation can only be cleared from the hub on this computer.' });
+    convo.messages = [];
+    changed();
+    res.json({ ok: true });
+  });
+
   // What LYRA is doing: her build, her task queue, what she made lately, her projects. Read-only.
   app.get('/api/lyra/overview', async (_req, res) => {
     try {
@@ -186,19 +260,28 @@ export function registerLyraRoutes(app: Express) {
     if (!fromThisComputer(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'LYRA can only be talked to from the hub on this computer.' });
     const text = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
     if (!text) return res.status(400).json({ error: 'Type a message first.' });
-    // Earlier turns of this conversation, kept by the page.
-    const earlier = Array.isArray(req.body?.history) ? req.body.history : [];
-    const messages = earlier
-      .filter((m: any) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    // Earlier turns come from the conversation the hub keeps (the same one every device sees).
+    const messages = convo.messages
+      .filter((m) => !m.error)
       .slice(-20)
-      .map((m: any) => ({ role: m.role, content: m.content.slice(0, 8000) }));
+      .map((m) => ({ role: m.role, content: m.content.slice(0, 8000) }));
+    // The message is saved and shown on every device right away, before LYRA has answered.
+    addMsg('user', text.slice(0, 8000));
     messages.push({ role: 'user', content: text.slice(0, 8000) });
+    thinking = true;
+    changed();
     try {
       const result = await generate({ model: 'lyra', messages });
+      addMsg('assistant', result.text);
       res.json({ reply: result.text, model: result.model });
     } catch (err: any) {
-      logActivity('error', `LYRA: ${String(err?.message || err).slice(0, 200)}`);
-      res.status(502).json({ error: String(err?.message || err) });
+      const message = String(err?.message || err);
+      logActivity('error', `LYRA: ${message.slice(0, 200)}`);
+      addMsg('assistant', message, true);
+      res.status(502).json({ error: message });
+    } finally {
+      thinking = false;
+      changed();
     }
   });
 }

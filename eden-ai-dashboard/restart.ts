@@ -8,6 +8,8 @@ import { fileURLToPath } from 'url';
 import type { Express } from 'express';
 import { logActivity } from './activity';
 import { mayManage } from './pairing';
+import { activeUpdateNames } from './updates';
+import { runningCardNames } from './cardRunner';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -52,7 +54,26 @@ export function registerRestartRoutes(app: Express) {
 
   app.post('/api/restart', (req, res) => {
     if (!mayManage(req)) return res.status(403).json({ error: 'The hub can only be restarted from this computer, or from a device with "Code updates" switched on.' });
-    logActivity('work', 'Hub restarting (asked for from Settings).');
+    // Warn first if a restart would cut off work in progress. "force" means the owner has seen the list and wants to go ahead.
+    const updates = activeUpdateNames();
+    const interrupted = [
+      ...updates.working.map((n) => `Code update being worked on: ${n}`),
+      ...updates.queued.map((n) => `Code update waiting in the queue: ${n}`),
+      ...runningCardNames().map((n) => `Card being written: ${n}`),
+    ];
+    if (interrupted.length) {
+      const summary = `${interrupted.length} thing${interrupted.length === 1 ? '' : 's'} in progress`;
+      if (req.body?.force !== true) {
+        logActivity('info', `Hub restart skipped: ${summary} would have been interrupted. ${interrupted.join('; ')}.`);
+        return res.status(409).json({
+          error: 'A restart now would interrupt work that is still going.',
+          interrupted,
+        });
+      }
+      logActivity('work', `Hub restarting anyway (asked for from Settings): ${summary} will be interrupted. ${interrupted.join('; ')}.`);
+    } else {
+      logActivity('work', 'Hub restarting (asked for from Settings).');
+    }
     res.json({ ok: true });
     // restartHub keeps this copy running if a new one can't be started, rather than leave you with no hub.
     res.on('finish', () => restartHub());

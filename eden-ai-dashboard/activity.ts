@@ -24,7 +24,8 @@ interface Entry {
   id: number;
   at: string;
   kind: ActivityKind;
-  text: string;
+  text: string; // the short version (first 300 characters), shown by default and used everywhere else
+  full?: string; // the whole message (up to 1000 characters); only saved when it is longer than `text`
   hint?: ActivityHint; // only on [error] lines we recognise
   retry?: ActivityRetry; // only when the task can be tried again
 }
@@ -56,6 +57,8 @@ const FAILURES: { test: RegExp; hint: ActivityHint }[] = [
 export const explainFailure = (text: string): ActivityHint | undefined => FAILURES.find((f) => f.test.test(text))?.hint;
 
 const MAX = 500;
+const SHORT_TEXT = 300; // characters shown on the line by default
+const FULL_TEXT = 1000; // most characters kept of one message
 const LOG_FILE = path.join(os.homedir(), '.eden-hub', 'activity-log.json');
 const entries: Entry[] = [];
 let nextId = 1;
@@ -85,7 +88,10 @@ process.on('exit', () => {
 // `reason` is just the failure message (so a card title can't be mistaken for one); `retry` says what a
 // Retry button should run again.
 export function logActivity(kind: ActivityKind, text: string, extra?: { reason?: string; retry?: ActivityRetry }) {
-  const entry: Entry = { id: nextId++, at: new Date().toISOString(), kind, text: text.replace(/\s+/g, ' ').slice(0, 300) };
+  const oneLine = text.replace(/\s+/g, ' ');
+  const entry: Entry = { id: nextId++, at: new Date().toISOString(), kind, text: oneLine.slice(0, SHORT_TEXT) };
+  // Keep the whole message too (capped), so a long error can be opened and copied from the panel.
+  if (oneLine.length > SHORT_TEXT) entry.full = oneLine.slice(0, FULL_TEXT);
   if (kind === 'error') {
     const hint = explainFailure(extra?.reason ?? text);
     if (hint) entry.hint = hint;
@@ -122,7 +128,12 @@ try {
   const kinds = ['info', 'work', 'done', 'error'];
   if (Array.isArray(saved)) {
     for (const e of saved) {
-      if (e && Number.isInteger(e.id) && e.id > 0 && typeof e.at === 'string' && kinds.includes(e.kind) && typeof e.text === 'string') entries.push(e as Entry);
+      if (e && Number.isInteger(e.id) && e.id > 0 && typeof e.at === 'string' && kinds.includes(e.kind) && typeof e.text === 'string') {
+        // Older logs have no `full`; ignore it if it's anything but text.
+        if (typeof e.full !== 'string') delete e.full;
+        else e.full = e.full.slice(0, FULL_TEXT);
+        entries.push(e as Entry);
+      }
     }
     entries.splice(0, Math.max(0, entries.length - MAX));
     nextId = entries.reduce((m, e) => Math.max(m, e.id), 0) + 1;

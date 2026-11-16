@@ -557,6 +557,166 @@ export async function syncProject(dir: string, commitMessage?: string): Promise<
   return fail('other', 0, secretsMoved);
 }
 
+// ---- Commit and push: the "Save and push" button -----------------------------------------------------
+// Stages what changed (tracked and new files, never anything .gitignore hides), commits "Hub: save work <date>" and
+// pushes to the project's own remote and branch. It refuses when something looks like a secret, never forces, and
+// never pushes Forge to main. Secret files are NOT moved here (unlike Sync): the owner decides what to do with them.
+export type CommitPushRefusal = 'not-git' | 'detached' | 'forge-main' | 'no-remote' | 'bad-branch' | 'secrets' | 'protected' | 'big-files' | 'nothing' | 'stage' | 'commit' | 'push';
+export interface CommitPushResult {
+  ok: boolean;
+  dryRun?: boolean; // true = only checked, nothing was staged, committed or pushed
+  files: number; // files that are (or would be) saved
+  fileNames: string[]; // the first few of them
+  moreFiles: number;
+  remote?: string;
+  branch?: string; // the branch on the remote it goes to
+  commit?: string;
+  refused?: CommitPushRefusal;
+  message: string; // one plain sentence for the owner
+  steps: Step[];
+}
+
+// Files Eden must never stage: anything in Security/Keys, .env* and .eden-* files.
+const normRel = (p: string) => p.split('\\').join('/');
+const inKeysFolder = (rel: string) => /(^|\/)security\/keys(\/|$)/i.test(normRel(rel));
+function neverStage(rel: string): boolean {
+  const segs = normRel(rel).split('/');
+  return inKeysFolder(rel) || /^\.env/i.test(segs[segs.length - 1]) || segs.some((s) => /^\.eden-/i.test(s));
+}
+// A file that is a secret by its name (a template like .env.example is fine).
+function secretByName(rel: string): boolean {
+  const base = normRel(rel).split('/').pop() || '';
+  return inKeysFolder(rel) || (SECRET.test(base) && !/\.example$/i.test(base));
+}
+
+// Things that look like a real key or password inside a file. Only the kind is reported, never the value.
+const SECRET_TEXT: [RegExp, string][] = [
+  [/-----BEGIN (?:[A-Z]+ )*PRIVATE KEY(?: BLOCK)?-----/, 'a private key'],
+  [/\bAKIA[0-9A-Z]{16}\b/, 'an AWS key'],
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\b/, 'a GitHub token'],
+  [/\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{24,}/, 'an API key'],
+  [/\bxox[abprs]-[A-Za-z0-9-]{10,}/, 'a Slack token'],
+  [/\bAIza[0-9A-Za-z_-]{35}\b/, 'a Google API key'],
+  [/(?:api[_-]?key|secret|token|passw(?:or)?d)["']?\s*[:=]\s*["'](?![^"']*(?:your|example|placeholder|changeme|xxx|process\.env|\$\{))[A-Za-z0-9+/_=.-]{16,}["']/i, 'a password or token'],
+];
+const MAX_SCAN = 2 * 1024 * 1024; // bigger files are not read (and are usually not text)
+function secretsInText(dir: string, rels: string[]): string[] {
+  const hits: string[] = [];
+  for (const rel of rels) {
+    try {
+      const full = path.join(dir, rel);
+      const st = fs.statSync(full);
+      if (!st.isFile() || st.size > MAX_SCAN) continue;
+      const buf = fs.readFileSync(full);
+      if (buf.includes(0)) continue; // binary
+      const text = buf.toString('utf-8');
+      const hit = SECRET_TEXT.find(([re]) => re.test(text));
+      if (hit) hits.push(`${rel} (looks like ${hit[1]})`);
+    } catch {
+      /* deleted or unreadable: nothing to read */
+    }
+  }
+  return hits;
+}
+
+// Every file a save would include: changed or deleted tracked files, new files git does not ignore, and what is already staged.
+function pendingPaths(dir: string): string[] {
+  const all = new Set<string>();
+  for (const out of [git(['ls-files', '-z', '-m', '-d', '-o', '--exclude-standard'], dir).out, git(['diff', '--cached', '--name-only', '-z'], dir).out]) {
+    for (const f of out.split('\0')) if (f && !f.endsWith('/')) all.add(f);
+  }
+  return [...all];
+}
+
+const commitPushBusy = new Set<string>();
+export function commitPushProject(dir: string, opts: { dryRun?: boolean; projectName?: string } = {}): CommitPushResult {
+  const steps: Step[] = [];
+  const add = (step: string, state: StepState, detail: string) => steps.push({ step, state, detail });
+  const name = path.basename(dir);
+  const out = (r: Partial<CommitPushResult> & { message: string }): CommitPushResult => ({ ok: false, files: 0, fileNames: [], moreFiles: 0, steps, ...r });
+  const refuse = (refused: CommitPushRefusal, message: string, extra: Partial<CommitPushResult> = {}) => {
+    add('Save', 'fail', message);
+    return out({ refused, message, ...extra });
+  };
+  const list = (names: string[], max = 3) => names.slice(0, max).join(', ') + (names.length > max ? ` and ${names.length - max} more` : '');
+
+  if (!fs.existsSync(path.join(dir, '.git'))) return refuse('not-git', `${name} is not a git folder, so there is nothing to push.`);
+  const branch = git(['branch', '--show-current'], dir).out;
+  if (!branch) return refuse('detached', `${name} is not on a branch right now. Switch to a branch first.`);
+
+  // Where it goes: the branch's own remote and branch (what "git push" would use), else origin and the same name.
+  let remote = git(['config', `branch.${branch}.remote`], dir).out;
+  if (!remote || remote === '.') remote = 'origin';
+  const merge = git(['config', `branch.${branch}.merge`], dir).out;
+  const hasUpstream = !!merge && git(['config', `branch.${branch}.remote`], dir).out === remote;
+  const remoteBranch = hasUpstream ? merge.replace(/^refs\/heads\//, '') : branch;
+  if (!/^[\w][\w./-]*$/.test(remoteBranch) || !/^[\w][\w.-]*$/.test(remote)) return refuse('bad-branch', `The branch or remote name for ${name} has unusual characters; Eden will not push it.`);
+  const url = git(['remote', 'get-url', remote], dir);
+  if (!url.ok) return refuse('no-remote', `${name} is not linked to GitHub yet (no "${remote}" remote).`);
+  const repoName = url.out.replace(/^.*github\.com[:/]/, '').replace(/\.git$/, '');
+
+  // Forge is never pushed to main (here or under any other name for that branch), whatever repo it points at.
+  const forge = isForge(dir) || /^forge$/i.test(opts.projectName || '');
+  if (forge && (isMainBranch(branch) || isMainBranch(remoteBranch))) {
+    return refuse('forge-main', `Forge is never pushed to ${isMainBranch(remoteBranch) ? remoteBranch : branch} (${repoName}). Switch Forge to another branch first.`);
+  }
+
+  // Secrets and huge files: look at the whole working tree, not only at what changed.
+  const pending = pendingPaths(dir);
+  const toStage = pending.filter((f) => !neverStage(f));
+  const scan = scanFolder(dir);
+  const secretNames = new Set<string>();
+  for (const f of scan.secrets) if (!git(['check-ignore', '-q', f], dir).ok) secretNames.add(path.relative(dir, f).split(path.sep).join('/'));
+  for (const f of pending) if (secretByName(f)) secretNames.add(normRel(f));
+  const secretText = secretsInText(dir, toStage);
+  const found = [...secretNames, ...secretText];
+  if (found.length) {
+    return refuse('secrets', `Not saved: possible secrets found (${list(found)}). Move them to ${AZI_ROOT}\\Security\\Keys or add them to .gitignore, then try again.`);
+  }
+  const bigOnes = bigTracked(dir, scan.big);
+  if (bigOnes.length) return refuse('big-files', `Not saved: ${bigOnes.length} file(s) over 50 MB (${list(bigOnes)}). Use Git LFS or add them to .gitignore.`);
+  // Something already staged by hand that Eden must not touch: stop rather than commit it.
+  const preStaged = git(['diff', '--cached', '--name-only', '-z'], dir).out.split('\0').filter(Boolean);
+  const protectedStaged = preStaged.filter(neverStage);
+  if (protectedStaged.length) return refuse('protected', `Not saved: ${list(protectedStaged)} is already staged but is a protected file (Security/Keys, .env or .eden-). Unstage it first.`);
+
+  const shown = toStage.slice(0, SHOWN_FILES);
+  const summary = { files: toStage.length, fileNames: shown, moreFiles: Math.max(0, toStage.length - shown.length), remote, branch: remoteBranch };
+  if (!toStage.length) return refuse('nothing', `${name}: no changes to save.`, summary);
+  add('Check', 'ok', `${plural(toStage.length, 'file', 'files')} to save; no secrets found. Goes to ${remote}/${remoteBranch}.`);
+  if (opts.dryRun) return out({ ok: true, dryRun: true, message: `${plural(toStage.length, 'file', 'files')} ready to save and push to ${remote}/${remoteBranch}.`, ...summary });
+
+  // Stage only the files that passed (literal paths, so odd file names are not read as patterns).
+  for (let i = 0; i < toStage.length; i += 100) {
+    const a = git(['--literal-pathspecs', 'add', '-A', '--', ...toStage.slice(i, i + 100)], dir);
+    if (!a.ok) return refuse('stage', `Could not stage the files: ${lastLine(a.err || a.out)}`, summary);
+  }
+  const staged = git(['diff', '--cached', '--name-only', '-z'], dir).out.split('\0').filter(Boolean);
+  if (!staged.length) return refuse('nothing', `${name}: no changes to save.`, summary);
+  const bad = staged.filter((f) => neverStage(f) || secretByName(f));
+  if (bad.length) {
+    git(['--literal-pathspecs', 'reset', '-q', '--', ...bad], dir);
+    return refuse('protected', `Not saved: ${list(bad)} must never be committed.`, summary);
+  }
+  add('Stage', 'ok', `Staged ${plural(staged.length, 'file', 'files')}.`);
+
+  const message = `Hub: save work ${new Date().toISOString().slice(0, 10)}`;
+  const c = git(['commit', '-q', '-m', message], dir);
+  if (!c.ok) return refuse('commit', `Could not commit: ${lastLine(c.err || c.out)}`, summary);
+  const commit = git(['rev-parse', '--short', 'HEAD'], dir).out;
+  add('Commit', 'ok', `${message} (${commit}).`);
+
+  // Never forced. If GitHub has newer work, the push is refused and the commit stays safe on this PC.
+  const push = git(['push', ...(hasUpstream ? [] : ['-u']), remote, `HEAD:refs/heads/${remoteBranch}`], dir, 300000);
+  if (!push.ok) {
+    const why = AUTH_ERROR.test(push.err) ? 'GitHub did not accept the login; link GitHub again in Settings' : /non-fast-forward|fetch first|rejected/i.test(push.err) ? 'GitHub has newer changes; run Sync all first' : lastLine(push.err);
+    add('Push', 'fail', why);
+    return out({ message: `Saved on this PC (${commit}) but not pushed: ${why}.`, refused: 'push', ...summary, files: staged.length, commit });
+  }
+  add('Push', 'ok', `Pushed to ${remote}/${remoteBranch}.`);
+  return out({ ok: true, message: `Saved ${plural(staged.length, 'file', 'files')} and pushed to ${remote}/${remoteBranch}.`, ...summary, files: staged.length, commit });
+}
+
 // ---- All AZI repos (for the sidebar's GitHub list and "Sync all") ----------------------------------
 
 export interface AziRepo {
@@ -825,5 +985,30 @@ export function registerNewProjectRoutes(app: Express, getStore: () => Store, sa
     const result = await syncProject(dir, typeof req.body?.commitMessage === 'string' && req.body.commitMessage.trim() ? req.body.commitMessage.trim() : undefined);
     logActivity(result.ok ? 'done' : 'info', `Sync ${p.name}: ${result.ok ? 'GitHub is up to date.' : result.hint || result.steps.map((s) => s.detail).slice(-1)[0]}`);
     res.json({ ...result, folder: dir });
+  });
+
+  // "Save and push": commit what changed (never secrets, Security/Keys, .env* or .eden-* files) and push it to the
+  // project's own remote and branch. Send { dryRun: true } to only check and count the files first.
+  app.post('/api/projects/:id/commit-push', (req, res) => {
+    if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
+    const p = (getStore().projects || []).find((x) => x.id === req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found.' });
+    const dir = dirForProject(p);
+    if (!dir || !fs.existsSync(path.join(dir, '.git'))) return res.status(404).json({ error: `No git folder for ${p.name} in ${AZI_ROOT}.` });
+    const dryRun = req.body?.dryRun === true;
+    const key = path.resolve(dir).toLowerCase();
+    if (!dryRun) {
+      if (syncBusy || commitPushBusy.has(key)) return res.status(409).json({ error: `${p.name} is already being synced or saved. Try again in a moment.` });
+      commitPushBusy.add(key);
+    }
+    try {
+      const result = commitPushProject(dir, { dryRun, projectName: p.name });
+      if (!dryRun) logActivity(result.ok ? 'done' : 'info', `Save and push ${p.name}: ${result.message}`);
+      res.json({ ...result, folder: dir });
+    } catch (err: any) {
+      res.status(500).json({ error: `Save and push failed: ${err.message}` });
+    } finally {
+      if (!dryRun) commitPushBusy.delete(key);
+    }
   });
 }

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Avatar, useProfile } from './Avatar.tsx';
 import { Arrangeable, useArrangedOrder } from '../arrange.tsx';
 import {
   LayoutDashboard,
@@ -454,6 +455,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Re-arrange the pages in this bar (saved per device). Arrange mode shows Up/Down buttons on each entry.
   const custom = useCustomTabs();
+  const sideProfile = useProfile();
   // Left-bar pages you hid in Arrange mode (saved on this device).
   const [sideHidden, setSideHidden] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_sidebar_hidden') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
   const toggleSideHidden = (id: string) => setSideHidden((h) => { const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id]; try { localStorage.setItem('eden_sidebar_hidden', JSON.stringify(next)); } catch {} return next; });
@@ -706,13 +708,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             title={collapsed ? 'Account and settings' : undefined}
             className={`${itemClass(activeTab === 'settings', collapsed)} ${collapsed ? '' : 'mt-2 !py-2'}`}
           >
-            <span
-              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                activeTab === 'settings' ? 'bg-white/20 text-white' : 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300'
-              }`}
-            >
-              {initial}
-            </span>
+            <Avatar src={sideProfile?.avatar} initial={initial} frame={sideProfile?.frame} size={30} />
             {!collapsed && (
               <span className="min-w-0 text-left">
                 <span className="block truncate leading-tight">{displayName}</span>

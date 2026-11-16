@@ -495,7 +495,7 @@ export function fallbackModels(exclude: ProviderId): string[] {
   return [...main, ...freeFallbacks()];
 }
 
-function recordFailure(p: ProviderId, message: string) {
+export function recordFailure(p: ProviderId, message: string) {
   if (p === 'lyra' || p === 'extra') return; // LYRA marks itself; extra AIs rest per model
   if (/log ?in|logged|sign ?in|auth|unauthor|\b401\b|\b403\b|api key|usage limit|hit your .{0,20}limit|quota|credit balance/i.test(message)) {
     downUntil[p] = Date.now() + DOWN_MS;

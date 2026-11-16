@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { User, Plug, Bot, GitBranch, SlidersHorizontal, Sun, Moon, Save, Loader2 } from 'lucide-react';
 import { SettingsView } from './SettingsView.tsx';
 import { ReposView } from './ReposView.tsx';
+import { ProfileCard } from './ProfileCard.tsx';
 import { DevicesView } from './DevicesView.tsx';
 import { RemoteView } from './RemoteView.tsx';
 import { useInstallApp } from '../installApp.ts';
@@ -142,6 +143,8 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
           </button>
         ))}
       </div>
+
+      {tab === 'account' && <ProfileCard name={name} />}
 
       {tab === 'account' && (
         <form

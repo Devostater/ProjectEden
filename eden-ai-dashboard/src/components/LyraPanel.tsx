@@ -229,6 +229,7 @@ export const LyraPanel: React.FC = () => {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [thinking, setThinking] = useState(false); // LYRA is answering (maybe a message sent from another device)
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState('');
   const end = useRef<HTMLDivElement>(null);
@@ -250,25 +251,70 @@ export const LyraPanel: React.FC = () => {
 
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
-  }, [turns, busy]);
+  }, [turns, busy, thinking]);
+
+  const working = busy || thinking;
+
+  // The conversation lives in the hub, so this computer, the tablet and the phone all show the same one.
+  // The hub tells us the moment a message is added (from here or anywhere else), and we fetch it.
+  useEffect(() => {
+    let alive = true;
+    let last = -1;
+    const pull = async () => {
+      try {
+        const d = await fetch('/api/lyra/conversation').then((r) => r.json());
+        if (!alive || !Array.isArray(d.messages)) return;
+        setTurns(d.messages.map((m: any) => ({ role: m.role, content: m.content, error: !!m.error })));
+        setThinking(!!d.thinking);
+      } catch {
+        // hub unreachable: keep what is on screen
+      }
+    };
+    const es = new EventSource('/api/lyra/conversation/events');
+    es.onmessage = (e) => {
+      const v = Number(e.data);
+      if (v !== last) {
+        last = v;
+        pull();
+      }
+    };
+    const onVisible = () => document.visibilityState === 'visible' && pull();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      es.close();
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
 
   const send = async () => {
     const message = input.trim();
-    if (!message || busy) return;
-    const history = turns.filter((t) => !t.error).map(({ role, content }) => ({ role, content }));
-    setTurns((t) => [...t, { role: 'user', content: message }]);
+    if (!message || busy || thinking) return;
     setInput('');
     setBusy(true);
     try {
-      const res = await fetch('/api/lyra/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message, history }) });
+      // The hub saves the message and LYRA's answer; they appear here through the live feed above.
+      const res = await fetch('/api/lyra/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }) });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || 'LYRA could not answer.');
       setConnected(true);
-      setTurns((t) => [...t, { role: 'assistant', content: d.reply }]);
     } catch (err: any) {
-      setTurns((t) => [...t, { role: 'assistant', content: err.message, error: true }]);
+      // Errors from LYRA are saved by the hub too. Only a message that never reached the hub is shown here.
+      const seen = await fetch('/api/lyra/conversation').then((r) => r.json()).catch(() => null);
+      if (seen && Array.isArray(seen.messages)) setTurns(seen.messages.map((m: any) => ({ role: m.role, content: m.content, error: !!m.error })));
+      if (!seen || !seen.messages?.some((m: any) => m.error && m.content === err.message)) setTurns((t) => [...t, { role: 'assistant', content: err.message, error: true }]);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const clear = async () => {
+    try {
+      const res = await fetch('/api/lyra/conversation', { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json()).error || 'Could not clear it.');
+      setTurns([]);
+    } catch (err: any) {
+      setStartError(err.message);
     }
   };
 
@@ -301,8 +347,8 @@ export const LyraPanel: React.FC = () => {
   return (
     <div className="flex h-full min-h-0">
       <div className="flex w-40 shrink-0 flex-col items-center justify-center gap-1 border-r border-slate-200 px-3 text-center dark:border-slate-800">
-        <div className={`rounded-full ${connected ? 'shadow-lg shadow-fuchsia-500/30' : ''} ${busy ? 'animate-pulse' : ''}`}>
-          <LyraChibi connected={!!connected} thinking={busy} className="h-20 w-20" />
+        <div className={`rounded-full ${connected ? 'shadow-lg shadow-fuchsia-500/30' : ''} ${working ? 'animate-pulse' : ''}`}>
+          <LyraChibi connected={!!connected} thinking={working}className="h-20 w-20" />
         </div>
         <div className="text-sm font-semibold text-slate-900 dark:text-white">LYRA</div>
         <div className={`flex items-center gap-1.5 text-sm ${connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'}`}>
@@ -315,7 +361,7 @@ export const LyraPanel: React.FC = () => {
         )}
         {startError && <div className="text-sm text-red-600 dark:text-red-400">{startError}</div>}
         {turns.length > 0 && (
-          <button onClick={() => setTurns([])} className="mt-1 flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white">
+          <button onClick={clear} className="mt-1 flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white">
             <Trash2 className="h-3.5 w-3.5" /> Clear
           </button>
         )}
@@ -361,7 +407,7 @@ export const LyraPanel: React.FC = () => {
               </div>
             </div>
           ))}
-          {busy && (
+          {working && (
             <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
               <span className="flex gap-1">
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-fuchsia-500" style={{ animationDelay: '0ms' }} />
@@ -383,12 +429,12 @@ export const LyraPanel: React.FC = () => {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            disabled={busy}
+            disabled={working}
             aria-label="Message to LYRA"
             placeholder="Type a message or command for LYRA"
             className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-fuchsia-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
           />
-          <button type="submit" disabled={busy || !input.trim()} className="flex items-center gap-1.5 rounded-lg bg-fuchsia-600 px-3 py-2 text-sm font-medium text-white hover:bg-fuchsia-500 disabled:opacity-50">
+          <button type="submit" disabled={working || !input.trim()} className="flex items-center gap-1.5 rounded-lg bg-fuchsia-600 px-3 py-2 text-sm font-medium text-white hover:bg-fuchsia-500 disabled:opacity-50">
             <Send className="h-4 w-4" /> Send
           </button>
         </form>

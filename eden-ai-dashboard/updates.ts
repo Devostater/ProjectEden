@@ -16,7 +16,7 @@ import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
 import { logActivity, recentActivity, fileProblem } from './activity';
 import { holdForApply } from './control';
-import { cliSignedIn } from './providers';
+import { cliSignedIn, providerUnavailable, recordFailure } from './providers';
 import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
 import { localAgentModel, localClaudeEnv } from './localClaude';
@@ -362,13 +362,37 @@ function describeTool(name: string, input: any): string {
   return name;
 }
 
+// The AI said its plan's usage limit is used up (for example Claude's 5-hour limit).
+const USAGE_LIMIT_ERROR = /hit your .*limit|usage limit|rate.?limit|too many requests|\b429\b|quota|credit balance/i;
+
 async function runAI(cb: Codebase, job: UpdateJob, appDir: string) {
   // On this PC when asked for, or when offline (Claude's servers can't be reached then).
-  const local = (job.local || isOffline()) && localAgentModel();
+  let local = (job.local || isOffline()) && localAgentModel();
+  // Claude already reported its limit is used up: don't wait for it to fail again, go straight to the AI on this PC.
+  if (!local && providerUnavailable('anthropic') && localAgentModel()) {
+    local = localAgentModel();
+    job.log.push('Claude has hit its usage limit, so a different AI (on this PC) does this update');
+  }
+  try {
+    await runAIOnce(cb, job, appDir, local || null);
+  } catch (err: any) {
+    // Claude's limit ran out part-way: carry on with the AI on this PC instead of failing the update.
+    if (!local && USAGE_LIMIT_ERROR.test(String(err?.message || ''))) recordFailure('anthropic', String(err.message)); // remember it, so nothing else asks Claude until it resets
+    const other = !local && USAGE_LIMIT_ERROR.test(String(err?.message || '')) && localAgentModel();
+    if (!other) throw err;
+    job.log.push('Claude hit its usage limit, so a different AI (on this PC) is taking over');
+    logActivity('info', `Claude hit its usage limit during a code update, so an AI on this PC (${other}) is finishing it.`);
+    save();
+    await runAIOnce(cb, job, appDir, other);
+  }
+}
+
+async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: string | null) {
   if (local) {
     job.localModel = local;
     job.log.push(`Running on this PC (${local})`);
   }
+  job.summary = undefined;
   job.lastAiMessage = undefined; // a fresh run (for example "Try again") starts without the old message
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--tools', 'Read,Edit,Write,Glob,Grep', '--model', local || 'claude-sonnet-5-5'];
   await new Promise<void>((resolve, reject) => {
@@ -490,11 +514,30 @@ async function runTests(appDir: string): Promise<{ ok: boolean; failed: string[]
   return { ok: r.status === 0, failed, out };
 }
 
-async function runCheck(cb: Codebase, appDir: string, files: string[], baselineFailed: string[] = []): Promise<{ ok: boolean; output: string }> {
+// The type problems tsc reports, without line numbers (so a problem that only moved down a few lines still counts as the same one).
+function typeProblems(out: string): string[] {
+  const found = [...out.matchAll(/^(.+?)\(\d+,\d+\):\s*error\s+(TS\d+):\s*(.+)$/gm)].map((m) => `${m[1].trim().replace(/\\/g, '/')}: ${m[2]}: ${m[3].trim()}`);
+  return [...new Set(found)];
+}
+
+// Runs the type check and gives back the problems it found (used before the AI starts, to know what was already wrong).
+async function runTypeCheck(appDir: string) {
+  const r = await runCommand('npx', ['tsc', '--noEmit', '--pretty', 'false'], { cwd: appDir, shell: true, timeout: 5 * 60 * 1000 });
+  return { ok: r.status === 0, out: r.out, problems: typeProblems(r.out) };
+}
+
+async function runCheck(cb: Codebase, appDir: string, files: string[], baselineFailed: string[] = [], baselineTypeProblems: string[] = []): Promise<{ ok: boolean; output: string }> {
   const clean = (s: string) => s.replace(new RegExp(appDir.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&'), 'g'), '').trim().slice(-6000);
   if (cb.check === 'tsc') {
-    const r = await runCommand('npx', ['tsc', '--noEmit'], { cwd: appDir, shell: true, timeout: 5 * 60 * 1000 });
-    return { ok: r.status === 0, output: clean(r.out) };
+    const t = await runTypeCheck(appDir);
+    if (t.ok) return { ok: true, output: 'The type check found no problems.' };
+    const newProblems = t.problems.filter((p) => !baselineTypeProblems.includes(p));
+    const old = t.problems.length - newProblems.length;
+    // Judge the change only on problems it caused; ones that were already there before the AI started are listed but don't count.
+    if (newProblems.length || !t.problems.length) {
+      return { ok: false, output: clean(`Type problems that this change caused:\n${newProblems.map((p) => `- ${p}`).join('\n') || '(could not tell which)'}\n\n${t.out.slice(-3500)}`) };
+    }
+    return { ok: true, output: `Type check: nothing new broke. ${old} problem${old === 1 ? ' was' : 's were'} already there before this change.` };
   }
   // Node: every changed .js file must parse, then the codebase's own tests must pass.
   const outputs: string[] = [];
@@ -543,6 +586,13 @@ async function process_(job: UpdateJob) {
         baselineFailed = (await runTests(copy.appDir)).failed;
         if (baselineFailed.length) job.log.push(`Already failing before any change: ${baselineFailed.join('; ')}`);
       }
+      let baselineTypeProblems: string[] = [];
+      if (cb.check === 'tsc') {
+        job.log.push(`Running ${cb.name}'s type check once first, to see what is already wrong (about a minute)`);
+        save();
+        baselineTypeProblems = (await runTypeCheck(copy.appDir)).problems;
+        if (baselineTypeProblems.length) job.log.push(`Already wrong before any change: ${baselineTypeProblems.length} type problem${baselineTypeProblems.length === 1 ? '' : 's'}`);
+      }
       job.log.push('Claude is working on the copy');
       save();
       await runAI(cb, job, copy.appDir);
@@ -551,9 +601,16 @@ async function process_(job: UpdateJob) {
       job.status = 'checking';
       job.log.push(cb.check === 'tsc' ? 'Running the type check' : 'Checking the code and running the tests');
       save();
-      job.check = await runCheck(cb, copy.appDir, job.files.map((f) => f.path), baselineFailed);
+      job.check = await runCheck(cb, copy.appDir, job.files.map((f) => f.path), baselineFailed, baselineTypeProblems);
       job.status = 'ready';
-      logActivity(job.check.ok ? 'done' : 'error', `Code update ready for review (${cb.name}, ${job.files.length} file${job.files.length === 1 ? '' : 's'}${job.check.ok ? '' : ', checks failed'}).`);
+      const fileCount = `${job.files.length} file${job.files.length === 1 ? '' : 's'}`;
+      if (job.check.ok) {
+        logActivity('done', `Code update ready for review (${cb.name}, ${fileCount}).`);
+      } else {
+        // Say what the check found and what to do, not only that it failed.
+        const firstProblem = job.check.output.split('\n').map((l) => l.trim()).find((l) => /error|fail|broke|syntax/i.test(l)) || '';
+        logActivity('error', `Code update ready for review (${cb.name}, ${fileCount}) but its checks failed${firstProblem ? ` (${firstProblem.slice(0, 160)})` : ''}. Open it and press "Ask the AI to fix it", or discard it.`, { reason: job.check.output.slice(-500), retry: { kind: 'update', id: job.id } });
+      }
     } finally {
       removeCopy(cb, job.id);
     }
@@ -740,6 +797,15 @@ function autoBackup() {
 }
 
 // Starts a code update from elsewhere in the hub (a project card). Returns the job id.
+// Code updates that are running or waiting their turn, named for the owner (used to warn before a restart).
+export function activeUpdateNames(): { working: string[]; queued: string[] } {
+  const name = (j: UpdateJob) => `"${j.request.replace(/\s+/g, ' ').slice(0, 80)}" (${findCodebase(j.codebaseId)?.name || 'a codebase'})`;
+  return {
+    working: jobs.filter((j) => j.status === 'working').map(name),
+    queued: jobs.filter((j) => j.status === 'queued').map(name),
+  };
+}
+
 export function requestCodeUpdate(codebaseId: string, request: string, cardId?: string, local = false): string {
   const cb = findCodebase(codebaseId);
   if (!cb) throw new Error('That codebase is not set up in the hub.');
@@ -765,7 +831,9 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     const cb = findCodebase(j.codebaseId);
     if (cb) removeCopy(cb, j.id);
   }
-  setTimeout(sweepCopies, 3000).unref?.();
+  // Sweep right now rather than a few seconds later, so no update can start (and no half-made copy can be left
+  // under the same id) before the old copies are gone. Nothing is marked as working yet, so every old copy is fair game.
+  sweepCopies();
   // Updates still waiting when the hub was last closed carry on, once the hub itself is up and answering.
   setTimeout(startNext, 8000).unref?.();
   registerIdeaRoutes(app, guard);
@@ -1078,7 +1146,51 @@ Reply with ONLY a JSON array, no other text:
 [{"title": "short name, max 8 words", "why": "one plain sentence on what the owner gains", "request": "clear instructions for a developer: what to change and where (file names)", "size": "small|medium|large"}]`;
 }
 
-async function generateIdeas(cb: Codebase) {
+// Don't look for new ideas while the owner still has this many updates waiting (ready to apply or queued),
+// and not in the first minutes after the hub starts. "Find ideas anyway" skips both.
+const IDEAS_MAX_WAITING = 5;
+const IDEAS_QUIET_AFTER_START_MS = 10 * 60 * 1000;
+const HUB_STARTED_AT = Date.now();
+const lastSkipLogged: Record<string, number> = {};
+
+// Why idea-finding should be skipped right now, or undefined when it's fine to go ahead.
+function ideasSkipReason(cb: Codebase) {
+  const waiting = jobs.filter((j) => j.codebaseId === cb.id && (j.status === 'ready' || j.status === 'queued')).length;
+  if (waiting >= IDEAS_MAX_WAITING) {
+    return `${waiting} updates for ${cb.name} are still waiting for you (ready or queued). Apply or discard some first.`;
+  }
+  // Claude already said its limit is used up: asking again would only fail again and add another error to the log.
+  if (providerUnavailable('anthropic')) {
+    return 'Claude has used up its limit for now, so idea finding waits. It starts again by itself once the limit resets.';
+  }
+  const sinceStart = Date.now() - HUB_STARTED_AT;
+  if (sinceStart < IDEAS_QUIET_AFTER_START_MS) {
+    const mins = Math.max(1, Math.ceil((IDEAS_QUIET_AFTER_START_MS - sinceStart) / 60_000));
+    return `The hub just started. Idea finding waits about ${mins} more ${mins === 1 ? 'minute' : 'minutes'}.`;
+  }
+  return undefined;
+}
+
+// Starts looking for ideas in the background. Returns why it was skipped (nothing started), or undefined
+// when it started or is already running.
+function generateIdeas(cb: Codebase, force = false): string | undefined {
+  if (ideaSet(cb.id).running) return undefined;
+  if (!force) {
+    const skip = ideasSkipReason(cb);
+    if (skip) {
+      // The page asks again every time it opens, so keep the log from repeating the same line.
+      if (Date.now() - (lastSkipLogged[cb.id] || 0) > 10 * 60 * 1000) {
+        lastSkipLogged[cb.id] = Date.now();
+        logActivity('info', `Skipped looking for update ideas for ${cb.name}: ${skip}`);
+      }
+      return skip;
+    }
+  }
+  runIdeas(cb);
+  return undefined;
+}
+
+async function runIdeas(cb: Codebase) {
   const set = ideaSet(cb.id);
   if (set.running) return;
   set.running = true;
@@ -1142,8 +1254,17 @@ async function generateIdeas(cb: Codebase) {
     set.at = new Date().toISOString();
     logActivity('done', `${ideas.length} update ideas ready for ${cb.name} (Code updates).`);
   } catch (err: any) {
-    set.error = err.message;
-    logActivity('error', `Couldn't get update ideas for ${cb.name}: ${err.message}`);
+    const raw = String(err?.message || 'Something went wrong.');
+    // A used-up plan limit isn't a fault in the hub: say what to do instead of showing Claude's raw message.
+    const limitHit = USAGE_LIMIT_ERROR.test(raw);
+    // Remember it, so the hub stops asking Claude (and stops adding the same line to the log) until the limit resets.
+    if (limitHit) recordFailure('anthropic', raw);
+    const message = limitHit
+      ? `Claude's usage limit is used up (${raw.replace(/\s+/g, ' ').slice(0, 120)}). Nothing is broken and there is nothing to fix: wait until it resets, then press "Find ideas" again, or connect another AI in Account → Connections.`
+      : raw;
+    set.error = message;
+    // Not an error in the log when it's only a limit: it clears by itself.
+    logActivity(limitHit ? 'info' : 'error', `Couldn't get update ideas for ${cb.name}: ${message}`);
   } finally {
     set.running = false;
     saveIdeas();
@@ -1168,8 +1289,9 @@ function registerIdeaRoutes(app: Express, guard: (req: Request) => string) {
     const cb = findCodebase(String(req.body?.codebaseId || 'hub'));
     if (!cb) return res.status(404).json({ error: 'Unknown codebase.' });
     if (!cliSignedIn('anthropic')) return res.status(400).json({ error: 'Sign in to Claude in Account → Connections first.' });
-    generateIdeas(cb);
-    res.json({ ok: true });
+    // "Find ideas anyway" sends force: true to skip the waiting-updates and just-started checks.
+    const skipped = generateIdeas(cb, req.body?.force === true);
+    res.json(skipped ? { ok: true, skipped } : { ok: true });
   });
   app.post('/api/updates/ideas/dismiss', (req, res) => {
     const denied = guard(req);

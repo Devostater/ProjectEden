@@ -15,6 +15,7 @@ interface RunnerStore {
 const MAX_AT_ONCE = 2; // cards worked on at the same time
 const TICK_MS = 4000;
 const running = new Set<string>();
+const runningTitles = new Map<string, string>(); // card id -> "Card title (Project)", for telling you what a restart would stop
 
 const now = () => new Date().toISOString();
 const noteId = () => `note-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -209,6 +210,8 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
 const lastBranch = new Map<string, string>(); // teammate id -> workstream they last worked in
 
 export const runningCards = () => running.size;
+// The cards being worked on right now, named for the owner (title and teammate).
+export const runningCardNames = () => [...running].map((id) => runningTitles.get(id) || 'a card');
 // Is the runner working on this card right now?
 export const isCardRunning = (cardId: string) => running.has(cardId);
 
@@ -318,6 +321,7 @@ function tick(getStore: () => RunnerStore, save: () => void) {
     }
     busy.add(agent.id);
     running.add(card.id);
+    runningTitles.set(card.id, `"${card.title}" (${agent.name})`);
     if (card.branchId) lastBranch.set(agent.id, card.branchId);
     card.column = 'doing';
     card.runState = 'running';
@@ -330,7 +334,10 @@ function tick(getStore: () => RunnerStore, save: () => void) {
     const cardId = card.id;
     work(cardId, getStore, save)
       .catch((err) => console.error('Card runner error:', err))
-      .finally(() => running.delete(cardId));
+      .finally(() => {
+        running.delete(cardId);
+        runningTitles.delete(cardId);
+      });
   }
   if (changed) save();
 }
