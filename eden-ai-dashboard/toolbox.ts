@@ -289,6 +289,89 @@ export function registerToolboxRoutes(app: Express, getStore: () => Store, save:
     }
   });
 
+  // ---- Preview: look inside the project's folder (read-only) --------------------------------------------
+  // Only inside the project's folder; never .git, node_modules or anything that looks like a secret.
+  const HIDDEN_DIRS = new Set(['.git', 'node_modules', '__pycache__', '.venv', 'venv', '.gradle', 'Library', 'Temp', 'obj']);
+  // Also Eden's and LYRA's own state files (pairing codes, device lists, tablet PINs): not project content.
+  const SECRETISH = /^(\.env(\..+)?|.*\.(pem|key|keystore|jks|pfx|p12)|keystore\.properties|id_rsa.*|.*credentials.*\.json|\.eden-.*|\.nexusflow-store\.json|tablet-(pin|session)\.txt|.*\.secret.*)$/i;
+  const IMAGE_TYPES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.bmp': 'image/bmp' };
+  const MEDIA_TYPES: Record<string, string> = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.pdf': 'application/pdf' };
+  const MAX_TEXT = 512 * 1024;
+  // Eden's own state folders and LYRA's browser profile (it can hold sign-in cookies) are never shown.
+  const hiddenDir = (name: string) => HIDDEN_DIRS.has(name) || /^\.eden-/i.test(name) || name === 'float-profile';
+  // Resolves a path inside the project, or null when it leaves the folder or touches something hidden.
+  const inside = (p: Project, rel: string): { base: string; full: string } | null => {
+    const base = projectDir(p);
+    if (!base) return null;
+    const full = path.resolve(base, rel || '.');
+    const relative = path.relative(base, full);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
+    const parts = relative.split(path.sep).filter(Boolean);
+    if (parts.some((x) => hiddenDir(x)) || (parts.length && SECRETISH.test(parts[parts.length - 1]))) return null;
+    return { base, full };
+  };
+
+  app.get('/api/projects/:id/files', (req, res) => {
+    if (!isLocal(req)) return res.status(403).json({ error: 'Files can only be browsed on this computer.' });
+    const p = find(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found.' });
+    const at = inside(p, String(req.query.dir || ''));
+    if (!at) return res.status(400).json({ error: projectDir(p) ? 'That folder is not available.' : `${p.name} has no folder in ${AZI_ROOT}.` });
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(at.full, { withFileTypes: true });
+    } catch (err: any) {
+      return res.status(400).json({ error: `Could not open that folder: ${err.message}` });
+    }
+    const list = entries
+      .filter((e) => !(e.isDirectory() && hiddenDir(e.name)) && !(e.isFile() && SECRETISH.test(e.name)) && (e.isDirectory() || e.isFile()))
+      .map((e) => {
+        let size = 0;
+        let modified = '';
+        try {
+          const s = fs.statSync(path.join(at.full, e.name));
+          size = s.size;
+          modified = s.mtime.toISOString();
+        } catch {}
+        return { name: e.name, dir: e.isDirectory(), size, modified };
+      })
+      .sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1))
+      .slice(0, 500);
+    res.json({ root: at.base, dir: path.relative(at.base, at.full).split(path.sep).join('/'), entries: list });
+  });
+
+  // One file: text comes back as JSON (first 512 KB); images, video, audio and PDF come back as the file itself.
+  app.get('/api/projects/:id/file', (req, res) => {
+    if (!isLocal(req)) return res.status(403).json({ error: 'Files can only be opened on this computer.' });
+    const p = find(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found.' });
+    const at = inside(p, String(req.query.path || ''));
+    if (!at || !String(req.query.path || '')) return res.status(400).json({ error: 'That file is not available.' });
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(at.full);
+    } catch {
+      return res.status(404).json({ error: 'File not found.' });
+    }
+    if (!stat.isFile()) return res.status(400).json({ error: 'That is a folder.' });
+    const ext = path.extname(at.full).toLowerCase();
+    const media = IMAGE_TYPES[ext] || MEDIA_TYPES[ext];
+    if (media) {
+      res.setHeader('Content-Type', media);
+      res.setHeader('Cache-Control', 'no-store');
+      // SVGs can carry scripts: shown as an image only, never as a page.
+      if (ext === '.svg') res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'");
+      return fs.createReadStream(at.full).pipe(res);
+    }
+    const fd = fs.openSync(at.full, 'r');
+    const buf = Buffer.alloc(Math.min(stat.size, MAX_TEXT));
+    fs.readSync(fd, buf, 0, buf.length, 0);
+    fs.closeSync(fd);
+    // Binary files (a zero byte in the first 8 KB) aren't shown as text.
+    if (buf.subarray(0, 8192).includes(0)) return res.json({ kind: 'binary', size: stat.size, modified: stat.mtime.toISOString() });
+    res.json({ kind: 'text', content: buf.toString('utf-8'), size: stat.size, truncated: stat.size > MAX_TEXT, modified: stat.mtime.toISOString() });
+  });
+
   // Run a tool in the project's folder with the project's keys (and not Eden's). Only from this PC.
   app.post('/api/projects/:id/tools/:toolId/run', (req, res) => {
     if (!isLocal(req)) return res.status(403).json({ error: 'Tools only run from this computer.' });
