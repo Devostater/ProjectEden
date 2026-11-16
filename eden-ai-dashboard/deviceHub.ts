@@ -326,6 +326,27 @@ async function makePcMain() {
 
 export const mainServer = () => state;
 
+// ---- the tablet as a thinker ----------------------------------------------------------------------
+// Ollama runs inside Termux on each plugged-in tablet (installed with `apt install ollama`). Its models answer
+// the hub's agents like any other free AI. Each tablet is reached from this PC at its own port through the cable.
+export const TABLET_AI_PORT = (serial: string) => 11435 + ([...serial].reduce((n, c) => n + c.charCodeAt(0), 0) % 40);
+export async function tabletAIs(): Promise<{ serial: string; name: string; baseUrl: string }[]> {
+  if (ON_DEVICE) return [];
+  const out: { serial: string; name: string; baseUrl: string }[] = [];
+  for (const d of listDevices().filter((x) => x.state === 'device')) {
+    const chars = await adbRun(d.serial, ['shell', 'getprop', 'ro.build.characteristics'], 8000);
+    if (!/tablet/.test(chars.out)) continue;
+    const has = await termux(d.serial, 'command -v ollama', 15000);
+    if (!/ollama/.test(has.out)) continue;
+    // Start it if it isn't running (setsid, so it keeps running after this command ends).
+    await termux(d.serial, 'curl -s -m 2 127.0.0.1:11434/api/version >/dev/null || (OLLAMA_HOST=127.0.0.1:11434 OLLAMA_KEEP_ALIVE=10m OLLAMA_NUM_PARALLEL=1 setsid nohup ollama serve > ~/ollama.log 2>&1 < /dev/null &); echo ok', 20000);
+    const port = TABLET_AI_PORT(d.serial);
+    await adbRun(d.serial, ['forward', `tcp:${port}`, 'tcp:11434'], 15000);
+    out.push({ serial: d.serial, name: d.name || d.model || 'tablet', baseUrl: `http://127.0.0.1:${port}/v1` });
+  }
+  return out;
+}
+
 export function registerDeviceHubRoutes(app: Express) {
   // Used between hubs over the cable (this PC <-> a device). The custom header stops web pages from calling these.
   const hubCall = (req: Request) => isLocal(req) && req.headers['x-eden-hub'] === '1';

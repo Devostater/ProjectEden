@@ -17,6 +17,7 @@ import { fileURLToPath } from 'url';
 import { pcBusy } from './busy';
 import { fileProblem } from './activity';
 import { isOffline } from './offline';
+import { tabletAIs } from './deviceHub';
 
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-ai.json');
 
@@ -29,6 +30,7 @@ export interface ExtraProvider {
   models: string[];
   free: boolean; // costs nothing (free tier or local)
   local?: boolean; // runs on this PC
+  device?: string; // runs on this plugged-in tablet (its name); free and private, doesn't use the PC's memory
   auto?: boolean; // found automatically
   enabled: boolean;
   modelFilter?: string; // only models whose id contains this (e.g. ":free" on OpenRouter)
@@ -135,6 +137,24 @@ export async function scanExtraAIs(): Promise<{ found: string[] }> {
     }
   }
 
+  // Tablets running their own Ollama: their models think for the team without using this PC.
+  const seenTablets = new Set<string>();
+  for (const t of await tabletAIs().catch(() => [])) {
+    const id = `tablet-${t.serial.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+    seenTablets.add(id);
+    try {
+      const models = await listModels({ baseUrl: t.baseUrl, key: '' });
+      if (models.length) {
+        upsert({ id, name: `Ollama (on ${t.name})`, baseUrl: t.baseUrl, models, free: true, device: t.name, auto: true, enabled: true, checkedAt: at, lastError: undefined });
+        found.push(`${t.name}: ${models.length} model${models.length === 1 ? '' : 's'}`);
+      }
+    } catch {
+      const p = providers.find((x) => x.id === id);
+      if (p) Object.assign(p, { lastError: 'Not running right now.', checkedAt: at });
+    }
+  }
+  for (const p of providers.filter((x) => x.device && !seenTablets.has(x.id))) Object.assign(p, { lastError: 'Unplugged.', checkedAt: at });
+
   if (process.env.GEMINI_API_KEY && !/^MY_/.test(process.env.GEMINI_API_KEY)) {
     try {
       const baseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai';
@@ -210,10 +230,10 @@ const parse = (id: string) => {
   return m ? { provider: providers.find((p) => p.id === m[1]), model: m[2] } : null;
 };
 
-export function extraModels(): { id: string; label: string; free: boolean; local: boolean; proven: boolean }[] {
+export function extraModels(): { id: string; label: string; free: boolean; local: boolean; proven: boolean; device?: boolean }[] {
   return providers
     .filter((p) => p.enabled && !p.lastError)
-    .flatMap((p) => usable(p).map((m) => ({ id: extraModelId(p.id, m), label: `${p.name.replace(/ \(.*\)$/, '')} · ${m}`, free: p.free, local: !!p.local, proven: !!p.local || p.tested?.[m] === true })));
+    .flatMap((p) => usable(p).map((m) => ({ id: extraModelId(p.id, m), label: `${p.name.replace(/ \(.*\)$/, '')} · ${m}`, free: p.free, local: !!p.local, proven: !!p.local || !!p.device || p.tested?.[m] === true, device: !!p.device })));
 }
 
 export const extraConnected = () => providers.some((p) => p.enabled && !p.lastError && usable(p).length);
@@ -222,7 +242,8 @@ export const extraConnected = () => providers.some((p) => p.enabled && !p.lastEr
 // (always available). Models that just hit a limit are skipped while they rest.
 export function freeFallbacks(max = 6): string[] {
   const now = Date.now();
-  const cloud = extraModels().filter((m) => m.free && !m.local);
+  const cloud = extraModels().filter((m) => m.free && !m.local && !m.device);
+  const tablet = extraModels().filter((m) => m.device);
   // Models on this PC need 3+ GB of free memory to load; skip them when memory is short so the PC doesn't lag.
   // Offline, models on this PC are the only option, so they are used even when memory is tight.
   const local = isOffline() || (!pcBusy() && os.freemem() > 3 * 1024 ** 3) ? extraModels().filter((m) => m.free && m.local) : [];
@@ -230,7 +251,7 @@ export function freeFallbacks(max = 6): string[] {
   // Models that answered a test go first; newest versions before older ones; code-only and previews last.
   const version = (id: string) => Number(id.match(/(\d+(?:\.\d+)?)/)?.[1] || 0);
   const score = (m: { id: string; proven: boolean }) => (m.proven ? 0 : 10) + (/(coder|code)/i.test(m.id) ? 2 : 0) + (/preview|exp|latest/i.test(m.id) ? 1 : 0) - version(m.id) / 100;
-  const ordered = [...cloud.sort((a, b) => score(a) - score(b)), ...local.sort((a, b) => score(a) - score(b))];
+  const ordered = [...cloud.sort((a, b) => score(a) - score(b)), ...tablet, ...local.sort((a, b) => score(a) - score(b))];
   return ordered.filter((m) => (resting.get(m.id) || 0) < now).slice(0, max).map((m) => m.id);
 }
 
