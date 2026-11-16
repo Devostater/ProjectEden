@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints } from 'lucide-react';
+import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight } from 'lucide-react';
 import type { Agent, Card, Project, RoadmapGoal } from '../types/index.ts';
 import { FlowTab, WorkloadTab, ProgressTab } from './ProjectVisuals.tsx';
 import { Roadmap, roadmapProgress } from './Roadmap.tsx';
 import { Toolbox } from './Toolbox.tsx';
 import { PreviewTab } from './PreviewTab.tsx';
 import { WorkTrail } from './WorkTrail.tsx';
+import { Arrangeable, useArrangedOrder } from '../arrange.tsx';
 import { ReviewTab, type ReviewProps } from './ReviewTab.tsx';
 import { LyraPanel, LyraChibi } from './LyraPanel.tsx';
 import { OPEN_PANEL_EVENT } from '../panel.ts';
@@ -268,20 +269,24 @@ export const BottomPanel: React.FC<{
   const toolClass =
     'flex h-9 min-w-9 items-center justify-center rounded-lg px-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white';
 
+  // The tabs can be put in any order (Arrange, next to Large screen); saved per device.
+  const dockOrder = useArrangedOrder('eden_dock_order', ALL_TABS);
+  const [arrangingDock, setArrangingDock] = useState(false);
   const tabButton = (id: PanelTab, label: React.ReactNode, Icon: React.ElementType, dot = false) => (
-    <button
-      key={id}
-      onClick={() => pick(id)}
-      aria-pressed={open && tab === id}
-      className={`relative flex shrink-0 items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors ${
-        open && tab === id
-          ? 'bg-indigo-600 text-white shadow-sm'
-          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white'
-      }`}
-    >
-      <Icon className="h-4 w-4" /> {label}
-      {dot && <span className="h-2 w-2 rounded-full bg-indigo-500 ring-2 ring-white dark:ring-slate-900" aria-label="New activity" />}
-    </button>
+    <Arrangeable key={id} id={id} label={typeof label === 'string' ? label : id.charAt(0).toUpperCase() + id.slice(1)} arr={dockOrder} arranging={arrangingDock} horizontal showing={project ? ALL_TABS : ALL_TABS.filter((t) => !PROJECT_TABS.includes(t))} className="flex shrink-0">
+      <button
+        onClick={() => pick(id)}
+        aria-pressed={open && tab === id}
+        className={`relative flex shrink-0 items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors ${
+          open && tab === id
+            ? 'bg-indigo-600 text-white shadow-sm'
+            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white'
+        }`}
+      >
+        <Icon className="h-4 w-4" /> {label}
+        {dot && <span className="h-2 w-2 rounded-full bg-indigo-500 ring-2 ring-white dark:ring-slate-900" aria-label="New activity" />}
+      </button>
+    </Arrangeable>
   );
 
   return (
@@ -321,7 +326,7 @@ export const BottomPanel: React.FC<{
           )}
         {project && tabButton('toolbox', 'Toolbox', Wrench)}
         {project && tabButton('preview', 'Preview', Eye)}
-        {project && <span className="mx-1.5 h-6 w-px shrink-0 bg-slate-200 dark:bg-slate-700" />}
+        {project && !arrangingDock && <span style={{ order: dockOrder.pos('review') }} className="mx-1.5 h-6 w-px shrink-0 bg-slate-200 dark:bg-slate-700" />}
         {tabButton(
           'review',
           <>
@@ -337,6 +342,20 @@ export const BottomPanel: React.FC<{
         {tabButton('terminal', 'Terminal', TerminalSquare)}
         </div>
         <div className="flex shrink-0 items-center gap-1 border-l border-slate-200 pl-2 dark:border-slate-800">
+          {arrangingDock && (
+            <button onClick={dockOrder.reset} title="Put the tabs back in their usual order" className={`${toolClass} px-2.5 text-sm`}>
+              Reset
+            </button>
+          )}
+          <button
+            onClick={() => setArrangingDock((v) => !v)}
+            aria-pressed={arrangingDock}
+            aria-label={arrangingDock ? 'Done arranging tabs' : 'Arrange the tabs'}
+            title={arrangingDock ? 'Done' : 'Arrange: move tabs left or right'}
+            className={`${toolClass} gap-1.5 px-2.5 text-sm ${arrangingDock ? 'bg-indigo-600 text-white hover:bg-indigo-500 hover:text-white dark:text-white' : ''}`}
+          >
+            <ArrowLeftRight className="h-4 w-4" /> {arrangingDock ? 'Done' : <span className="sr-only">Arrange</span>}
+          </button>
           {open && tab === 'flow' && (
             <>
               <button onClick={() => zoomBy(-0.2)} aria-label="Zoom out" title="Zoom out" className={toolClass}>

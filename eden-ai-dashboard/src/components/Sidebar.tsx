@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Arrangeable, useArrangedOrder } from '../arrange.tsx';
 import {
   LayoutDashboard,
   KanbanSquare,
@@ -20,6 +21,7 @@ import {
   Wifi,
   RefreshCw,
   Download,
+  ArrowUpDown,
   Lock,
   Globe,
 } from 'lucide-react';
@@ -391,6 +393,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const displayName = profile.name || 'Account';
   const initial = (profile.name || profile.studio || 'A').trim().charAt(0).toUpperCase();
 
+  // Re-arrange the pages in this bar (saved per device). Arrange mode shows Up/Down buttons on each entry.
+  const navOrder = useArrangedOrder('eden_sidebar_order', ['home', 'projects', 'nexus', 'chat', 'team', 'workflows', 'files', 'updates', 'github', 'devices', 'remote']);
+  const [arranging, setArranging] = useState(false);
+
   return (
     <>
       {mobileOpen && <div className="fixed inset-0 z-40 bg-black/50 md:hidden" onClick={onCloseMobile} aria-hidden="true" />}
@@ -406,6 +412,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             {!collapsed && <span className="truncate text-sm font-bold tracking-tight text-slate-900 dark:text-white">Eden AI Hub</span>}
           </button>
+          {!collapsed && (
+            <button
+              onClick={() => setArranging((v) => !v)}
+              aria-pressed={arranging}
+              aria-label="Arrange the pages in this bar"
+              title="Arrange: move pages up or down"
+              className={`rounded-md p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 ${arranging ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300' : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+            >
+              <ArrowUpDown className="h-4 w-4" />
+            </button>
+          )}
           {!collapsed && (
             <button
               onClick={() => setAll(!anyOpen)}
@@ -428,8 +445,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <nav className={`flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto ${collapsed ? 'p-2' : 'p-3'}`}>
+          {!collapsed && arranging && (
+            <div style={{ order: -1 }} className="mb-1 rounded-lg border-2 border-indigo-400 bg-indigo-50 p-2 text-sm text-slate-800 dark:bg-indigo-950/40 dark:text-slate-100">
+              Move pages with the arrows, or drag them. Saved on this device.
+              <div className="mt-2 flex gap-2">
+                <button onClick={() => setArranging(false)} className="min-h-10 flex-1 rounded-lg bg-indigo-600 px-3 font-semibold text-white hover:bg-indigo-500">Done</button>
+                <button onClick={navOrder.reset} className="min-h-10 rounded-lg border-2 border-slate-300 px-3 font-medium dark:border-slate-600">Reset</button>
+              </div>
+            </div>
+          )}
+          <Arrangeable id="home" label="Dashboard" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {navButton('home', 'Dashboard', LayoutDashboard)}
+          </Arrangeable>
 
+          <Arrangeable id="projects" label="Projects" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {group(
             'projects',
             'projects',
@@ -474,7 +503,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             Plus,
             runningCards
           )}
+          </Arrangeable>
 
+          <Arrangeable id="nexus" label="Nexus" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {group(
             'nexus',
             'nexus',
@@ -503,7 +534,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             Plus,
             runningRooms
           )}
+          </Arrangeable>
 
+          <Arrangeable id="chat" label="Chat" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {group(
             'chat',
             'chat',
@@ -540,7 +573,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               );
             })
           )}
+          </Arrangeable>
 
+          <Arrangeable id="team" label="Team" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {group(
             'team',
             'my-ai',
@@ -574,7 +609,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             Plus,
             busyAgents.size
           )}
+          </Arrangeable>
 
+          <Arrangeable id="workflows" label="Workflows" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {group(
             'workflows',
             'pipelines',
@@ -607,9 +644,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
             Plus,
             runningWorkflows
           )}
+          </Arrangeable>
 
+          <Arrangeable id="files" label="Files" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {navButton('files', 'Files', FolderGit2)}
+          </Arrangeable>
+          <Arrangeable id="updates" label="Code updates" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {navButton('updates', 'Code updates', Wand2, 0, runningUpdates)}
+          </Arrangeable>
+          <Arrangeable id="github" label="GitHub" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {group(
             'github',
             'repos',
@@ -705,8 +748,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             RefreshCw,
             azi.syncing ? 1 : 0
           )}
+          </Arrangeable>
+          <Arrangeable id="devices" label="Devices" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {navButton('devices', 'Devices', Tablet)}
+          </Arrangeable>
+          <Arrangeable id="remote" label="Remote" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {navButton('remote', 'Remote', Wifi)}
+          </Arrangeable>
         </nav>
 
         <div className={`border-t border-slate-200 dark:border-slate-800 ${collapsed ? 'p-2' : 'p-3'}`}>
