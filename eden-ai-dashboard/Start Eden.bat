@@ -1,10 +1,11 @@
 @echo off
-title EDEN AI Dashboard Server
+title Devostater - Eden AI Hub - keeper (closing this window stops Eden)
 color 0B
 
 echo ========================================
 echo       EDEN AI DASHBOARD SERVER
 echo ========================================
+echo [Devostater] Eden AI Hub - this window keeps the hub running. Close it to stop Eden.
 echo.
 
 rem Run from the folder this file is in, wherever the repo was cloned.

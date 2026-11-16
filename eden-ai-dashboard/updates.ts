@@ -138,6 +138,7 @@ interface UpdateJob {
   localModel?: string; // the model it ran on
   status: Status;
   createdAt: string;
+  startedAt?: string; // when the AI began working on it (not when it was asked for), to show elapsed time
   finishedAt?: string;
   log: string[];
   summary?: string;
@@ -642,6 +643,7 @@ function startNext() {
   }
   waitingForRoom = false;
   next.status = 'working';
+  next.startedAt = now();
   save();
   process_(next);
 }
@@ -862,7 +864,16 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
 
   app.get('/api/updates', (req, res) => {
     if (!mayView(req)) return res.status(403).json({ error: LOCKED });
+    // How long an update usually takes: the middle of the last few that ran to the end (8 minutes until there are any).
+    const took = jobs
+      .filter((j) => j.startedAt && j.finishedAt && !j.interrupted && !j.error)
+      .slice(-10)
+      .map((j) => new Date(j.finishedAt!).getTime() - new Date(j.startedAt!).getTime())
+      .filter((ms) => ms > 0)
+      .sort((a, b) => a - b);
+    const estimateMs = took.length ? took[Math.floor(took.length / 2)] : 8 * 60 * 1000;
     res.json({
+      estimateMs,
       jobs: [...jobs].reverse().map(({ diff, restore, ...rest }) => ({ ...rest, hasDiff: !!diff, hasRestorePoint: !!restore, codebaseName: findCodebase(rest.codebaseId)?.name || rest.codebaseId })),
       codebases: codebases.map((c) => {
         const ok = fs.existsSync(c.dir);
