@@ -53,3 +53,9 @@ Consult #5 and the **current source** before assigning work. The November 16 AZI
 
 ## Claude kickoff
 Pick one scoped issue in #5, create `claude/<topic>`, open a draft PR, and include tested behavior and known gaps. Use the PR as the point of handoff to ChatGPT for independent review.
+
+## Gemini / Google AI Studio (research, prototyping, multimodal)
+- **Access:** the AI Studio chat has no GitHub credentials or web access. The owner pastes files, or raw links such as `https://github.com/Devostater/ProjectEden/pull/<n>.diff`. Its code goes on `gemini/<topic>` branches.
+- **Does:** model evaluation, structured-output schemas, image/audio/video prototypes, research memos, test plans.
+- **Automatic PR review:** `.github/workflows/gemini-pr-review.yml` posts one advisory Gemini comment per PR (updated on each push) when the repo has the Actions secret `GEMINI_API_KEY` and variable `GEMINI_MODEL`. It is advice, not a passing check.
+- **Gate:** anything Gemini produces must pass `npx tsc --noEmit` and the relevant tests before merge, checked by the owner, Claude or Antigravity.

@@ -1,0 +1,89 @@
+# Advisory Gemini review of every pull request (proposed by Gemini / Google AI Studio, see docs/AI_COLLABORATION.md).
+# Setup (owner): repo Settings -> Secrets and variables -> Actions:
+#   Secret   GEMINI_API_KEY  (from https://aistudio.google.com/apikey; never commit it)
+#   Variable GEMINI_MODEL    (e.g. gemini-3.6-flash)
+# Without both, the job skips quietly. Its comment is advice only: it is not a passing check.
+name: Gemini PR review (advisory)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: gemini-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gemini-review:
+    # Only PRs from branches in this repo: forks never get the secret.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect the PR diff (first 60 KB)
+        id: diff
+        run: |
+          git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
+          head -c 60000 pr.diff > pr_bounded.diff
+          if [ "$(wc -c < pr.diff)" -gt 60000 ]; then echo "truncated=true" >> "$GITHUB_OUTPUT"; else echo "truncated=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Ask Gemini
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          TRUNCATED: ${{ steps.diff.outputs.truncated }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ] || [ -z "$GEMINI_MODEL" ]; then
+            echo "GEMINI_API_KEY or GEMINI_MODEL is not set; skipping."
+            exit 0
+          fi
+          node <<'EOF'
+          const fs = require('fs');
+          const diff = fs.readFileSync('pr_bounded.diff', 'utf8');
+          const prompt = [
+            `Review this pull request for Project Eden (React + Express, TypeScript). Title: ${process.env.PR_TITLE}`,
+            'Focus on: (1) bugs, regressions and edge cases, (2) missing tests, (3) security and secret handling.',
+            'Be concise. Label each point blocking / suggestion / question, cite file and line, and separate what the diff shows from possible risks.',
+            process.env.TRUNCATED === 'true' ? 'Note: the diff was cut off at 60 KB, so later files are missing.' : '',
+            '```diff\n' + diff + '\n```',
+          ].join('\n');
+          (async () => {
+            let text;
+            try {
+              const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(process.env.GEMINI_MODEL)}:generateContent`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
+                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+              });
+              const data = await r.json();
+              text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || `Gemini gave no review (${r.status}: ${data?.error?.message || 'empty answer'}).`;
+            } catch (e) {
+              text = `Gemini could not be reached: ${e.message}`;
+            }
+            fs.writeFileSync('review.md', `<!-- gemini-review -->\n## Gemini advisory review (${process.env.GEMINI_MODEL}, commit ${process.env.HEAD_SHA.slice(0, 7)})\n\n${text}\n\n_Advice from an AI, not a passing check._`);
+          })();
+          EOF
+
+      - name: Post or update the review comment
+        if: hashFiles('review.md') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # One comment per PR, updated on each push, instead of a new comment every time.
+          id=$(gh api "repos/${{ github.repository }}/issues/$PR/comments" --paginate --jq '.[] | select(.body | startswith("<!-- gemini-review -->")) | .id' | tail -1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$id" -F body=@review.md > /dev/null
+          else
+            gh pr comment "$PR" --body-file review.md
+          fi
