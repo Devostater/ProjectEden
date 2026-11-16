@@ -698,10 +698,18 @@ export async function runSyncAll(reason: 'manual' | 'start' | 'daily'): Promise<
   syncBusy = true;
   try {
     const results: SyncAllResult[] = [];
+    // The notes backup (C:\AZI\NOTES_26) also gets a copy of "AI handoff" (plans and progress), and is the one repo
+    // whose changes are committed automatically: notes are saved every day without asking. Code is never auto-committed.
+    const notes = path.join(AZI_ROOT, 'NOTES_26');
+    try {
+      const from = path.join(AZI_ROOT, 'AI handoff');
+      if (fs.existsSync(from) && fs.existsSync(path.join(notes, '.git'))) fs.cpSync(from, path.join(notes, 'AI handoff'), { recursive: true });
+    } catch {}
     for (const dir of aziRepoDirs()) {
       // Repos without a GitHub remote have nothing to sync: skip them quietly when it runs by itself.
       if (reason !== 'manual' && !git(['remote', 'get-url', 'origin'], dir).ok) continue;
-      const r = await syncProject(dir);
+      const isNotes = path.resolve(dir).toLowerCase() === path.resolve(notes).toLowerCase();
+      const r = await syncProject(dir, isNotes ? `Notes and progress, ${new Date().toISOString().slice(0, 10)}` : undefined);
       results.push({ name: path.basename(dir), ok: r.ok, steps: r.steps, reason: r.reason, hint: r.hint, files: r.files, fileNames: r.fileNames, moreFiles: r.moreFiles });
     }
     const bad = results.filter((r) => !r.ok);
