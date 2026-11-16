@@ -6,6 +6,7 @@ import { SendBackBox } from './SendBackBox.tsx';
 import { WorkstreamTabs, WorkstreamDialog } from './Workstreams.tsx';
 import { RunPicker } from './RunPicker.tsx';
 import { WhyWaiting } from './WhyWaiting.tsx';
+import { Roadmap } from './Roadmap.tsx';
 import { runsOf } from '../runs.ts';
 import type { Agent, Branch, Card, CardColumn, CardSource, Project } from '../types/index.ts';
 import { COLUMNS, type ProjectsApi } from '../projectsStore.ts';
@@ -1204,6 +1205,20 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
             </button>
             {aziDialog && <NewAziProjectDialog api={api} initialName={aziName} onClose={() => { setAziDialog(false); setAziName(''); }} />}
           </div>
+
+          <Roadmap
+            key={active.id}
+            project={active}
+            onSave={async (roadmap) => {
+              try {
+                const r = await fetch(`/api/projects/${active.id}/roadmap`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roadmap }) });
+                if (!r.ok) api.setError((await r.json().catch(() => ({}))).error || 'Could not save the roadmap.');
+              } catch {
+                api.setError('Could not save the roadmap: the hub did not answer.');
+              }
+              await api.refresh();
+            }}
+          />
 
           <WhyWaiting
             cards={cards}

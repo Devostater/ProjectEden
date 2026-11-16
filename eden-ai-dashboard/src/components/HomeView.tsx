@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, GitBranch, FileTe
 import type { Agent, Card, DAGPipeline, HostedFile, Project } from '../types/index.ts';
 import { UsageBar, useProviderUsage, RefreshUsageButton } from './UsageBars.tsx';
 import { openPanel } from '../panel.ts';
+import { roadmapProgress, progressOf } from './Roadmap.tsx';
 
 // An [error] line from the activity log (see activity.ts).
 interface HomeError {
@@ -181,6 +182,29 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                   {review > 0 && <span className="text-amber-600 dark:text-amber-400"> · {review} to review</span>}
                 </span>
                 {busy.length > 0 && <span className="mt-1 block truncate text-sm text-indigo-600 dark:text-indigo-400">Working now: {busy.join(', ')}</span>}
+                {(() => {
+                  // The project's roadmap (building blocks toward its long-term goals), when it has one.
+                  const rm = roadmapProgress(p.roadmap);
+                  if (!rm) return null;
+                  return (
+                    <span className="mt-2 block">
+                      <span className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                        🏗️ Roadmap <b className="tabular-nums text-slate-700 dark:text-slate-200">{rm.pct}%</b>
+                        <span className="tabular-nums">· {rm.done}/{rm.total} blocks done</span>
+                      </span>
+                      <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                        <span className="block h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-500" style={{ width: `${rm.pct}%` }} />
+                      </span>
+                      <span className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                        {(p.roadmap || []).map((g) => (
+                          <span key={g.id} title={g.title} className="tabular-nums">
+                            {g.icon} {progressOf(g.blocks)}%
+                          </span>
+                        ))}
+                      </span>
+                    </span>
+                  );
+                })()}
                 {mine.length > 0 && (
                   <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
                     <span className="block h-full rounded-full" style={{ width: `${Math.round((done / mine.length) * 100)}%`, backgroundColor: p.color }} />

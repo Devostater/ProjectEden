@@ -129,8 +129,25 @@ export interface Project {
   autoRun?: boolean; // AI picks up assigned cards in Ready (on unless set to false)
   codebaseId?: string; // the code this project changes (see Code updates), e.g. "lyra"
   branches?: Branch[]; // workstreams; every project has at least "Main"
+  roadmap?: RoadmapGoal[]; // long-term goals made of building blocks (not AI tasks); progress is worked out from them
   createdAt: string;
   updatedAt: string;
+}
+
+// A building block on the way to a goal: planned -> building -> done.
+export type BlockState = 'planned' | 'building' | 'done';
+export interface RoadmapBlock {
+  id: string;
+  title: string;
+  state: BlockState;
+  note?: string;
+}
+// A long-term goal of a project, e.g. "Store page" or "Website", made of building blocks.
+export interface RoadmapGoal {
+  id: string;
+  title: string;
+  icon: string; // an emoji
+  blocks: RoadmapBlock[];
 }
 
 export interface CardNote {

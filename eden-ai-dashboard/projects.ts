@@ -167,6 +167,29 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
     res.json({ project });
   });
 
+  // Replace a project's roadmap (its long-term goals and their building blocks). Checked and trimmed here.
+  app.post('/api/projects/:id/roadmap', (req, res) => {
+    const project = projects().find((p) => p.id === req.params.id);
+    if (!project) return res.status(404).json({ error: 'Project not found.' });
+    const goals = Array.isArray(req.body?.roadmap) ? req.body.roadmap : null;
+    if (!goals) return res.status(400).json({ error: 'Send the roadmap as a list of goals.' });
+    const states = ['planned', 'building', 'done'];
+    project.roadmap = goals.slice(0, 20).map((g: any) => ({
+      id: text(g?.id, 40) || id('goal'),
+      title: text(g?.title, 80) || 'Goal',
+      icon: text(g?.icon, 8) || '🎯',
+      blocks: (Array.isArray(g?.blocks) ? g.blocks : []).slice(0, 60).map((b: any) => ({
+        id: text(b?.id, 40) || id('block'),
+        title: text(b?.title, 120) || 'Block',
+        state: states.includes(b?.state) ? b.state : 'planned',
+        ...(text(b?.note, 400) ? { note: text(b.note, 400) } : {}),
+      })),
+    }));
+    project.updatedAt = now();
+    save();
+    res.json({ project });
+  });
+
   app.delete('/api/projects/:id', (req, res) => {
     const store = getStore();
     if (!projects().some((p) => p.id === req.params.id)) return res.status(404).json({ error: 'Project not found.' });
