@@ -1,0 +1,63 @@
+# Advisory Gemini review of every pull request (proposed by Gemini / Google AI Studio, see docs/AI_COLLABORATION.md).
+# Setup (owner): repo Settings -> Secrets and variables -> Actions:
+#   Secret   GEMINI_API_KEY  (from https://aistudio.google.com/apikey; never commit it)
+#   Variable GEMINI_MODEL    (e.g. gemini-3.6-flash)
+# Without both, the job notes "NOT CONFIGURED" and skips. When Gemini can't review (API error, empty answer,
+# possible secrets in the diff), the job fails and the PR comment says REVIEW NOT PERFORMED.
+# Its comment is advice only, never a required check. Logic: .github/scripts/gemini-review.mjs (tested).
+name: Gemini PR review (advisory)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: gemini-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gemini-review:
+    # Only PRs from branches in this repo: forks never get the secret.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test the review script
+        run: node --test .github/scripts/gemini-review.test.mjs
+
+      - name: Ask Gemini
+        id: ask
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          BASE_REF: ${{ github.base_ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/gemini-review.mjs
+
+      - name: Post or update the review comment
+        # Also after a failed review, so the PR says REVIEW NOT PERFORMED instead of nothing.
+        if: always() && hashFiles('review.md') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          # One comment per PR, updated on each push, instead of a new comment every time.
+          id=$(gh api "repos/${{ github.repository }}/issues/$PR/comments" --paginate --jq '.[] | select(.body | startswith("<!-- gemini-review -->")) | .id' | tail -1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$id" -F body=@review.md > /dev/null
+          else
+            gh pr comment "$PR" --body-file review.md
+          fi

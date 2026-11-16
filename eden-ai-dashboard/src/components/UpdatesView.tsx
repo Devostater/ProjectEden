@@ -10,6 +10,7 @@ interface Job {
   request: string;
   status: 'queued' | 'working' | 'checking' | 'ready' | 'applied' | 'undone' | 'discarded' | 'failed';
   createdAt: string;
+  startedAt?: string; // when the AI began working on it
   finishedAt?: string;
   log: string[];
   summary?: string;
@@ -65,6 +66,15 @@ const TABS: { id: UpdatesTab; label: string; empty: string }[] = [
 ];
 
 const post = (url: string, body?: unknown) => api('POST', url, body ?? {});
+
+// "3 min 05 s" / "42 s" / "1 h 02 min"
+const duration = (ms: number) => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ${String(s % 60).padStart(2, '0')} s`;
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
+};
 
 // The patch, shown file by file with added lines green and removed lines red.
 const DiffView: React.FC<{ id: string }> = ({ id }) => {
@@ -136,7 +146,8 @@ export const UpdatesView: React.FC = () => {
   const [checking, setChecking] = useState(false); // "Check for fixes" is reloading everything
   const [confirmFixAll, setConfirmFixAll] = useState(false); // "Fix all": waiting for "Yes, fix them"
   const [fixingAll, setFixingAll] = useState(false);
-  const [closedIds, setClosedIds] = useState<string[]>([]); // active cards you folded (they start open)
+  const [estimateMs, setEstimateMs] = useState(8 * 60 * 1000); // how long an update usually takes
+  const [clock, setClock] = useState(Date.now()); // ticks every second while something runs, so elapsed time counts up
   const live = useRef(false);
 
   const load = async () => {
@@ -150,6 +161,7 @@ export const UpdatesView: React.FC = () => {
       setBusy(d.busy);
       setClaudeReady(d.claudeReady);
       setCodebases(d.codebases || []);
+      if (typeof d.estimateMs === 'number' && d.estimateMs > 0) setEstimateMs(d.estimateMs);
       setRemote(!!d.remote);
       setRestartPending(!!d.restartPending);
       live.current = d.busy;
@@ -225,6 +237,14 @@ export const UpdatesView: React.FC = () => {
       clearTimeout(timer);
     };
   }, []);
+
+  const running = jobs.some((j) => j.status === 'working' || j.status === 'checking');
+  useEffect(() => {
+    if (!running) return;
+    setClock(Date.now());
+    const t = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [running]);
 
   const start = async () => {
     setError('');
@@ -530,23 +550,19 @@ export const UpdatesView: React.FC = () => {
         )}
         {tab !== 'construction' && !jobs.some((j) => TAB_OF[j.status] === tab) && <p className="text-sm text-slate-500 dark:text-slate-400">{TABS.find((t) => t.id === tab)?.empty}</p>}
         {jobs.filter((j) => TAB_OF[j.status] === tab).map((job) => {
-          // Active ones start open, but every card folds: pressing its title closes it until you open it again.
-          const startsOpen = job.status === 'queued' || job.status === 'working' || job.status === 'checking' || job.status === 'ready' || (job.status === 'failed' && !!job.interrupted);
-          const open = openId === job.id || (startsOpen && !closedIds.includes(job.id));
+          // Every card starts folded. Press its title to open it, and again to close it.
+          const open = openId === job.id;
           const st = STATUS[job.status];
+          // Time and progress for an update the AI is working on (the bar is an estimate from earlier updates).
+          const runningNow = (job.status === 'working' || job.status === 'checking') && !!job.startedAt;
+          const elapsed = runningNow ? Math.max(0, clock - new Date(job.startedAt!).getTime()) : 0;
+          const percent = Math.min(95, Math.round((elapsed / estimateMs) * 100));
+          const overdue = elapsed > estimateMs;
           const fix = diagnose(job, jobs);
           return (
             <article key={job.id} className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
               <button
-                onClick={() => {
-                  if (open) {
-                    if (openId === job.id) setOpenId(null);
-                    if (startsOpen) setClosedIds((ids) => [...ids, job.id]);
-                  } else {
-                    setClosedIds((ids) => ids.filter((x) => x !== job.id));
-                    if (!startsOpen) setOpenId(job.id);
-                  }
-                }}
+                onClick={() => setOpenId(open ? null : job.id)}
                 aria-expanded={open}
                 className="flex w-full items-start gap-3 p-4 text-left"
               >
@@ -562,6 +578,27 @@ export const UpdatesView: React.FC = () => {
                     {job.files && <span className="text-slate-500"> · {job.files.length} file{job.files.length === 1 ? '' : 's'}</span>}
                     <span className="text-slate-500"> · {new Date(job.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
                   </span>
+                  {runningNow && (
+                    <span className="mt-2 block">
+                      <span
+                        role="progressbar"
+                        aria-label="Estimated progress"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={percent}
+                        className="block h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"
+                      >
+                        <span className={`block h-full rounded-full transition-all duration-1000 ${overdue ? 'bg-amber-500' : 'bg-indigo-500'}`} style={{ width: `${percent}%` }} />
+                      </span>
+                      <span className="mt-1 block text-xs tabular-nums text-slate-500 dark:text-slate-400">
+                        Running for {duration(elapsed)} · usually about {duration(estimateMs)}
+                        {overdue && ' · taking longer than usual'}
+                      </span>
+                    </span>
+                  )}
+                  {!runningNow && job.startedAt && job.finishedAt && (
+                    <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">Took {duration(new Date(job.finishedAt).getTime() - new Date(job.startedAt).getTime())}</span>
+                  )}
                 </span>
               </button>
 

@@ -10,6 +10,9 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+// Console handle: who and what is running in this window, so it's easy to tell apart from other consoles.
+process.title = 'Devostater - Eden AI Hub - keeper (closing this window stops Eden)';
+
 const APP = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.PORT) || 3000;
 const HEALTH = `http://127.0.0.1:${PORT}/api/models`;
