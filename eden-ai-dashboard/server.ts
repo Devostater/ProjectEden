@@ -5,6 +5,7 @@ import { registerSettingsRoutes } from './settings';
 import { registerPairing } from './pairing';
 import { registerProjectRoutes, ensureProjects, noteOnCard } from './projects';
 import { registerNewProjectRoutes } from './newproject';
+import { registerToolboxRoutes } from './toolbox';
 import { startCardRunner, askTeammate, runningCards } from './cardRunner';
 import { registerPlannerRoutes } from './planner';
 import { registerActivityRoutes, logActivity } from './activity';
@@ -478,6 +479,7 @@ async function startServer() {
 
   registerSettingsRoutes(app);
   registerNewProjectRoutes(app, () => store, () => saveStore(store)); // before the /api/projects/:id routes
+  registerToolboxRoutes(app, () => store, () => saveStore(store)); // a project's own tools, keys and links
   registerProjectRoutes(app, () => store, () => saveStore(store));
   registerPlannerRoutes(app, () => store);
   registerActivityRoutes(app);

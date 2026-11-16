@@ -57,9 +57,18 @@ function run(cmd: string, args: string[], cwd: string, timeout = 120000) {
 const git = (args: string[], cwd: string, timeout?: number) => run('git', args, cwd, timeout);
 const lastLine = (s: string) => s.split('\n').filter(Boolean).slice(-2).join(' ');
 
+// From this computer, and not from some other website open in a browser here: a page on another site can send
+// requests to localhost, and browsers mark those with that site's Origin. No Origin (LYRA, scripts) is fine.
 function isLocal(req: Request) {
   const ip = req.socket.remoteAddress || '';
-  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  if (!(ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1')) return false;
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
 }
 
 // "My Cool Game!" -> "My-Cool-Game". Letters, digits, - and _ only; also valid as a GitHub repo name.
@@ -324,7 +333,6 @@ export async function createProject(opts: { name: string; purpose?: string; temp
 
   // 3. Git: secrets out, big files flagged, first commit
   const { secrets, big } = scanFolder(dir);
-  report.secretsMoved = moveSecrets(dir, secrets); // all of them, ignored or not: secrets live only in Security\Keys
   if (!fs.existsSync(path.join(dir, '.git'))) {
     const init = git(['init', '-b', 'main'], dir);
     if (!init.ok) {
@@ -332,6 +340,11 @@ export async function createProject(opts: { name: string; purpose?: string; temp
       return finish();
     }
   }
+  // Only secrets git would commit are moved out. Ones the .gitignore already covers stay where they are: a running
+  // app may load them from there (a dev certificate, a local .env), and they can't reach GitHub anyway.
+  const loose = secrets.filter((f) => !git(['check-ignore', '-q', f], dir).ok);
+  const keptInPlace = secrets.length - loose.length;
+  report.secretsMoved = moveSecrets(dir, loose);
   report.bigFiles = bigTracked(dir, big);
   if (report.bigFiles.length) {
     add('Git', 'fail', `Not committing: ${report.bigFiles.length} file(s) over 50 MB (${report.bigFiles.slice(0, 3).join(', ')}). Use Git LFS or add them to .gitignore.`);
@@ -354,7 +367,7 @@ export async function createProject(opts: { name: string; purpose?: string; temp
   }
   report.commit = head.out;
   const branch = git(['branch', '--show-current'], dir).out || 'main';
-  add('Git', 'ok', `${staged ? 'Committed' : 'Already committed'} on ${branch} (${report.commit}).${report.secretsMoved.length ? ` Moved ${report.secretsMoved.length} secret file(s) to Security\\Keys\\${name} first.` : ''}`);
+  add('Git', 'ok', `${staged ? 'Committed' : 'Already committed'} on ${branch} (${report.commit}).${report.secretsMoved.length ? ` Moved ${report.secretsMoved.length} secret file(s) to Security\\Keys\\${name} first.` : ''}${keptInPlace ? ` ${keptInPlace} key file(s) left where they are: git ignores them, so they stay on this PC.` : ''}`);
 
   // 4. GitHub
   const remote = git(['remote', 'get-url', 'origin'], dir);
@@ -505,6 +518,20 @@ export function aziRepoDirs(): string[] {
   } catch {
     return [];
   }
+}
+
+// The folder in C:\AZI that belongs to a project: the one whose GitHub remote is the project's repo (the folder
+// can be named differently, e.g. NOVA for Devostater/Project-Nova), else one named after the repo or the project.
+export function dirForProject(p: { name: string; repo?: string }): string {
+  const want = (p.repo || '').toLowerCase().replace(/\.git$/, '');
+  if (want) {
+    for (const d of aziRepoDirs()) {
+      const r = git(['remote', 'get-url', 'origin'], d);
+      if (r.ok && r.out.replace(/^.*github\.com[:/]/, '').replace(/\.git$/, '').toLowerCase() === want) return d;
+    }
+  }
+  const repoName = p.repo ? p.repo.split('/')[1] : '';
+  return [repoName && path.join(AZI_ROOT, repoName), path.join(AZI_ROOT, folderName(p.name))].find((d) => d && fs.existsSync(d)) || '';
 }
 
 // The owner's GitHub repos (needs a token); empty when GitHub isn't linked.
@@ -671,9 +698,8 @@ export function registerNewProjectRoutes(app: Express, getStore: () => Store, sa
     if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
     const p = (getStore().projects || []).find((x) => x.id === req.params.id);
     if (!p) return res.status(404).json({ error: 'Project not found.' });
-    const repoName = p.repo ? p.repo.split('/')[1] : '';
-    const dir = [repoName && path.join(AZI_ROOT, repoName), path.join(AZI_ROOT, folderName(p.name))].find((d) => d && fs.existsSync(path.join(d, '.git')));
-    if (!dir) return res.status(404).json({ error: `No git folder for ${p.name} in ${AZI_ROOT}.` });
+    const dir = dirForProject(p);
+    if (!dir || !fs.existsSync(path.join(dir, '.git'))) return res.status(404).json({ error: `No git folder for ${p.name} in ${AZI_ROOT}.` });
     const result = await syncProject(dir, typeof req.body?.commitMessage === 'string' && req.body.commitMessage.trim() ? req.body.commitMessage.trim() : undefined);
     logActivity(result.ok ? 'done' : 'info', `Sync ${p.name}: ${result.ok ? 'GitHub is up to date.' : result.steps.map((s) => s.detail).slice(-1)[0]}`);
     res.json({ ...result, folder: dir });

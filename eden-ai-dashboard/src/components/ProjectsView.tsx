@@ -7,6 +7,7 @@ import { WorkstreamTabs, WorkstreamDialog } from './Workstreams.tsx';
 import { RunPicker } from './RunPicker.tsx';
 import { WhyWaiting } from './WhyWaiting.tsx';
 import { Roadmap } from './Roadmap.tsx';
+import { Toolbox } from './Toolbox.tsx';
 import { runsOf } from '../runs.ts';
 import type { Agent, Branch, Card, CardColumn, CardSource, Project } from '../types/index.ts';
 import { COLUMNS, type ProjectsApi } from '../projectsStore.ts';
@@ -1219,6 +1220,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
               await api.refresh();
             }}
           />
+
+          <Toolbox key={`tb-${active.id}`} project={active} />
 
           <WhyWaiting
             cards={cards}

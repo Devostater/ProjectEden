@@ -130,8 +130,23 @@ export interface Project {
   codebaseId?: string; // the code this project changes (see Code updates), e.g. "lyra"
   branches?: Branch[]; // workstreams; every project has at least "Main"
   roadmap?: RoadmapGoal[]; // long-term goals made of building blocks (not AI tasks); progress is worked out from them
+  toolbox?: { tools: ProjectTool[]; links: ProjectLink[] }; // this project's own tools and links (its keys live in Security\Keys)
   createdAt: string;
   updatedAt: string;
+}
+
+// A script or command that belongs to one project; it runs in that project's folder with that project's keys.
+export interface ProjectTool {
+  id: string;
+  name: string;
+  command: string;
+  description?: string;
+  folder?: string; // inside the project folder, e.g. "eden-ai-dashboard"
+}
+export interface ProjectLink {
+  id: string;
+  title: string;
+  url: string;
 }
 
 // A building block on the way to a goal: planned -> building -> done.
