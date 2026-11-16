@@ -478,6 +478,7 @@ export interface AziRepo {
   dirty: number;
   state: 'synced' | 'changes' | 'no-remote' | 'not-on-pc' | 'error';
   detail?: string;
+  private?: boolean; // visibility on GitHub (unknown without a token)
 }
 
 function repoStatus(dir: string, fetchFirst: boolean): AziRepo {
@@ -521,10 +522,13 @@ async function githubRepos(): Promise<{ full_name: string; html_url: string; pri
 
 export async function listAziRepos(fetchFirst = false): Promise<{ repos: AziRepo[]; github: boolean }> {
   const local = aziRepoDirs().map((d) => repoStatus(d, fetchFirst));
+  const gh = await githubRepos();
+  const visibility = new Map(gh.map((g) => [g.full_name.toLowerCase(), g.private]));
+  for (const r of local) if (r.repo && visibility.has(r.repo.toLowerCase())) r.private = visibility.get(r.repo.toLowerCase());
   const onPc = new Set(local.map((r) => r.repo?.toLowerCase()).filter(Boolean));
-  const remote = (await githubRepos())
+  const remote = gh
     .filter((g) => !onPc.has(g.full_name.toLowerCase()))
-    .map<AziRepo>((g) => ({ name: '', repo: g.full_name, url: g.html_url, ahead: 0, behind: 0, dirty: 0, state: 'not-on-pc', detail: g.private ? 'Private, not on this PC.' : 'Not on this PC.' }));
+    .map<AziRepo>((g) => ({ name: '', repo: g.full_name, url: g.html_url, ahead: 0, behind: 0, dirty: 0, state: 'not-on-pc', private: g.private, detail: 'Not on this PC.' }));
   return { repos: [...local, ...remote], github: !!githubToken() };
 }
 

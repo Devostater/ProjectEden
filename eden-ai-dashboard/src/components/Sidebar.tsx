@@ -20,6 +20,8 @@ import {
   Wifi,
   RefreshCw,
   Download,
+  Lock,
+  Globe,
 } from 'lucide-react';
 import { UsageBars } from './UsageBars.tsx';
 import { PauseAI } from './PauseAI.tsx';
@@ -68,7 +70,9 @@ interface AziRepo {
   dirty: number;
   state: 'synced' | 'changes' | 'no-remote' | 'not-on-pc' | 'error';
   detail?: string;
+  private?: boolean;
 }
+const visibilityText = (r: AziRepo) => (r.private === true ? ' (private)' : r.private === false ? ' (public)' : '');
 const REPO_DOT: Record<AziRepo['state'], string> = {
   synced: 'bg-emerald-500',
   changes: 'bg-amber-500',
@@ -77,6 +81,8 @@ const REPO_DOT: Record<AziRepo['state'], string> = {
   error: 'bg-red-500',
 };
 const repoTitle = (r: AziRepo) =>
+  repoTitleBase(r) + visibilityText(r);
+const repoTitleBase = (r: AziRepo) =>
   r.state === 'synced'
     ? `${r.repo}: matches GitHub`
     : r.state === 'changes'
@@ -515,6 +521,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         {r.behind > 0 && `↓${r.behind}`}
                       </span>
                     )}
+                    {r.private === true && <Lock className="h-3 w-3 shrink-0 text-slate-400" aria-label="private" />}
+                    {r.private === false && <Globe className="h-3 w-3 shrink-0 text-slate-400" aria-label="public" />}
                     {r.state === 'not-on-pc' && <Download className="h-3 w-3 shrink-0 text-sky-500" />}
                   </button>
                 );

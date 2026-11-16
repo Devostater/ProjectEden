@@ -1109,7 +1109,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
         <>
           {/* Project header. Projects are picked in the sidebar. */}
           <div className="flex flex-wrap items-start gap-3">
-            <div className="min-w-0 flex-1">
+            {/* At least 16rem for the name and goal: the buttons wrap to the next line instead of squeezing them. */}
+            <div className="min-w-[16rem] flex-1">
               <h1 className="text-xl font-bold text-slate-900 dark:text-white">
                 <WaveText text={active.name} />
                 {active.status !== 'active' && <span className="ml-2 text-sm font-normal text-slate-400">({STATUS_LABEL[active.status]})</span>}
