@@ -15,6 +15,7 @@ interface ProjectsViewProps {
   agents: Agent[];
   onAsk: (text: string) => void; // open Chat with this text ready to send
   newProjectRequest?: number; // bumped by the sidebar's "New project"
+  aziProjectRequest?: { name: string; n: number } | null; // "new project <name>" from the mic or command box
   onOpenSource?: (card: Card) => void; // jump to the Nexus message a card came from
   onOpenBudgets?: () => void;
 }
@@ -814,8 +815,8 @@ const StepList: React.FC<{ steps: SetupStep[] }> = ({ steps }) => (
   </ul>
 );
 
-const NewAziProjectDialog: React.FC<{ api: ProjectsApi; onClose: () => void }> = ({ api, onClose }) => {
-  const [name, setName] = useState('');
+const NewAziProjectDialog: React.FC<{ api: ProjectsApi; onClose: () => void; initialName?: string }> = ({ api, onClose, initialName = '' }) => {
+  const [name, setName] = useState(initialName);
   const [purpose, setPurpose] = useState('');
   const [template, setTemplate] = useState<'blank' | 'node' | 'python' | 'unity'>('blank');
   const [adopt, setAdopt] = useState(false);
@@ -1052,10 +1053,16 @@ const SyncButton: React.FC<{ project: Project }> = ({ project }) => {
 };
 
 // ---------------------------------------------------------------- page
-export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, newProjectRequest, onOpenSource, onOpenBudgets }) => {
+export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, newProjectRequest, aziProjectRequest, onOpenSource, onOpenBudgets }) => {
   const { projects, active } = api;
   const [projectDialog, setProjectDialog] = useState<'new' | 'edit' | null>(null);
   const [aziDialog, setAziDialog] = useState(false);
+  const [aziName, setAziName] = useState('');
+  useEffect(() => {
+    if (!aziProjectRequest) return;
+    setAziName(aziProjectRequest.name);
+    setAziDialog(true);
+  }, [aziProjectRequest?.n]);
   useEffect(() => {
     if (newProjectRequest) setProjectDialog('new');
   }, [newProjectRequest]);
@@ -1124,7 +1131,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
           <FolderGit2 className="h-4 w-4" /> New project in AZI + GitHub
         </button>
         {projectDialog && <ProjectDialog project={null} api={api} onClose={() => setProjectDialog(null)} />}
-        {aziDialog && <NewAziProjectDialog api={api} onClose={() => setAziDialog(false)} />}
+        {aziDialog && <NewAziProjectDialog api={api} initialName={aziName} onClose={() => { setAziDialog(false); setAziName(''); }} />}
       </div>
     );
   }
@@ -1195,7 +1202,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
             >
               <Plus className="h-4 w-4" /> New AZI project
             </button>
-            {aziDialog && <NewAziProjectDialog api={api} onClose={() => setAziDialog(false)} />}
+            {aziDialog && <NewAziProjectDialog api={api} initialName={aziName} onClose={() => { setAziDialog(false); setAziName(''); }} />}
           </div>
 
           <WhyWaiting

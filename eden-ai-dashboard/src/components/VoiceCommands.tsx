@@ -13,6 +13,7 @@ export interface CommandActions {
   openChat: (text: string, send: boolean) => void;
   setDark: (dark: boolean | 'toggle') => void;
   create: (what: 'project' | 'teammate' | 'room') => void;
+  newAziProject: (name: string) => void; // opens "New project in AZI" with the name filled in
   openProject: (id: string) => void;
   back: () => boolean; // false when there's no earlier page
   projects: { id: string; name: string }[];
@@ -102,6 +103,9 @@ export const VoiceCommands: React.FC<{ actions: CommandActions }> = ({ actions }
       case 'new':
         a.create(cmd.what);
         return { ok: true, text: cmd.what === 'project' ? 'New project.' : cmd.what === 'teammate' ? 'Add a teammate.' : 'New Nexus room.' };
+      case 'new-azi':
+        a.newAziProject(cmd.name);
+        return { ok: true, text: cmd.name ? `New project in AZI: “${cmd.name}”. Check the form and press Create.` : 'New project in AZI.' };
       case 'scroll': {
         const main = document.querySelector('main');
         if (!main) return { ok: false, text: 'Nothing to scroll here.' };

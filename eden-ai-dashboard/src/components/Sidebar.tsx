@@ -36,6 +36,7 @@ export type AppTab = 'home' | 'projects' | 'nexus' | 'chat' | 'my-ai' | 'pipelin
 // What the sidebar asks a page to open, e.g. "the new-project form" or "this teammate".
 export type SidebarRequest =
   | { kind: 'new-project' }
+  | { kind: 'new-azi-project'; name: string }
   | { kind: 'new-teammate' }
   | { kind: 'edit-teammate'; id: string }
   | { kind: 'open-workflow'; id: string };

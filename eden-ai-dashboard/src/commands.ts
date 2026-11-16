@@ -14,6 +14,7 @@ export type Command =
   | { kind: 'pause'; paused: boolean }
   | { kind: 'theme'; dark: boolean | 'toggle' }
   | { kind: 'new'; what: 'project' | 'teammate' | 'room' }
+  | { kind: 'new-azi'; name: string } // "new project Star Courier": a C:\AZI folder + private GitHub repo
   | { kind: 'scroll'; to: 'up' | 'down' | 'top' | 'bottom' }
   | { kind: 'back' }
   | { kind: 'help' }
@@ -124,6 +125,14 @@ export function parseCommand(said: string, ctx: CommandContext): Command | null 
   const scroll = t.match(/^(?:scroll|page|go|move) (down|up)$/) || t.match(/^(?:(?:scroll|go|jump) to )?(?:the )?(top|bottom)$/);
   if (scroll) return { kind: 'scroll', to: scroll[1] as 'up' | 'down' | 'top' | 'bottom' };
   if (/^(new|create|add|start|make)(?: a| an)?(?: new)? project$/.test(t)) return { kind: 'new', what: 'project' };
+  // "new project Star Courier", "create a project called Star Courier", "new AZI project Star Courier", "new azi project".
+  if (/^(new|create|start|make|set up)(?: a| an)?(?: new)? azi project$/.test(t)) return { kind: 'new-azi', name: '' };
+  const named = t.match(/^(?:new|create|start|make|set up)(?: a| an)?(?: new)?(?: azi)? project(?: called| named| for)? (.+)$/);
+  if (named) {
+    // Keep the name as it was said or typed (capitals and all).
+    const original = said.trim().replace(/^[\s\S]*?\bproject\b\s*(?:(?:called|named|for)\s+)?/i, '').replace(/[.!?]+$/, '').trim();
+    return { kind: 'new-azi', name: original || named[1] };
+  }
   if (/^(new|create|add|hire|make)(?: a| an)?(?: new)? (teammate|team member|agent|ai teammate)$/.test(t)) return { kind: 'new', what: 'teammate' };
   if (/^(new|create|add|start|make)(?: a| an)?(?: new)? (room|discussion|nexus room|nexus discussion)$/.test(t)) return { kind: 'new', what: 'room' };
 
@@ -195,7 +204,7 @@ export function examples(ctx: CommandContext): { title: string; lines: string[] 
   return [
     { title: 'Go to a page', lines: ['devices', 'open the team', 'show code updates', 'go back'] },
     { title: 'Open something', lines: ['review', 'activity', 'connections', `project ${project}`] },
-    { title: 'Do something', lines: ['pause the AI', 'resume', 'dark mode', 'new project'] },
+    { title: 'Do something', lines: ['pause the AI', 'resume', 'dark mode', 'new project Star Courier'] },
     { title: 'Talk to the team', lines: [`ask ${lead} what should I do next`, `talk to ${other}`] },
   ];
 }

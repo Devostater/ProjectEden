@@ -153,6 +153,10 @@ export default function App() {
     openAccount,
     openChat,
     setDark: (dark) => setDarkMode((now) => (dark === 'toggle' ? !now : dark)),
+    newAziProject: (name) => {
+      setActiveTab('projects');
+      ask({ kind: 'new-azi-project', name });
+    },
     create: (what) => {
       if (what === 'project') {
         setActiveTab('projects');
@@ -250,6 +254,7 @@ export default function App() {
           )}
 
           {activeTab === 'projects' && <ProjectsView api={projectsApi} agents={agents} onAsk={(text) => openChat(text, false)} newProjectRequest={request?.kind === 'new-project' ? request.n : 0}
+              aziProjectRequest={request?.kind === 'new-azi-project' ? { name: request.name, n: request.n } : null}
               onOpenBudgets={() => openAccount('connections')}
               onOpenSource={(card) => {
                 if (!card.source?.roomId) return;
