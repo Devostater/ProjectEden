@@ -53,6 +53,12 @@ export function useProviderUsage(): ProviderUsage[] {
   return usage;
 }
 
+// Tokens and estimated cost for today and the last 7 days (null until the first check finishes).
+export function useUsageTotals(): UsageTotals | null {
+  useProviderUsage(); // re-renders this when a refresh brings new numbers
+  return sharedTotals;
+}
+
 // How much of its limit an AI has used (0-100). One place, so the bars and the "almost at the limit" warning agree.
 export const usagePercent = (u: ProviderUsage): number => {
   const real = u.real?.source === 'plan' ? u.real : undefined;
@@ -126,8 +132,11 @@ export const UsageBar: React.FC<{ u: ProviderUsage; compact?: boolean }> = ({ u,
         ? `${real.window || 'Plan'} limit reached, back ${resetText(real.resetsAt)} (reported by the plan)`
         : u.limitNote || `${u.messages} of your ${u.limit}-message daily budget used in this hub. The plan doesn't report its own remaining amount.`;
 
+  // Shown as a hover tooltip so the list never jumps around.
+  const tip = detail + (!off && u.coveredByPlan ? ' Covered by plan ($0).' : '') + (!off && u.coveredByPlan === false ? ` About ${money(u.cost || 0)} today (pay-per-use).` : '');
+
   return (
-    <div className="group rounded outline-none" tabIndex={0}>
+    <div className="rounded outline-none" tabIndex={0} title={tip}>
       <div className={`flex items-center justify-between gap-2 ${compact ? 'text-xs' : 'text-sm'}`}>
         <span className={`truncate ${off ? 'text-slate-400' : 'text-slate-700 dark:text-slate-300'}`}>{u.name}</span>
         <span className={`shrink-0 tabular-nums ${limited ? 'text-red-500' : 'text-slate-400'}`}>{status}</span>
@@ -142,11 +151,7 @@ export const UsageBar: React.FC<{ u: ProviderUsage; compact?: boolean }> = ({ u,
       >
         <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${off ? 0 : Math.max(pct, u.messages ? 3 : 0)}%` }} />
       </div>
-      <p className={`mt-1.5 hidden text-xs leading-snug group-hover:block group-focus:block ${limited ? 'text-red-500' : 'text-slate-500 dark:text-slate-400'}`}>
-        {detail}
-        {!off && u.coveredByPlan && ' Covered by plan ($0).'}
-        {!off && u.coveredByPlan === false && ` About ${money(u.cost || 0)} today (pay-per-use).`}
-      </p>
+      <p className="sr-only">{tip}</p>
     </div>
   );
 };

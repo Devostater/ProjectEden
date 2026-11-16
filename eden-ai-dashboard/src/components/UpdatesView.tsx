@@ -44,7 +44,7 @@ const STATUS: Record<Job['status'], { label: string; tone: string }> = {
 };
 
 // The Updates list is split into three tabs. "Active" includes updates waiting for your review.
-type UpdatesTab = 'active' | 'error' | 'finished';
+type UpdatesTab = 'construction' | 'active' | 'error' | 'finished';
 const TAB_OF: Record<Job['status'], UpdatesTab> = {
   queued: 'active',
   working: 'active',
@@ -56,6 +56,7 @@ const TAB_OF: Record<Job['status'], UpdatesTab> = {
   discarded: 'finished',
 };
 const TABS: { id: UpdatesTab; label: string; empty: string }[] = [
+  { id: 'construction', label: 'Construction', empty: '' },
   { id: 'active', label: 'Active', empty: 'Nothing is running or waiting for you right now.' },
   { id: 'error', label: 'Error', empty: 'Nothing has failed.' },
   { id: 'finished', label: 'Finished', empty: 'Nothing finished yet.' },
@@ -129,7 +130,8 @@ export const UpdatesView: React.FC = () => {
   const [applyingAll, setApplyingAll] = useState(false);
   const [restartPending, setRestartPending] = useState(false); // an applied update needs the hub restarted
   const [restarting, setRestarting] = useState(false);
-  const [tab, setTab] = useState<UpdatesTab>('active');
+  const [tab, setTab] = useState<UpdatesTab>('construction');
+  const [checking, setChecking] = useState(false); // "Check for fixes" is reloading everything
   const [confirmFixAll, setConfirmFixAll] = useState(false); // "Fix all": waiting for "Yes, fix them"
   const [fixingAll, setFixingAll] = useState(false);
   const [closedIds, setClosedIds] = useState<string[]>([]); // active cards you folded (they start open)
@@ -152,12 +154,44 @@ export const UpdatesView: React.FC = () => {
     } catch {}
   };
 
+  // "Check for updates & fixes": reloads every update and says what needs you.
+  const checkAll = async () => {
+    setChecking(true); setError(''); setNote('');
+    try {
+      const res = await fetch('/api/updates', { cache: 'no-store' });
+      const d = await res.json();
+      await load();
+      const list = d.jobs || [];
+      const plan = planFixAll(list, Date.now(), !!d.claudeReady);
+      const ready = list.filter((j: Job) => j.status === 'ready').length;
+      const failed = list.filter((j: Job) => j.status === 'failed').length;
+      const parts = [];
+      if (ready) parts.push(ready + ' ready to apply');
+      if (failed) parts.push(failed + ' failed (' + plan.run + ' can be fixed with Fix all)');
+      setNote(parts.length ? 'Checked: ' + parts.join(', ') + '.' : 'Checked: everything is up to date.');
+      if (failed) setTab('error'); else if (ready) setTab('active');
+    } catch (e: any) { setError("Could not reach the hub: " + e.message); }
+    setChecking(false);
+  };
+
   // Asks the hub to restart, waits for it to stop and come back, then reloads the page.
   const restartHub = async () => {
     setError('');
     setRestarting(true);
     try {
-      await post('/api/restart');
+      const res = await fetch('/api/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && Array.isArray(data.interrupted) && data.interrupted.length) {
+        // Work is still going: show what a restart would cut off, and only go ahead if the owner says so.
+        if (!window.confirm(`Restarting now would interrupt this work:\n\n- ${data.interrupted.join('\n- ')}\n\nRestart anyway?`)) {
+          setRestarting(false);
+          return;
+        }
+        const again = await fetch('/api/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true }) });
+        if (!again.ok) throw new Error((await again.json().catch(() => ({}))).error || 'Could not restart the hub.');
+      } else if (!res.ok) {
+        throw new Error(data.error || 'Could not restart the hub.');
+      }
     } catch (err: any) {
       setError(err.message);
       setRestarting(false);
@@ -390,30 +424,6 @@ export const UpdatesView: React.FC = () => {
         </p>
       </div>
 
-      <NextUpdate
-        codebases={codebases}
-        target={target}
-        onPickTarget={setTarget}
-        request={request}
-        onRequestChange={setRequest}
-        onThisPc={onThisPc}
-        onOnThisPc={setOnThisPc}
-        busy={busy}
-        claudeReady={claudeReady}
-        remote={remote}
-        onStart={start}
-        onAdded={async (id) => {
-          setTarget(id);
-          await load();
-        }}
-        onError={setError}
-        onIdeaStarted={(id) => {
-          setOpenId(id);
-          setTab('active');
-          live.current = true;
-          load();
-        }}
-      />
 
       {(restartPending || restarting) && (
         <div role="status" className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
@@ -433,10 +443,15 @@ export const UpdatesView: React.FC = () => {
       {note && <p role="status" className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">{note}</p>}
 
       <section className="space-y-3">
-        <h2 className="font-semibold text-slate-900 dark:text-white">Updates</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="font-semibold text-slate-900 dark:text-white">Updates</h2>
+          <button onClick={checkAll} disabled={checking} title="Reload every update and look for easy fixes" className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+            <RefreshCw className={`h-4 w-4 ${checking ? 'animate-spin' : ''}`} /> {checking ? 'Checking…' : 'Check for updates & fixes'}
+          </button>
+        </div>
         <div role="tablist" aria-label="Updates" className="flex gap-1 border-b border-slate-200 dark:border-slate-800">
           {TABS.map((t) => {
-            const count = jobs.filter((j) => TAB_OF[j.status] === t.id).length;
+            const count = t.id === 'construction' ? -1 : jobs.filter((j) => TAB_OF[j.status] === t.id).length;
             const selected = tab === t.id;
             return (
               <button
@@ -447,7 +462,7 @@ export const UpdatesView: React.FC = () => {
                 className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm ${selected ? 'border-indigo-500 font-medium text-indigo-600 dark:text-indigo-300' : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}`}
               >
                 {t.label}
-                <span className={`rounded-full px-1.5 text-xs tabular-nums ${t.id === 'error' && count > 0 ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{count}</span>
+                {count >= 0 && <span className={`rounded-full px-1.5 text-xs tabular-nums ${t.id === 'error' && count > 0 ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{count}</span>}
               </button>
             );
           })}
@@ -485,7 +500,33 @@ export const UpdatesView: React.FC = () => {
             </button>
           </div>
         )}
-        {!jobs.some((j) => TAB_OF[j.status] === tab) && <p className="text-sm text-slate-500 dark:text-slate-400">{TABS.find((t) => t.id === tab)?.empty}</p>}
+        {tab === 'construction' && (
+      <NextUpdate
+        codebases={codebases}
+        target={target}
+        onPickTarget={setTarget}
+        request={request}
+        onRequestChange={setRequest}
+        onThisPc={onThisPc}
+        onOnThisPc={setOnThisPc}
+        busy={busy}
+        claudeReady={claudeReady}
+        remote={remote}
+        onStart={start}
+        onAdded={async (id) => {
+          setTarget(id);
+          await load();
+        }}
+        onError={setError}
+        onIdeaStarted={(id) => {
+          setOpenId(id);
+          setTab('active');
+          live.current = true;
+          load();
+        }}
+      />
+        )}
+        {tab !== 'construction' && !jobs.some((j) => TAB_OF[j.status] === tab) && <p className="text-sm text-slate-500 dark:text-slate-400">{TABS.find((t) => t.id === tab)?.empty}</p>}
         {jobs.filter((j) => TAB_OF[j.status] === tab).map((job) => {
           // Active ones start open, but every card folds: pressing its title closes it until you open it again.
           const startsOpen = job.status === 'queued' || job.status === 'working' || job.status === 'checking' || job.status === 'ready' || (job.status === 'failed' && !!job.interrupted);
