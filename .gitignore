@@ -14,3 +14,15 @@ holofleet-command.zip
 
 # AI Studio scratch media
 .aistudio/
+
+# Secrets: these live in C:\AZI\Security\Keys and are never committed
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.keystore
+*.jks
+*.pfx
+*.p12
+keystore.properties
