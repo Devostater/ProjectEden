@@ -131,9 +131,14 @@ export interface Project {
   branches?: Branch[]; // workstreams; every project has at least "Main"
   roadmap?: RoadmapGoal[]; // long-term goals made of building blocks (not AI tasks); progress is worked out from them
   toolbox?: { tools: ProjectTool[]; links: ProjectLink[] }; // this project's own tools and links (its keys live in Security\Keys)
+  // Which AI works this project's cards: the team's usual AIs (not set), or one of the project's own connections.
+  // fallback: if the project's connection fails, use the team's AIs instead (off = the card waits, nothing leaves).
+  ai?: { use: ProjectAiKind; fallback?: boolean };
   createdAt: string;
   updatedAt: string;
 }
+
+export type ProjectAiKind = 'azure-openai' | 'openai' | 'anthropic' | 'gemini';
 
 // A script or command that belongs to one project; it runs in that project's folder with that project's keys.
 export interface ProjectTool {

@@ -21,6 +21,8 @@ interface ToolboxData {
   links: ProjectLink[];
   presets: { id: string; label: string; keys: string[] }[];
   runs: ToolRun[];
+  ai: { use: string; fallback?: boolean } | null;
+  aiOptions: { kind: string; label: string; needs: string[]; missing: string[] }[];
 }
 
 const newId = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -104,6 +106,24 @@ export const Toolbox: React.FC<{ project: Project }> = ({ project }) => {
     const r = await fetch(`/api/projects/${project.id}/keys`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, value }) });
     if (!r.ok) setError((await r.json().catch(() => ({}))).error || 'Could not save the key.');
     await load();
+  };
+
+  const [aiTest, setAiTest] = useState<{ busy?: boolean; ok?: boolean; text?: string } | null>(null);
+  const saveAi = async (use: string, fallback: boolean) => {
+    setError('');
+    setAiTest(null);
+    const r = await fetch(`/api/projects/${project.id}/ai`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ use, fallback }) });
+    if (!r.ok) setError((await r.json().catch(() => ({}))).error || 'Could not save.');
+    await load();
+  };
+  const testAi = async () => {
+    setAiTest({ busy: true });
+    try {
+      const d = await (await fetch(`/api/projects/${project.id}/ai/test`, { method: 'POST' })).json();
+      setAiTest(d.ok ? { ok: true, text: `It answered: “${d.reply}”` } : { ok: false, text: d.error || 'It did not work.' });
+    } catch {
+      setAiTest({ ok: false, text: 'The hub did not answer.' });
+    }
   };
 
   const counts = data ? `${data.tools.length} tools · ${data.keys.length} keys · ${data.links.length} links` : '';
@@ -281,6 +301,46 @@ export const Toolbox: React.FC<{ project: Project }> = ({ project }) => {
                   </form>
                 </div>
               </div>
+
+              {/* Which AI works this project's cards */}
+              {(() => {
+                const chosen = data.aiOptions.find((o) => o.kind === data.ai?.use);
+                return (
+                  <div className="mt-3 rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <b className="text-slate-900 dark:text-white">🤖 AI for this project's cards</b>
+                      <select value={data.ai?.use || ''} onChange={(e) => saveAi(e.target.value, false)} className="rounded-lg border border-slate-300 bg-transparent px-2 py-1 text-sm dark:border-slate-700" aria-label="AI for this project's cards">
+                        <option value="">The team's usual AIs</option>
+                        {data.aiOptions.map((o) => (
+                          <option key={o.kind} value={o.kind}>
+                            This project's {o.label}
+                            {o.missing.length ? ' (keys missing)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      {data.ai?.use && (
+                        <>
+                          <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300" title="Off: if the project's connection fails, the card waits and nothing is sent to the team's AIs.">
+                            <input type="checkbox" checked={!!data.ai.fallback} onChange={(e) => saveAi(data.ai!.use, e.target.checked)} /> If it fails, use the team's AIs
+                          </label>
+                          <button onClick={testAi} disabled={aiTest?.busy || !!chosen?.missing.length} className={small}>
+                            {aiTest?.busy ? 'Testing…' : 'Test'}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                    {chosen && chosen.missing.length > 0 && (
+                      <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">Still needed under Connections: {chosen.missing.join(', ')}. Until then this project's cards wait{data.ai?.fallback ? ' (or use the team\'s AIs)' : ''}.</p>
+                    )}
+                    {data.ai?.use && !chosen?.missing.length && (
+                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                        Cards in this project are answered by {chosen?.label} with this project's keys{data.ai.fallback ? '; if that fails, the team\'s AIs take over' : ' only. If it fails, the card waits and nothing goes to another AI'}. Web search and Plan with Chief still use the team's AIs.
+                      </p>
+                    )}
+                    {aiTest && !aiTest.busy && <p className={`mt-2 text-xs ${aiTest.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{aiTest.ok ? '✅' : '❌'} {aiTest.text}</p>}
+                  </div>
+                );
+              })()}
 
               {shown && (
                 <div className="mt-3 rounded-xl border border-slate-200 dark:border-slate-800">

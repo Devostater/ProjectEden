@@ -52,4 +52,6 @@ Code: `newproject.ts` (server), `src/components/ProjectsView.tsx` and `Sidebar.t
 - **Links:** docs, dashboards, portals.
 - Changing tools or keys and running tools only works from this PC, and not from another website open in the browser.
 
-Code: `toolbox.ts`, `src/components/Toolbox.tsx`. Not built yet: Eden's AI teammates using a project's own AI connection (today the keys reach the project's tools and scripts only).
+- **AI for this project's cards:** choose "The team's usual AIs" or one of the project's own connections (Azure AI, OpenAI, Claude, Gemini). The card is then answered by that service with the project's keys, and the result is marked "via … (this project's own connection)". It is strict by default: if the connection fails, the card waits and nothing is sent to another AI; tick "If it fails, use the team's AIs" to allow a backup. **Test** sends one tiny message to check it. Web search, heavy graphics (Unreal) and Plan with Chief still use the team's AIs.
+
+Code: `toolbox.ts` (`generateForProject`), `cardRunner.ts`, `src/components/Toolbox.tsx`. Azure needs `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT` (optional `AZURE_OPENAI_API_VERSION`).

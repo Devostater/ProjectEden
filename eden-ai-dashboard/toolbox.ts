@@ -102,6 +102,90 @@ export const CONNECTION_PRESETS: { id: string; label: string; keys: string[] }[]
   { id: 'firebase', label: 'Firebase', keys: ['FIREBASE_PROJECT_ID', 'FIREBASE_API_KEY'] },
 ];
 
+// ---- A project's own AI connection ---------------------------------------------------------------------
+// When a project is set to use one of its connections, its cards are answered by that service with the project's
+// own keys (from Security\Keys), not by Eden's team AIs or Eden's keys.
+
+type AiKind = NonNullable<Project['ai']>['use'];
+const AI_KINDS: Record<AiKind, { label: string; needs: string[] }> = {
+  'azure-openai': { label: 'Azure AI', needs: ['AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_DEPLOYMENT'] },
+  openai: { label: 'OpenAI', needs: ['OPENAI_API_KEY'] },
+  anthropic: { label: 'Claude (Anthropic)', needs: ['ANTHROPIC_API_KEY'] },
+  gemini: { label: 'Google Gemini', needs: ['GEMINI_API_KEY'] },
+};
+export const projectAiLabel = (kind: string) => AI_KINDS[kind as AiKind]?.label || kind;
+
+// Which of the project's connections have every key they need.
+function aiReadiness(p: Project) {
+  const env = readEnv(keysFile(p));
+  return (Object.keys(AI_KINDS) as AiKind[]).map((kind) => ({ kind, label: AI_KINDS[kind].label, needs: AI_KINDS[kind].needs, missing: AI_KINDS[kind].needs.filter((k) => !env[k]) }));
+}
+
+async function postJson(url: string, headers: Record<string, string>, body: unknown, what: string): Promise<any> {
+  let res: Response;
+  try {
+    res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(180000) });
+  } catch (err: any) {
+    throw new Error(`${what} could not be reached (${err?.name === 'TimeoutError' ? 'no answer in 3 minutes' : err?.message || 'network error'}).`);
+  }
+  const data: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`${what} answered ${res.status}: ${data?.error?.message || data?.message || res.statusText}`);
+  return data;
+}
+
+// Answers with the project's own connection. Returns null when the project uses the team's AIs.
+// Throws (with a message a person can act on) when the connection is chosen but not usable.
+export async function generateForProject(p: Project, req: { system?: string; prompt: string; maxTokens?: number }): Promise<{ text: string; tokens?: number; via: string } | null> {
+  const kind = p.ai?.use;
+  if (!kind || !AI_KINDS[kind]) return null;
+  const env = readEnv(keysFile(p));
+  const missing = AI_KINDS[kind].needs.filter((k) => !env[k]);
+  const label = AI_KINDS[kind].label;
+  if (missing.length) throw new Error(`${p.name} is set to use its own ${label} connection, but ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set (project → Toolbox → Connections).`);
+  const via = `${label} (this project's own connection)`;
+  const max = req.maxTokens ?? 4096;
+  const chat = [...(req.system ? [{ role: 'system', content: req.system }] : []), { role: 'user', content: req.prompt }];
+
+  if (kind === 'azure-openai' || kind === 'openai') {
+    const azure = kind === 'azure-openai';
+    const url = azure
+      ? `${env.AZURE_OPENAI_ENDPOINT.replace(/\/+$/, '')}/openai/deployments/${encodeURIComponent(env.AZURE_OPENAI_DEPLOYMENT)}/chat/completions?api-version=${encodeURIComponent(env.AZURE_OPENAI_API_VERSION || '2024-10-21')}`
+      : 'https://api.openai.com/v1/chat/completions';
+    if (azure && !/^https:\/\//i.test(url) && !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/i.test(url)) throw new Error('AZURE_OPENAI_ENDPOINT must start with https://');
+    const headers: Record<string, string> = azure ? { 'api-key': env.AZURE_OPENAI_API_KEY } : { authorization: `Bearer ${env.OPENAI_API_KEY}` };
+    const base = azure ? { messages: chat } : { model: env.OPENAI_MODEL || 'gpt-5', messages: chat };
+    let data: any;
+    try {
+      data = await postJson(url, headers, { ...base, max_completion_tokens: max }, label);
+    } catch (err: any) {
+      // Older deployments only know max_tokens.
+      if (!/max_completion_tokens|unrecognized|unsupported/i.test(err.message)) throw err;
+      data = await postJson(url, headers, { ...base, max_tokens: max }, label);
+    }
+    return { text: data.choices?.[0]?.message?.content ?? '', tokens: data.usage?.total_tokens, via };
+  }
+  if (kind === 'anthropic') {
+    const data = await postJson(
+      'https://api.anthropic.com/v1/messages',
+      { 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+      { model: env.ANTHROPIC_MODEL || 'claude-sonnet-5-5', max_tokens: max, ...(req.system ? { system: req.system } : {}), messages: [{ role: 'user', content: req.prompt }] },
+      label,
+    );
+    const text = (data.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+    return { text, tokens: (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0), via };
+  }
+  // gemini
+  const model = env.GEMINI_MODEL || 'gemini-3.6-flash';
+  const data = await postJson(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    { 'x-goog-api-key': env.GEMINI_API_KEY },
+    { ...(req.system ? { systemInstruction: { parts: [{ text: req.system }] } } : {}), contents: [{ role: 'user', parts: [{ text: req.prompt }] }], generationConfig: { maxOutputTokens: max } },
+    label,
+  );
+  const text = (data.candidates?.[0]?.content?.parts || []).map((x: any) => x.text || '').join('');
+  return { text, tokens: data.usageMetadata?.totalTokenCount, via };
+}
+
 interface RunState {
   id: string;
   toolId: string;
@@ -130,6 +214,8 @@ export function registerToolboxRoutes(app: Express, getStore: () => Store, save:
       tools: p.toolbox?.tools || [],
       links: p.toolbox?.links || [],
       presets: CONNECTION_PRESETS,
+      ai: p.ai || null,
+      aiOptions: aiReadiness(p),
       runs: (p.toolbox?.tools || []).map((t) => runs.get(`${p.id}:${t.id}`)).filter(Boolean),
     });
   });
@@ -172,6 +258,35 @@ export function registerToolboxRoutes(app: Express, getStore: () => Store, save:
     }
     logActivity('info', `${p.name}: key ${name} ${value === null ? 'removed' : value ? 'saved' : 'added (empty)'} (in Security\\Keys, project only).`);
     res.json({ ok: true });
+  });
+
+  // Which AI works this project's cards: use '' for the team's usual AIs, or one of the project's connections.
+  app.post('/api/projects/:id/ai', (req, res) => {
+    if (!isLocal(req)) return res.status(403).json({ error: 'This can only be changed on this computer.' });
+    const p = find(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found.' });
+    const use = text(req.body?.use, 30);
+    if (use && !(use in AI_KINDS)) return res.status(400).json({ error: 'Unknown connection.' });
+    if (use) p.ai = { use: use as AiKind, fallback: req.body?.fallback === true };
+    else delete p.ai;
+    p.updatedAt = new Date().toISOString();
+    save();
+    logActivity('info', use ? `${p.name}: cards now use the project's own ${projectAiLabel(use)} connection${p.ai?.fallback ? ' (team AIs as backup)' : ' only'}.` : `${p.name}: cards use the team's usual AIs again.`);
+    res.json({ ai: p.ai || null });
+  });
+
+  // One tiny message through the project's connection, to prove it works. Sends nothing about the project.
+  app.post('/api/projects/:id/ai/test', async (req, res) => {
+    if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
+    const p = find(req.params.id);
+    if (!p) return res.status(404).json({ error: 'Project not found.' });
+    if (!p.ai?.use) return res.status(400).json({ error: 'This project uses the team\'s AIs. Pick a connection first.' });
+    try {
+      const r = await generateForProject(p, { prompt: 'Reply with the single word: OK', maxTokens: 20 });
+      res.json({ ok: true, via: r?.via, reply: (r?.text || '').trim().slice(0, 80) });
+    } catch (err: any) {
+      res.json({ ok: false, error: err.message });
+    }
   });
 
   // Run a tool in the project's folder with the project's keys (and not Eden's). Only from this PC.

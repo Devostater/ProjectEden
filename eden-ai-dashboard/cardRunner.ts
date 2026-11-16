@@ -4,6 +4,7 @@ import { canUseWeb, generate, providerFor, providerUnavailable, fallbackModels, 
 import type { Agent, Project, Card } from './src/types/index';
 import { logActivity } from './activity';
 import { aiPaused } from './control';
+import { generateForProject, projectAiLabel } from './toolbox';
 
 interface RunnerStore {
   agents: Agent[];
@@ -121,7 +122,26 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
   const prompt = buildPrompt(project, card, getStore().cards || []);
   // Heavy graphics work goes to Unreal through Aura first, when it's open (see graphics.ts).
   const viaUnreal = graphicsModelFor(card, getStore().agents, agent);
-  for (const model of [...(viaUnreal ? [viaUnreal] : []), ...modelQueue(agent)]) {
+  // A project set to use its own AI connection (Toolbox): its cards are answered there, with the project's keys.
+  // Unless the project allows a backup, nothing is sent to the team's AIs when that connection fails.
+  let viaProject: string | undefined;
+  let teamAllowed = true;
+  if (project.ai?.use) {
+    try {
+      const r = await generateForProject(project, { system: systemFor(agent, prompt), prompt, maxTokens: 8000 });
+      if (r?.text.trim()) {
+        agent.totalRuns += 1;
+        agent.totalTokens += r.tokens || 0;
+        result = { text: r.text.trim(), provider: wantedProvider };
+        viaProject = r.via;
+      } else lastError = `${projectAiLabel(project.ai.use)} returned an empty answer.`;
+    } catch (err: any) {
+      lastError = err?.message || 'failed';
+    }
+    teamAllowed = project.ai.fallback === true;
+    if (!result && !teamAllowed) lastError += ' The team\'s AIs were not used, because this project only uses its own connection.';
+  }
+  for (const model of result || !teamAllowed ? [] : [...(viaUnreal ? [viaUnreal] : []), ...modelQueue(agent)]) {
     try {
       const r = await generate({ model, system: systemFor(agent, prompt), prompt, role: agent.role, localModel: agent.localModel, hard: card.priority === 'high', web: canUseWeb(agent), maxTokens: 8000 });
       if (r.text.trim()) {
@@ -147,7 +167,7 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
       text: result.text,
       at: now(),
       kind: 'result',
-      via: result.provider !== wantedProvider ? providerLabel(result.provider) : undefined,
+      via: viaProject || (result.provider !== wantedProvider ? providerLabel(result.provider) : undefined),
       web: result.usedWeb || undefined,
     });
     if (stillOurs) {
