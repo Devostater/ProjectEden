@@ -297,8 +297,8 @@ export const BottomPanel: React.FC<{
   const toggleHidden = (id: string) => setHiddenTabs((h) => { const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id]; try { localStorage.setItem('eden_dock_hidden', JSON.stringify(next)); } catch {} return next; });
   const sidePanelOpen = !!useSideActionsTarget();
   const inSidePanel = (id: PanelTab) => sidePanelOpen && PROJECT_TABS.includes(id) && id !== 'preview';
-  const tabButton = (id: PanelTab, label: React.ReactNode, Icon: React.ElementType, dot = false) => (inSidePanel(id) || (!arrangingDock && hiddenTabs.includes(id))) ? null : (
-    <Arrangeable key={id} id={id} label={typeof label === 'string' ? label : id.charAt(0).toUpperCase() + id.slice(1)} arr={dockOrder} arranging={arrangingDock} horizontal showing={project ? ALL_TABS : ALL_TABS.filter((t) => !PROJECT_TABS.includes(t))} className="flex shrink-0">
+  const tabButton = (id: PanelTab, label: React.ReactNode, Icon: React.ElementType, dot = false) => inSidePanel(id) ? null : (
+    <Arrangeable key={id} id={id} label={typeof label === 'string' ? label : id.charAt(0).toUpperCase() + id.slice(1)} arr={dockOrder} arranging={arrangingDock} horizontal showing={project ? ALL_TABS : ALL_TABS.filter((t) => !PROJECT_TABS.includes(t))} className="flex shrink-0" hidden={hiddenTabs.includes(id)} onToggleHidden={() => toggleHidden(id)}>
       <button
         onClick={() => pick(id)}
         aria-pressed={open && tab === id}
@@ -311,11 +311,6 @@ export const BottomPanel: React.FC<{
         <Icon className="h-4 w-4" /> {label}
         {dot && <span className="h-2 w-2 rounded-full bg-indigo-500 ring-2 ring-white dark:ring-slate-900" aria-label="New activity" />}
       </button>
-      {arrangingDock && (
-        <button onClick={() => toggleHidden(id)} aria-pressed={!hiddenTabs.includes(id)} title={hiddenTabs.includes(id) ? 'Hidden: press to show this tab' : 'Showing: press to hide this tab'} className="ml-0.5 rounded p-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
-          {hiddenTabs.includes(id) ? <EyeOff className="h-4 w-4 text-red-500" /> : <Eye className="h-4 w-4 text-emerald-500" />}
-        </button>
-      )}
     </Arrangeable>
   );
 

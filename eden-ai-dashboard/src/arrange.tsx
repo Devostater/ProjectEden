@@ -2,7 +2,7 @@
 // mode each item gets big Up/Down buttons (easier than dragging) and can also be dragged onto another item.
 // Items are placed with CSS `order`, so nothing remounts and lists keep their open/closed state.
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, GripVertical } from 'lucide-react';
+import { ArrowUp, ArrowDown, ArrowLeft, ArrowRight, GripVertical, Eye, EyeOff, X } from 'lucide-react';
 
 const EVENT = 'eden-arrange';
 
@@ -93,18 +93,22 @@ export const Arrangeable: React.FC<{
   showing?: string[]; // the items currently shown, so the arrows skip hidden ones
 
   className?: string;
+  hidden?: boolean; // hidden by you: not shown outside Arrange mode
+  onToggleHidden?: () => void; // shows a Show/Hide eye while arranging
+  onRemove?: () => void; // shows a Remove (X) while arranging, for tabs you added
   children: React.ReactNode;
-}> = ({ id, label, arr, arranging, horizontal = false, showing, className = '', children }) => {
+}> = ({ id, label, arr, arranging, horizontal = false, showing, className = '', hidden = false, onToggleHidden, onRemove, children }) => {
   const i = arr.pos(id);
   const canPrev = arr.neighbour(id, -1, showing) >= 0;
   const canNext = arr.neighbour(id, 1, showing) >= 0;
-  const btn = 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-slate-300 bg-white text-slate-800 hover:border-indigo-500 disabled:opacity-30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100';
+  const btn = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-800 hover:border-indigo-500 disabled:opacity-30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100';
+  if (hidden && !arranging) return null;
   const Prev = horizontal ? ArrowLeft : ArrowUp;
   const Next = horizontal ? ArrowRight : ArrowDown;
   return (
     <div
       style={{ order: i }}
-      className={`${className} ${arranging ? `flex items-center gap-1 rounded-lg ring-2 ring-dashed ring-indigo-400/60 ${horizontal ? 'px-1' : 'p-1'}` : ''}`}
+      className={`${arranging ? "" : className} ${arranging ? `flex flex-row items-center gap-0.5 rounded-lg ring-2 ring-dashed ring-indigo-400/60 ${horizontal ? 'px-1' : 'p-1'}` : ''}`}
       draggable={arranging}
       onDragStart={(e) => {
         e.dataTransfer.setData('text/x-eden-arrange', id);
@@ -121,16 +125,26 @@ export const Arrangeable: React.FC<{
         }
       }}
     >
-      {arranging && <GripVertical className="h-5 w-5 shrink-0 cursor-grab text-slate-500" aria-hidden />}
-      <div className={arranging ? 'pointer-events-none min-w-0 flex-1' : 'contents'}>{children}</div>
+      {arranging && <GripVertical className="h-4 w-4 shrink-0 cursor-grab text-slate-500" aria-hidden />}
+      <div className={arranging ? `pointer-events-none min-w-0 flex-1 ${hidden ? 'opacity-40' : ''}` : 'contents'}>{children}</div>
       {arranging && (
         <>
           <button type="button" onClick={() => arr.move(id, -1, showing)} disabled={!canPrev} aria-label={`Move ${label} ${horizontal ? 'left' : 'up'}`} title={`Move ${horizontal ? 'left' : 'up'}`} className={btn}>
-            <Prev className="h-5 w-5" />
+            <Prev className="h-4 w-4" />
           </button>
           <button type="button" onClick={() => arr.move(id, 1, showing)} disabled={!canNext} aria-label={`Move ${label} ${horizontal ? 'right' : 'down'}`} title={`Move ${horizontal ? 'right' : 'down'}`} className={btn}>
-            <Next className="h-5 w-5" />
+            <Next className="h-4 w-4" />
           </button>
+          {onToggleHidden && (
+            <button type="button" onClick={onToggleHidden} aria-pressed={!hidden} aria-label={hidden ? `Show ${label}` : `Hide ${label}`} title={hidden ? 'Hidden: press to show' : 'Press to hide'} className={btn}>
+              {hidden ? <EyeOff className="h-4 w-4 text-red-500" /> : <Eye className="h-4 w-4 text-emerald-500" />}
+            </button>
+          )}
+          {onRemove && (
+            <button type="button" onClick={onRemove} aria-label={`Remove ${label}`} title="Remove this tab" className={`${btn} hover:border-red-500 hover:text-red-600`}>
+              <X className="h-4 w-4" />
+            </button>
+          )}
         </>
       )}
     </div>

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { UsageBar, useProviderUsage } from './UsageBars.tsx';
+import { UsageBar, useProviderUsage, useUsageTotals, RefreshUsageButton, money } from './UsageBars.tsx';
 import { CheckCircle2, Circle, Save, Loader2, RefreshCw, ChevronDown, LogIn, Power, Archive } from 'lucide-react';
 import { KnowledgeCard } from './KnowledgeCard.tsx';
 import { OfflineCard } from './Offline.tsx';
@@ -61,13 +61,22 @@ const RestartCard: React.FC = () => {
   const [stopState, setStopState] = useState<'idle' | 'stopping' | 'stopped' | 'failed'>('idle');
   const [stopError, setStopError] = useState('');
 
-  const restart = async () => {
+  // Work that a restart would cut off. The hub lists it and waits to hear "Restart anyway" or "Wait".
+  const [interrupted, setInterrupted] = useState<string[] | null>(null);
+
+  const restart = async (force = false) => {
     setConfirm(false);
+    setInterrupted(null);
     setError('');
     setState('restarting');
     try {
-      const res = await fetch('/api/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const res = await fetch('/api/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(force ? { force: true } : {}) });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && Array.isArray(data.interrupted) && data.interrupted.length) {
+        setInterrupted(data.interrupted);
+        setState('idle');
+        return;
+      }
       if (!res.ok) throw new Error(data.error || 'Could not restart the hub.');
       // The hub goes away for a few seconds. Wait for it to stop, then for it to answer again.
       await new Promise((r) => setTimeout(r, 3000));
@@ -104,10 +113,23 @@ const RestartCard: React.FC = () => {
         <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Restart the hub</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use this after a code update that says the hub needs a restart. It closes and starts the hub again for you.</p>
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-          {confirm ? (
+          {interrupted ? (
+            <div role="alertdialog" aria-label="Restart would interrupt work" className="w-full space-y-3">
+              <p className="text-sm font-medium text-slate-800 dark:text-slate-100">Restarting now would interrupt this work:</p>
+              <ul className="list-disc space-y-1 pl-5 text-sm text-slate-600 dark:text-slate-300">
+                {interrupted.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+              <div className="flex flex-wrap gap-3">
+                <button onClick={() => restart(true)} className="rounded-md bg-red-600 px-2.5 py-1 text-sm font-medium text-white hover:bg-red-500">Restart anyway</button>
+                <button onClick={() => setInterrupted(null)} className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Wait</button>
+              </div>
+            </div>
+          ) : confirm ? (
             <>
               <span className="text-sm text-slate-600 dark:text-slate-300">Restart now? Anything the team is writing right now will stop.</span>
-              <button onClick={restart} className="rounded-md bg-red-600 px-2.5 py-1 text-sm font-medium text-white hover:bg-red-500">Restart</button>
+              <button onClick={() => restart()} className="rounded-md bg-red-600 px-2.5 py-1 text-sm font-medium text-white hover:bg-red-500">Restart</button>
               <button onClick={() => setConfirm(false)} className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
             </>
           ) : (
@@ -210,9 +232,13 @@ const BackupCard: React.FC = () => {
   );
 };
 
-export const SettingsView: React.FC<{ onSaved?: () => void }> = ({ onSaved }) => {
+// part: 'connections' shows sign-ins, GitHub, backups and the rest; 'ai' shows the AI-team settings (usage, auto-pause,
+// offline, knowledge, free AIs). Without it, everything shows.
+export const SettingsView: React.FC<{ onSaved?: () => void; part?: 'connections' | 'ai' }> = ({ onSaved, part }) => {
+  const showAI = part !== 'connections';
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const usage = useProviderUsage();
+  const totals = useUsageTotals();
   const [github, setGithub] = useState<{ connected: boolean; login: string; source: string; error?: string } | null>(null);
   const [githubToken, setGithubToken] = useState('');
 
@@ -320,6 +346,28 @@ export const SettingsView: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
         </button>
       </div>
 
+      {showAI && (
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Token usage</h2>
+          <RefreshUsageButton label />
+        </div>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Estimates, not a bill. AIs on a plan or free count as $0.</p>
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {[
+            { label: 'Today', total: totals?.today },
+            { label: 'Last 7 days', total: totals?.week },
+          ].map(({ label, total }) => (
+            <div key={label} className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+              <div className="text-sm text-slate-500 dark:text-slate-400">{label}</div>
+              <div className="mt-1 text-2xl font-semibold tabular-nums text-slate-900 dark:text-white">{total ? total.tokens.toLocaleString() : '–'}</div>
+              <div className="text-sm text-slate-500 dark:text-slate-400">{total ? `tokens, about ${money(total.cost)}` : 'tokens'}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      )}
+
       <div className="space-y-3">
         {providers.map((p) => {
           const info = PLANS[p.provider];
@@ -375,19 +423,25 @@ export const SettingsView: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
         })}
       </div>
 
-      <AutoPauseCard />
+      {showAI && <AutoPauseCard />}
 
-      <OfflineCard />
+      <hr className="border-slate-200 dark:border-slate-800" />
 
-      <KnowledgeCard />
+      {showAI && <OfflineCard />}
 
-      <FreeAIs />
+      {showAI && <KnowledgeCard />}
+
+      {showAI && <FreeAIs />}
+
+      <hr className="border-slate-200 dark:border-slate-800" />
 
       <BackupsCard />
 
-      <RestartCard />
-
       <BackupCard />
+
+      <hr className="border-slate-200 dark:border-slate-800" />
+
+      <RestartCard />
 
       <div>
         <h2 className="text-lg font-semibold text-slate-900 dark:text-white">GitHub</h2>

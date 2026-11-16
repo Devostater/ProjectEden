@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { User, Plug, GitBranch, SlidersHorizontal, Sun, Moon, Save, Loader2 } from 'lucide-react';
+import { User, Plug, Bot, GitBranch, SlidersHorizontal, Sun, Moon, Save, Loader2 } from 'lucide-react';
 import { SettingsView } from './SettingsView.tsx';
 import { ReposView } from './ReposView.tsx';
 import { DevicesView } from './DevicesView.tsx';
@@ -49,19 +49,21 @@ const InstallCard: React.FC = () => {
 };
 
 
-export type AccountTab = 'account' | 'connections' | 'github' | 'preferences';
+export type AccountTab = 'account' | 'team' | 'connections' | 'github' | 'preferences';
 
 interface AccountViewProps {
   tab: AccountTab;
   setTab: (tab: AccountTab) => void;
   darkMode: boolean;
   setDarkMode: (v: boolean) => void;
+  team?: React.ReactNode; // the Team page (set up your AI teammates), shown under Team & AI
   workflows?: React.ReactNode; // the Workflows editor, shown under Preferences
   onSaved: () => void; // reload anything that depends on settings (profile name, connections)
 }
 
 const TABS: { id: AccountTab; label: string; icon: React.ElementType }[] = [
   { id: 'account', label: 'Account', icon: User },
+  { id: 'team', label: 'Team & AI', icon: Bot },
   { id: 'connections', label: 'Connections', icon: Plug },
   { id: 'github', label: 'GitHub', icon: GitBranch },
   { id: 'preferences', label: 'Preferences', icon: SlidersHorizontal },
@@ -77,7 +79,7 @@ async function saveSettings(updates: Record<string, string>) {
   if (!res.ok) throw new Error(data.error || 'Could not save.');
 }
 
-export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode, setDarkMode, onSaved, workflows }) => {
+export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode, setDarkMode, onSaved, workflows, team }) => {
   const [name, setName] = useState('');
   const [studio, setStudio] = useState('');
   const [terminalOn, setTerminalOn] = useState(false);
@@ -169,9 +171,16 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
 
       {tab === 'connections' && (
         <div className="space-y-6">
-          <SettingsView onSaved={onSaved} />
+          <SettingsView onSaved={onSaved} part="connections" />
           <DevicesView />
           <RemoteView />
+        </div>
+      )}
+
+      {tab === 'team' && (
+        <div className="space-y-6">
+          {team}
+          <SettingsView onSaved={onSaved} part="ai" />
         </div>
       )}
 

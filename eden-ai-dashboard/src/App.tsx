@@ -229,6 +229,22 @@ export default function App() {
 
 
 // The open project's data for the bottom bar's project tabs (and the phone's full-screen sheets).
+  const renderMyAI = () => (
+              <MyAIView
+                onTeamChanged={refreshAllData}
+                request={request?.kind === 'new-teammate' || request?.kind === 'edit-teammate' ? request : null}
+                agents={agents}
+                onSaveAgent={handleSaveAgent}
+                onDeleteAgent={async (id) => {
+                  await remove(`/api/agents/${id}`);
+                  await projectsApi.refresh();
+                }}
+                onSelectAgentForSwarm={(id) => {
+                  const agent = agents.find((a) => a.id === id);
+                  if (agent) openChat(mention(agent), false);
+                }}
+              />
+  );
   const panelProject: PanelProject | null = projectsApi.active
     ? {
         project: projectsApi.active,
@@ -309,22 +325,7 @@ export default function App() {
               </div>
             )}
   
-            {activeTab === 'my-ai' && (
-              <MyAIView
-                onTeamChanged={refreshAllData}
-                request={request?.kind === 'new-teammate' || request?.kind === 'edit-teammate' ? request : null}
-                agents={agents}
-                onSaveAgent={handleSaveAgent}
-                onDeleteAgent={async (id) => {
-                  await remove(`/api/agents/${id}`);
-                  await projectsApi.refresh();
-                }}
-                onSelectAgentForSwarm={(id) => {
-                  const agent = agents.find((a) => a.id === id);
-                  if (agent) openChat(mention(agent), false);
-                }}
-              />
-            )}
+            {activeTab === 'my-ai' && renderMyAI()}
   
             {activeTab === 'pipelines' && (
               <PipelineDAGView pipelines={pipelines} agents={agents} onSavePipeline={handleSavePipeline} onRefreshData={refreshAllData} openId={request?.kind === 'open-workflow' ? request.id : ''} openNonce={request?.n || 0} onSelected={setPipelineId} />
@@ -352,6 +353,7 @@ export default function App() {
               <AccountView
                 tab={accountTab}
                 setTab={setAccountTab}
+                team={renderMyAI()}
                 workflows={<PipelineDAGView pipelines={pipelines} agents={agents} onSavePipeline={handleSavePipeline} onRefreshData={refreshAllData} openId={request?.kind === 'open-workflow' ? request.id : ''} openNonce={request?.n || 0} onSelected={setPipelineId} />}
                 darkMode={darkMode}
                 setDarkMode={setDarkMode}

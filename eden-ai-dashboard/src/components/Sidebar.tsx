@@ -454,6 +454,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Re-arrange the pages in this bar (saved per device). Arrange mode shows Up/Down buttons on each entry.
   const custom = useCustomTabs();
+  // Left-bar pages you hid in Arrange mode (saved on this device).
+  const [sideHidden, setSideHidden] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_sidebar_hidden') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
+  const toggleSideHidden = (id: string) => setSideHidden((h) => { const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id]; try { localStorage.setItem('eden_sidebar_hidden', JSON.stringify(next)); } catch {} return next; });
   const navOrder = useArrangedOrder('eden_sidebar_order', ['home', 'projects', 'nexus', 'chat', 'team', 'files', 'updates', ...custom.tabs.map((t) => t.id)]);
   const [arranging, setArranging] = useState(false);
 
@@ -515,11 +518,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <AddCustomTab onAdd={custom.add} />
             </div>
           )}
-          <Arrangeable id="home" label="Dashboard" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
+          <Arrangeable id="home" label="Dashboard" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('home')} onToggleHidden={() => toggleSideHidden('home')}>
           {navButton('home', 'Dashboard', LayoutDashboard)}
           </Arrangeable>
 
-          <Arrangeable id="projects" label="Projects" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
+          <Arrangeable id="projects" label="Projects" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('projects')} onToggleHidden={() => toggleSideHidden('projects')}>
           {group(
             'projects',
             'projects',
@@ -566,7 +569,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
           </Arrangeable>
 
-          <Arrangeable id="nexus" label="Nexus" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
+          <Arrangeable id="nexus" label="Nexus" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('nexus')} onToggleHidden={() => toggleSideHidden('nexus')}>
           {group(
             'nexus',
             'nexus',
@@ -597,7 +600,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
           </Arrangeable>
 
-          <Arrangeable id="chat" label="Chat" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
+          <Arrangeable id="chat" label="Chat" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('chat')} onToggleHidden={() => toggleSideHidden('chat')}>
           {group(
             'chat',
             'chat',
@@ -636,7 +639,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           )}
           </Arrangeable>
 
-          <Arrangeable id="team" label="Team" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
+          <Arrangeable id="team" label="Team" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('team')} onToggleHidden={() => toggleSideHidden('team')}>
           {group(
             'team',
             'my-ai',
@@ -673,14 +676,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </Arrangeable>
 
 
-          <Arrangeable id="files" label="Files" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
+          <Arrangeable id="files" label="Files" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('files')} onToggleHidden={() => toggleSideHidden('files')}>
           {navButton('files', 'Files', FolderGit2)}
           </Arrangeable>
-          <Arrangeable id="updates" label="Code updates" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
+          <Arrangeable id="updates" label="Code updates" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('updates')} onToggleHidden={() => toggleSideHidden('updates')}>
           {navButton('updates', 'Code updates', Wand2, 0, runningUpdates)}
           </Arrangeable>
           {custom.tabs.map((t) => (
-            <Arrangeable key={t.id} id={t.id} label={t.label} arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
+            <Arrangeable key={t.id} id={t.id} label={t.label} arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" onRemove={() => custom.remove(t.id)}>
               <div className="flex items-center">
                 <button
                   onClick={() => (CUSTOM_PAGES.some((p) => p.id === t.target) ? setActiveTab(t.target as AppTab) : window.open(t.target, '_blank', 'noopener'))}
@@ -690,11 +693,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {CUSTOM_PAGES.some((p) => p.id === t.target) ? <StarIcon className="h-4 w-4 shrink-0" /> : <ExternalLink className="h-4 w-4 shrink-0" />}
                   {!collapsed && <span className="truncate">{t.label}</span>}
                 </button>
-                {arranging && !collapsed && (
-                  <button onClick={() => custom.remove(t.id)} aria-label={`Remove ${t.label}`} title="Remove this tab" className="rounded p-1.5 text-slate-400 hover:text-red-600">
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
               </div>
             </Arrangeable>
           ))}
