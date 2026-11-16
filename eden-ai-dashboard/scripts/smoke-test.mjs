@@ -84,7 +84,7 @@ await test('settings never return a full secret', async () => {
 
 await test('usage bars data is well-formed', async () => {
   const { data } = await call('GET', '/api/provider-usage');
-  expect(data.usage.length === 3, 'expected 3 rows');
+  expect(data.usage.length >= 3, `expected at least 3 rows, got ${data.usage.length}`);
   for (const u of data.usage) expect(u.limit > 0 && u.messages >= 0 && ['subscription', 'api', 'off'].includes(u.mode), `bad row for ${u.name}`);
 });
 

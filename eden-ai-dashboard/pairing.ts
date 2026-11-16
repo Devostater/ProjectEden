@@ -24,6 +24,9 @@ export interface RemoteDevice {
   ip: string;
   pairedAt: string;
   lastSeen: string;
+  // Turned on from this computer, per device: it may ask for, apply and undo code updates, back up and
+  // restart the hub, like the PC itself. Off for every new device.
+  trusted?: boolean;
 }
 
 function newCode() {
@@ -132,6 +135,26 @@ const rank = (ip: string) => (ip.startsWith('192.168.') ? 0 : ip.startsWith('10.
 
 export const pairingCode = () => code;
 
+// The paired device a request comes from (by its own sign-in), if any.
+const deviceOf = (req: Request) => {
+  const token = cookieOf(req, DEVICE_COOKIE);
+  return token ? devices.find((d) => d.tokenHashes.includes(hash(token))) : undefined;
+};
+// A paired device the owner switched "Code updates" on for (Devices, on the PC).
+export const trustedDevice = (req: Request) => !isLocal(req) && !!deviceOf(req)?.trusted;
+// Requests that change things must come from the hub's own page (stops other websites from sending them).
+const fromOwnPage = (req: Request) => {
+  try {
+    return !!req.headers.origin && new URL(req.headers.origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+};
+// May this request look at the things kept to this computer (code updates, backups)?
+export const mayView = (req: Request) => isLocal(req) || trustedDevice(req);
+// ...and change them?
+export const mayManage = (req: Request) => mayView(req) && fromOwnPage(req);
+
 // True when the request comes from this same computer, even if the hub was opened through its Wi-Fi
 // address (for example http://192.168.1.20:3000) instead of "localhost". Only this computer can send
 // a request that appears to come from its own address, so this is safe for showing the pairing code.
@@ -207,6 +230,12 @@ export function registerPairing(app: Express) {
     res.json({ code, addresses: lanAddresses(Number(process.env.PORT) || 3000) });
   });
 
+  // What this browser is to the hub: the computer itself, or a paired device (and what it may do).
+  app.get('/api/me', (req, res) => {
+    const d = isLocal(req) ? undefined : deviceOf(req);
+    res.json({ local: isLocal(req), device: d ? { id: d.id, name: d.name, kind: d.kind } : undefined, codeUpdates: mayView(req) });
+  });
+
   // Devices paired over Wi-Fi (or Tailscale). Managed only from this computer.
   app.get('/api/remote-devices', (req, res) => {
     if (!fromThisComputer(req)) return res.status(403).json({ error: 'Only available on the computer running the hub.' });
@@ -227,6 +256,8 @@ export function registerPairing(app: Express) {
       d.name = name;
     } else if (req.params.action === 'forget') {
       devices = devices.filter((x) => x !== d);
+    } else if (req.params.action === 'trust') {
+      d.trusted = req.body?.trusted === true;
     } else return res.status(400).json({ error: 'Unknown action.' });
     savePairing();
     res.json({ ok: true });

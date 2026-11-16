@@ -18,7 +18,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
-import { logActivity } from './activity';
+import { logActivity, fileProblem } from './activity';
 import { listDevices } from './devices';
 import { setPaused } from './control';
 import { restartHub } from './restart';
@@ -46,11 +46,15 @@ interface MainState {
 let state: MainState = { main: 'pc' };
 try {
   state = { ...state, ...JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8')) };
-} catch {}
+} catch (err: any) {
+  fileProblem('load which device is the main server', err);
+}
 const saveState = () => {
   try {
     fs.writeFileSync(STATE_FILE, JSON.stringify(state), 'utf-8');
-  } catch {}
+  } catch (err: any) {
+    fileProblem('save which device is the main server', err);
+  }
 };
 
 // ---- helpers -------------------------------------------------------------------------------------
@@ -69,7 +73,7 @@ function fromOwnPage(req: Request) {
 
 function run(cmd: string, args: string[], opts: { timeout?: number; cwd?: string; input?: Buffer; shell?: boolean } = {}) {
   return new Promise<{ ok: boolean; out: string; err: string }>((resolve) => {
-    const child = spawn(cmd, args, { cwd: opts.cwd, windowsHide: true, shell: opts.shell });
+    const child = opts.shell ? spawn([cmd, ...args].join(' '), { cwd: opts.cwd, windowsHide: true, shell: true }) : spawn(cmd, args, { cwd: opts.cwd, windowsHide: true });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => (out += d));

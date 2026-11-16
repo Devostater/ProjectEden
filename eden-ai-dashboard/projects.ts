@@ -1,6 +1,9 @@
 // Projects and their boards of cards. A project is one game or product; a card is one piece of work.
+import fs from 'fs';
+import path from 'path';
 import type { Express } from 'express';
 import type { Agent, Project, Card, CardColumn, Branch } from './src/types/index';
+import { findCodebase } from './updates';
 
 export const COLUMNS: CardColumn[] = ['todo', 'ready', 'doing', 'review', 'done'];
 
@@ -59,6 +62,35 @@ export function ensureProjects(store: ProjectStore): boolean {
   }
   ensureBranches(store);
   return true;
+}
+
+// A safe file or folder name: no characters Windows refuses, no reserved names.
+function safeName(raw: string, fallback: string): string {
+  let n = raw.replace(/[<>:"/\\|?*\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '').slice(0, 60);
+  if (/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(n)) n = `_${n}`;
+  return n || fallback;
+}
+
+// Saves an approved result as a Markdown file in <project folder>/Deliverables/<project name>/ and returns its full
+// path. The project folder is the code folder linked to the project, or the hub's own folder if none is linked.
+// Markdown is plain text: Word, Google Docs and Notepad all open it.
+function writeDeliverable(project: Project, card: Card, resultText: string, author: string): string {
+  const base = (findCodebase(project.codebaseId) || findCodebase())?.dir;
+  if (!base || !fs.existsSync(base)) throw new Error('The project folder was not found on this PC.');
+  const root = path.join(base, 'Deliverables');
+  const folder = path.join(root, safeName(project.name, 'Project'));
+  // Approving the same card again (after a revision) replaces its file; a different card with the same title gets its own.
+  const again = card.deliverablePath && path.dirname(card.deliverablePath) === folder ? card.deliverablePath : '';
+  let file = again || path.join(folder, `${safeName(card.title, 'Result')}.md`);
+  if (!again && fs.existsSync(file)) file = path.join(folder, `${safeName(card.title, 'Result')} (${card.id.slice(-4)}).md`);
+  if (path.relative(root, file).startsWith('..')) throw new Error('That file location is not allowed.');
+  fs.mkdirSync(folder, { recursive: true });
+  // Keep the results out of the code's history, whichever code folder this is, without touching its own settings.
+  const ignore = path.join(root, '.gitignore');
+  if (!fs.existsSync(ignore)) fs.writeFileSync(ignore, '# Approved results saved by Eden AI Hub. Not part of the code.\n*\n', 'utf-8');
+  const body = `# ${card.title}\n\n*${project.name} · by ${author} · approved ${new Date().toLocaleString()}*\n\n${resultText.trim()}\n`;
+  fs.writeFileSync(file, body, 'utf-8');
+  return file;
 }
 
 // True if making `cardId` wait for `deps` would create a loop (A waits for B, B waits for A).
@@ -279,6 +311,77 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
     cards().push(card);
     save();
     res.json({ card });
+  });
+
+  // Send a card in Review back with the owner's feedback. The same teammate gets the same card again, with the
+  // feedback and their earlier result attached. The earlier result is marked "Revised".
+  app.post('/api/cards/:id/send-back', (req, res) => {
+    const card = cards().find((c) => c.id === req.params.id);
+    if (!card) return res.status(404).json({ error: 'Card not found.' });
+    if (card.column !== 'review') return res.status(400).json({ error: 'Only a card in Review can be sent back.' });
+    const feedback = text(req.body?.note, 4000);
+    if (!feedback) return res.status(400).json({ error: 'Write what should change first.' });
+    if (!card.assigneeId || !getStore().agents.some((a) => a.id === card.assigneeId)) {
+      return res.status(400).json({ error: 'Pick a teammate for this card first (open the card), so the same one can redo it.' });
+    }
+    // The result being replaced: the latest one that has not already been revised.
+    const previous = [...card.notes].reverse().find((n) => n.kind === 'result' && !n.revised);
+    if (previous) {
+      previous.revised = true;
+      previous.revisedAt = now();
+    }
+    card.notes.push({ id: id('note'), author: 'You', text: feedback, at: now(), kind: 'feedback' });
+    card.column = 'ready';
+    card.order = Math.max(0, ...cards().filter((c) => c.projectId === card.projectId && c.column === 'ready').map((c) => c.order)) + 1;
+    card.runState = undefined;
+    card.runMessage = undefined;
+    card.reviewAt = undefined;
+    card.doneAt = undefined;
+    card.updatedAt = now();
+    save();
+    res.json({ card });
+  });
+
+  // Approve one or more cards waiting in Review: each goes to Done and its written result is saved to the
+  // Deliverables folder. A card whose file can't be saved stays in Review, so nothing is approved without its file.
+  app.post('/api/cards/approve', (req, res) => {
+    const ids: string[] = Array.isArray(req.body?.ids) ? [...new Set<string>(req.body.ids.filter((x: unknown) => typeof x === 'string'))].slice(0, 200) : [];
+    if (!ids.length) return res.status(400).json({ error: 'Choose at least one card to approve.' });
+    const approved: { id: string; title: string; path?: string }[] = [];
+    const skipped: { id: string; title: string; reason: string }[] = [];
+    for (const cardId of ids) {
+      const card = cards().find((c) => c.id === cardId);
+      if (!card) {
+        skipped.push({ id: cardId, title: 'Unknown card', reason: 'This card no longer exists.' });
+        continue;
+      }
+      if (card.column !== 'review') {
+        skipped.push({ id: card.id, title: card.title, reason: 'It is no longer waiting for review.' });
+        continue;
+      }
+      const project = projects().find((p) => p.id === card.projectId);
+      const result = [...card.notes].reverse().find((n) => n.kind === 'result');
+      let saved: string | undefined;
+      if (project && result) {
+        try {
+          saved = writeDeliverable(project, card, result.text, result.author);
+        } catch (err: any) {
+          skipped.push({ id: card.id, title: card.title, reason: `The result could not be saved, so it was left in Review. ${err.message}` });
+          continue;
+        }
+      }
+      const lastDone = Math.max(0, ...cards().filter((c) => c.projectId === card.projectId && c.column === 'done').map((c) => c.order));
+      card.column = 'done';
+      card.order = lastDone + 1;
+      card.doneAt = now();
+      if (card.runState !== 'running') card.runState = undefined;
+      card.runMessage = undefined;
+      if (saved) card.deliverablePath = saved;
+      card.updatedAt = now();
+      approved.push({ id: card.id, title: card.title, path: saved });
+    }
+    if (approved.length) save();
+    res.json({ approved, skipped });
   });
 
   app.delete('/api/cards/:id', (req, res) => {

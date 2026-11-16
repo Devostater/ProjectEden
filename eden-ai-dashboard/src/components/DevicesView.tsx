@@ -5,6 +5,7 @@ import { useBusy } from './BusyBanner.tsx';
 import { RemoteDevices } from './RemoteDevices.tsx';
 import { AddDevice } from './AddDevice.tsx';
 import { DeviceTeamRow } from './DeviceTeamRow.tsx';
+import { useSpin } from './UsageBars.tsx';
 
 interface Device {
   serial: string;
@@ -128,6 +129,7 @@ export const DevicesView: React.FC = () => {
     };
   }, []);
   const [adding, setAdding] = useState(false);
+  const [refreshing, refresh] = useSpin(() => load());
 
   const act = async (d: Device, action: string, done: string) => {
     setBusy(`${d.serial}:${action}`);
@@ -158,8 +160,8 @@ export const DevicesView: React.FC = () => {
           <button onClick={() => setAdding(true)} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-500">
             <Plus className="h-4 w-4" /> Add a device
           </button>
-          <button onClick={load} aria-label="Look for devices again" className="rounded-lg border border-slate-300 p-2 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
-            <RefreshCw className="h-4 w-4" />
+          <button onClick={refresh} disabled={refreshing} aria-label="Look for devices again" title="Look for devices again" className="rounded-lg border border-slate-300 p-2 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>

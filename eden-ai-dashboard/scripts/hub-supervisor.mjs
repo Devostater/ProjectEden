@@ -2,7 +2,7 @@
 //   - starts the hub (server.ts) and starts it again if it stops or crashes
 //   - restarts it if it stops answering (hung) for about a minute and a half
 //   - writes what happened to .eden-logs/hub.log, so "it stopped and I don't know why" has an answer
-//   - only one copy runs: if a hub is already answering on port 3000, it just exits
+//   - only one copy runs; a hub that was started some other way is watched, and started here when it stops
 // Started by "Open Eden" (hidden) or "Start Eden.bat" (in a window, with the log on screen).
 // Add --open to also open the Eden AI Hub app window.
 import { spawn } from 'child_process';
@@ -69,12 +69,19 @@ try {
     process.exit(0);
   }
 } catch {}
+// A hub started some other way (an old window, a developer tool) isn't touched: it is watched, and when it
+// stops, the hub is started here, so from now on it is kept running like any other.
+let adopted = false;
 if (await answering()) {
-  log('The hub is already running (started some other way). Nothing to do.');
-  if (OPEN_APP) openApp();
-  process.exit(0);
+  log('The hub is already running (started some other way). Keeping watch: if it stops, it is started again here.');
+  adopted = true;
 }
 fs.writeFileSync(LOCK, String(process.pid));
+
+// Whatever goes wrong in here, keep supervising; and always leave a line saying why this stopped.
+process.on('uncaughtException', (err) => log(`Supervisor error (carrying on): ${err?.stack || err}`));
+process.on('unhandledRejection', (err) => log(`Supervisor error (carrying on): ${err?.stack || err}`));
+process.on('exit', (code) => log(`The supervisor stopped (code ${code}). The hub is no longer being kept running; open Eden to start it again.`));
 
 // ---- run and watch ----
 let child = null;
@@ -117,6 +124,15 @@ function start() {
 // Health check: restart if it hasn't answered for ~90 seconds (after giving it time to start).
 let misses = 0;
 setInterval(async () => {
+  if (adopted && !child) {
+    // Watching a hub this supervisor didn't start: take over once it has been gone for about a minute.
+    if (await answering(8000)) return void (misses = 0);
+    if (++misses < 2) return;
+    misses = 0;
+    adopted = false;
+    log('The hub that was started some other way has stopped. Starting it here.');
+    return start();
+  }
   if (!child || Date.now() - startedAt < 60000) return;
   if (await answering(10000)) {
     misses = 0;
@@ -128,7 +144,7 @@ setInterval(async () => {
     misses = 0;
     child?.kill();
   }
-}, 30000).unref();
+}, 30000); // not unref'd: while only watching a hub started some other way, this keeps the supervisor alive
 
 const shutdown = () => {
   stopping = true;
@@ -143,5 +159,5 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 process.on('SIGHUP', shutdown);
 
-start();
+if (!adopted) start();
 if (OPEN_APP) openApp(); // shows "Starting the hub…" until it answers, then loads by itself

@@ -28,6 +28,8 @@ let since = 0;
 let lastCpu = os.cpus().map((c) => c.times);
 let cpuPercent = 0;
 let streak = 0; // samples in a row pointing the other way (so a short spike doesn't flip it)
+let lastBusyLine = 0; // when "PC busy" was last written to the activity log
+let saidBusy = false; // that line is still waiting for its "has room again"
 const listeners: Array<(busy: boolean) => void> = [];
 
 function sampleCpu() {
@@ -60,7 +62,16 @@ function check() {
   since = Date.now();
   reason = busy ? describe(freeGb) : '';
   if (enabled) {
-    logActivity(busy ? 'error' : 'done', busy ? `PC busy (${reason}): heavy jobs wait until it has room again.` : 'PC has room again: heavy jobs carry on.');
+    // This is a state, not a fault (the banner across the top shows it live), and a PC that hovers around the
+    // line flips often. So it goes in the log as a plain line, and at most one pair every ten minutes.
+    if (busy && Date.now() - lastBusyLine > 10 * 60 * 1000) {
+      logActivity('info', `PC busy (${reason}): heavy jobs wait until it has room again.`);
+      lastBusyLine = Date.now();
+      saidBusy = true;
+    } else if (!busy && saidBusy) {
+      logActivity('info', 'PC has room again: heavy jobs carry on.');
+      saidBusy = false;
+    }
     for (const fn of listeners) fn(busy);
   }
 }

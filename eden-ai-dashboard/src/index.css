@@ -222,6 +222,45 @@
   padding: 0 0.75rem;
 }
 
+/* ---- Phones and narrow windows (below the "md" size, 768px). Desktop is not affected. ---- */
+@media (max-width: 767px) {
+  /* Keep the page from sliding sideways, and from zooming when you tap a box on iPhone
+     (iPhone zooms in on any box with text smaller than 16px). */
+  html,
+  body {
+    overflow-x: hidden;
+    overscroll-behavior-y: none;
+    -webkit-text-size-adjust: 100%;
+  }
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  /* Leave room for the notch and the rounded screen corners when installed as an app. */
+  #root {
+    padding-top: env(safe-area-inset-top);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  /* Fingertip-sized buttons. */
+  .eden-btn {
+    height: 2.75rem;
+  }
+  .eden-btn-tab {
+    height: 2.25rem;
+  }
+  button,
+  select {
+    touch-action: manipulation;
+  }
+  /* Wide tables and code scroll sideways inside their own box instead of stretching the page. */
+  pre {
+    overflow-x: auto;
+    max-width: 100%;
+  }
+}
+
 /* ---- Readability: lift the faintest grey text so labels stay legible on both themes. ---- */
 html:not(.dark) .text-slate-400 { color: #64748b; } /* slate-500: about 4.8:1 on white */
 .dark .text-slate-500 { color: #94a3b8; } /* slate-400: about 6.9:1 on the dark panels */

@@ -1,6 +1,6 @@
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
-import { generate, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel } from './providers';
+import { canUseWeb, generate, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel } from './providers';
 import { registerSettingsRoutes } from './settings';
 import { registerPairing } from './pairing';
 import { registerProjectRoutes, ensureProjects, noteOnCard } from './projects';
@@ -11,6 +11,7 @@ import { registerTerminalRoutes } from './terminal';
 import { registerLyraRoutes } from './lyra';
 import { registerNexusRoutes, runningRooms, type NexusData } from './nexus';
 import { registerControlRoutes } from './control';
+import { registerUsageGuard } from './usageGuard';
 import { registerUpdateRoutes } from './updates';
 import { registerRestartRoutes } from './restart';
 import { registerBusyRoutes } from './busy';
@@ -44,6 +45,24 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// One stray error in a background job shouldn't take the whole hub down (and interrupt whatever the team is
+// doing). It is written to the log instead, at most once a minute per message, and the hub carries on.
+const strayErrors = new Map<string, number>();
+const stray = (kind: string, err: any) => {
+  const message = String(err?.message || err).slice(0, 200);
+  console.error(`${kind}:`, err?.stack || err);
+  if (Date.now() - (strayErrors.get(message) || 0) < 60000) return;
+  strayErrors.set(message, Date.now());
+  try {
+    logActivity('error', `Something went wrong inside the hub (it kept running): ${message}`);
+  } catch {}
+};
+process.on('unhandledRejection', (err) => stray('Unhandled promise rejection', err));
+process.on('uncaughtException', (err) => stray('Uncaught error', err));
+// If whatever started the hub goes away, writing to its log must not crash the hub.
+process.stdout.on('error', () => {});
+process.stderr.on('error', () => {});
 const STORE_PATH = path.join(__dirname, '.nexusflow-store.json');
 
 function getGenAIClient(): GoogleGenAI {
@@ -425,7 +444,7 @@ async function startServer() {
       let lastError = `${providerLabel(wantedProvider)} isn't available right now, and no other AI is connected. Set one up in Account → Connections.`;
       for (const m of queue) {
         try {
-          const r = await generate({ model: m, system: systemFor(agent) + knowledgeFor(history[history.length - 1]?.content || ''), messages: history });
+          const r = await generate({ model: m, system: systemFor(agent) + knowledgeFor(history[history.length - 1]?.content || ''), messages: history, web: canUseWeb(agent) });
           if (agent) {
             agent.totalRuns += 1;
             agent.totalTokens += r.tokens || 0;
@@ -479,6 +498,7 @@ async function startServer() {
   registerGraphicsRoutes(app, () => store, () => saveStore(store));
   if (!process.env.EDEN_DEVICE_HUB) registerBackupRoutes(app);
   registerControlRoutes(app, () => ({ cards: runningCards(), rooms: runningRooms() }));
+  registerUsageGuard(app); // warns at 85% of a plan, can pause the team at 95%
   registerNexusRoutes(app, () => store, () => saveStore(store));
   registerTeamReformRoutes(app, () => store.agents, () => saveStore(store));
   logActivity('info', 'Hub started.');
@@ -1380,7 +1400,7 @@ Task:
     const vite = await createViteServer({
       // The page uses no .env values. Without this, saving a setting (which rewrites .env.local)
       // makes the dev server reload the whole page.
-      envFile: false,
+      envDir: false,
       server: { middlewareMode: true },
       appType: 'custom',
     });

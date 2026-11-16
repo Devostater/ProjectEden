@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon } from 'lucide-react';
+import { Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Inbox } from 'lucide-react';
 import type { AppTab } from './Sidebar.tsx';
-import { VoiceCommands } from './VoiceCommands.tsx';
+import { VoiceCommands, type CommandActions } from './VoiceCommands.tsx';
+import { openPanel } from '../panel.ts';
 
 interface Status {
   offline?: { offline: boolean; mode: string; localFirst: boolean; week: { localPercent: number; local: number; cloud: number } };
@@ -13,7 +14,7 @@ interface Status {
 const get = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null)).catch(() => null);
 
 // Slim bar across the top: where things stand at a glance, each part a shortcut to where it's set.
-export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => void; darkMode: boolean; setDarkMode: (v: boolean) => void }> = ({ title, setActiveTab, darkMode, setDarkMode }) => {
+export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => void; darkMode: boolean; setDarkMode: (v: boolean) => void; reviewCount?: number; actions: CommandActions }> = ({ title, setActiveTab, darkMode, setDarkMode, reviewCount = 0, actions }) => {
   const [s, setS] = useState<Status>({});
   useEffect(() => {
     const load = async () => {
@@ -38,6 +39,11 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
     <div className="relative z-20 flex items-center gap-2 border-b border-slate-200 bg-white/90 px-4 py-2 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
       <span className="mr-1 hidden truncate text-sm font-bold text-slate-900 sm:block dark:text-white">{title}</span>
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
+        {reviewCount > 0 && (
+          <button onClick={() => openPanel('review')} title="Finished work waiting for you: open Review" className={`${chip} border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200`}>
+            <Inbox className="h-3.5 w-3.5" /> {reviewCount} to review
+          </button>
+        )}
         {o && (
           <button onClick={() => setActiveTab('settings')} title="Offline mode (Account → Connections)" className={`${chip} ${o.offline ? 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200' : calm}`}>
             {o.offline ? <WifiOff className="h-3.5 w-3.5" /> : <Wifi className="h-3.5 w-3.5 text-emerald-500" />}
@@ -65,7 +71,7 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           </span>
         )}
       </div>
-      <VoiceCommands setActiveTab={setActiveTab} />
+      <VoiceCommands actions={actions} />
       <button onClick={() => setDarkMode(!darkMode)} aria-label="Toggle light or dark theme" className="shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800">
         {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </button>

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Trash2, X, ChevronDown, MessageSquare } from 'lucide-react';
+import { Plus, Trash2, X, ChevronDown, MessageSquare, Globe } from 'lucide-react';
 import type { Agent } from '../types/index.ts';
 import { useProviderUsage, type ProviderUsage } from './UsageBars.tsx';
 import { ReformTeam } from './ReformTeam.tsx';
@@ -88,6 +88,7 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
   const [role, setRole] = useState('');
   const [model, setModel] = useState('gemini-3.6-flash');
   const [localModel, setLocalModel] = useState('');
+  const [web, setWeb] = useState(false); // may search the web and read pages
   const [instruction, setInstruction] = useState('');
   const [color, setColor] = useState(COLORS[0]);
 
@@ -101,6 +102,7 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
     setInstruction(agent?.systemInstruction || '');
     setColor(agent?.color || COLORS[agents.length % COLORS.length]);
     setLocalModel(agent?.localModel || '');
+    setWeb(!!agent?.connectedTools?.includes('web'));
     setShowMore(false);
     setOpen(true);
   };
@@ -126,6 +128,7 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
       role: role.trim(),
       model,
       localModel,
+      connectedTools: [...(editing?.connectedTools || ['artifact_vault']).filter((t) => t !== 'web'), ...(web ? ['web'] : [])],
       color,
       avatar: name.trim().slice(0, 2).toUpperCase(),
       systemInstruction: instruction.trim() || defaultInstruction(name.trim(), role.trim()),
@@ -180,6 +183,11 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
                   <span className="block font-semibold text-slate-900 dark:text-white">{agent.name}</span>
                   <span className="block truncate text-sm text-slate-500 dark:text-slate-400">{agent.role}</span>
                 </span>
+                {agent.connectedTools?.includes('web') && (
+                  <span className="flex shrink-0 items-center gap-1 rounded bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-700 dark:text-sky-300" title="Can search the web and read pages">
+                    <Globe className="h-3 w-3" /> Web
+                  </span>
+                )}
                 <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium ${choice.badge}`} title={status.ok ? '' : `${choice.name}: ${status.text}. Another connected AI answers for now.`}>
                   {choice.name}
                   {!status.ok && ' ⚠'}
@@ -225,7 +233,7 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
           <form
             onSubmit={submit}
             onClick={(e) => e.stopPropagation()}
-            className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900"
+            className="flex max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900"
           >
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
               <h2 className="font-semibold text-slate-900 dark:text-white">{editing ? `Edit ${editing.name}` : 'Add a teammate'}</h2>
@@ -256,7 +264,7 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
 
               <div>
                 <span className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Which AI?</span>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   {AI_CHOICES.filter((c) => (c.id !== 'extra' || freeModels.length) && (c.id !== 'aura' || auraModels.length)).map((c) => {
                     const status = aiStatus(usageOf(c.id));
                     const selected = chosenProvider === c.id;
@@ -280,6 +288,16 @@ export const MyAIView: React.FC<MyAIViewProps> = ({ agents, onSaveAgent, onDelet
                   <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">This AI can't answer right now, so another connected AI will answer for this teammate until it can.</p>
                 )}
               </div>
+
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+                <input type="checkbox" checked={web} onChange={(e) => setWeb(e.target.checked)} className="mt-1 h-4 w-4 accent-sky-600" />
+                <span>
+                  <span className="flex items-center gap-1.5 text-sm font-medium text-slate-900 dark:text-white"><Globe className="h-4 w-4 text-sky-500" /> Can search the web</span>
+                  <span className="block text-xs text-slate-500 dark:text-slate-400">
+                    Looks things up live and lists its sources: prices, competitors, trends, news, release dates. If this teammate's own AI can't browse, Claude does the looking up for them. It is slower, and not available offline.
+                  </span>
+                </span>
+              </label>
 
               <div>
                 <button type="button" onClick={() => setShowMore(!showMore)} className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">

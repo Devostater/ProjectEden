@@ -73,6 +73,16 @@ export function logActivity(kind: ActivityKind, text: string, extra?: { reason?:
   }
 }
 
+// For the hub's own data files: say in the log when one can't be loaded or saved, instead of failing silently.
+// A missing file is normal (first run), and the same problem is reported at most once every ten minutes.
+const reported = new Map<string, number>();
+export function fileProblem(what: string, err: any) {
+  if (err?.code === 'ENOENT') return;
+  if (Date.now() - (reported.get(what) || 0) < 10 * 60 * 1000) return;
+  reported.set(what, Date.now());
+  logActivity('error', `Could not ${what}: ${err?.message || err}`);
+}
+
 // Other parts of the hub can follow the log (e.g. sending "needs you" alerts to your phone).
 const listeners: ((kind: ActivityKind, text: string) => void)[] = [];
 export const onActivity = (fn: (kind: ActivityKind, text: string) => void) => void listeners.push(fn);

@@ -1,6 +1,6 @@
 // The card runner: when a card sits in "Ready" with a teammate assigned, that teammate's AI does the
 // work, the result is added to the card as a note, and the card moves to "Review" for the owner.
-import { generate, providerFor, providerUnavailable, fallbackModels, providerLabel, providerUsage, defaultModel, type ProviderId } from './providers';
+import { canUseWeb, generate, providerFor, providerUnavailable, fallbackModels, providerLabel, providerUsage, defaultModel, type ProviderId } from './providers';
 import type { Agent, Project, Card } from './src/types/index';
 import { logActivity } from './activity';
 import { aiPaused } from './control';
@@ -91,18 +91,21 @@ function buildPrompt(project: Project, card: Card, all: Card[] = []): string {
   }
   if (card.notes.length) {
     parts.push('\nNotes on this card so far, oldest first (earlier results and the owner\'s feedback):');
-    for (const n of card.notes.filter((n) => n.kind !== 'error')) parts.push(`--- ${n.author}:\n${n.text}`);
-    parts.push('\nIf the owner left feedback after the last result, deliver a revised result that addresses it.');
+    for (const n of card.notes.filter((n) => n.kind !== 'error')) {
+      const who = n.kind === 'feedback' ? `The owner's feedback` : n.revised ? `${n.author} (earlier result, marked Revised)` : n.author;
+      parts.push(`--- ${who}:\n${n.text}`);
+    }
+    parts.push('\nIf the owner left feedback after the last result, deliver a revised result that addresses it. Give the complete new version, not just the changes.');
   }
   // What the studio already knows about this (other cards, Nexus plans, your docs), from the local knowledge base.
   parts.push(knowledgeFor(`${card.title} ${card.details || ''} ${project.name}`, `Card: ${card.title} (`));
   return parts.join('\n');
 }
 
-const systemFor = (agent: Agent) =>
+const systemFor = (agent: Agent, material = '') =>
   `${agent.systemInstruction}
 You are ${agent.name} (${agent.role}), working on a task card for the studio owner. Deliver the finished work for this task in full, ready to use, in clear Markdown. Start with the result itself, not an introduction. If something essential is missing, make a sensible assumption, list it in one line at the end under "Assumptions", and carry on.
-You can only produce text. You cannot change files or the app, run anything, or contact anyone, so never say that you did.${devicesNote()}`;
+You can only produce text. You cannot change files or the app, run anything, or contact anyone, so never say that you did.${devicesNote(material)}`;
 
 async function work(cardId: string, getStore: () => RunnerStore, save: () => void) {
   const find = () => (getStore().cards || []).find((c) => c.id === cardId);
@@ -111,18 +114,20 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
   const agent = getStore().agents.find((a) => a.id === card?.assigneeId);
   if (!card || !project || !agent) return;
 
-  let result: { text: string; provider: ProviderId } | null = null;
+  let result: { text: string; provider: ProviderId; usedWeb?: boolean } | null = null;
   let lastError = 'No AI is available right now.';
   const wantedProvider = providerFor(agent.model || defaultModel());
+  // Everything the teammate is given for this card. It also decides which links they may put on your tablet.
+  const prompt = buildPrompt(project, card, getStore().cards || []);
   // Heavy graphics work goes to Unreal through Aura first, when it's open (see graphics.ts).
   const viaUnreal = graphicsModelFor(card, getStore().agents, agent);
   for (const model of [...(viaUnreal ? [viaUnreal] : []), ...modelQueue(agent)]) {
     try {
-      const r = await generate({ model, system: systemFor(agent), prompt: buildPrompt(project, card, getStore().cards || []), role: agent.role, localModel: agent.localModel, hard: card.priority === 'high', maxTokens: 8000 });
+      const r = await generate({ model, system: systemFor(agent, prompt), prompt, role: agent.role, localModel: agent.localModel, hard: card.priority === 'high', web: canUseWeb(agent), maxTokens: 8000 });
       if (r.text.trim()) {
         agent.totalRuns += 1;
         agent.totalTokens += r.tokens || 0;
-        result = { text: r.text.trim(), provider: r.provider };
+        result = { text: r.text.trim(), provider: r.provider, usedWeb: r.usedWeb };
         break;
       }
       lastError = 'The AI returned an empty answer.';
@@ -143,6 +148,7 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
       at: now(),
       kind: 'result',
       via: result.provider !== wantedProvider ? providerLabel(result.provider) : undefined,
+      web: result.usedWeb || undefined,
     });
     if (stillOurs) {
       current.column = 'review';
@@ -152,7 +158,7 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
     current.runState = undefined;
     current.runMessage = undefined;
     logActivity('done', `${agent.name} finished "${current.title}" (${project.name}). It is waiting in Review.`);
-    const shown = showFromResult(result.text);
+    const shown = showFromResult(result.text, prompt);
     if (shown.length) logActivity('info', `${agent.name} put a link on ${shown.join(' and ')}.`);
   } else {
     current.notes.push({ id: noteId(), author: 'System', text: `${agent.name} couldn't finish this: ${lastError}`, at: now(), kind: 'error' });

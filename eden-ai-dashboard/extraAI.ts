@@ -15,6 +15,7 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { pcBusy } from './busy';
+import { fileProblem } from './activity';
 import { isOffline } from './offline';
 
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-ai.json');
@@ -50,11 +51,15 @@ export const PRESETS: { id: string; name: string; baseUrl: string; signup: strin
 let providers: ExtraProvider[] = [];
 try {
   providers = JSON.parse(fs.readFileSync(FILE, 'utf-8'));
-} catch {}
+} catch (err: any) {
+  fileProblem('load your free and extra AIs', err);
+}
 const save = () => {
   try {
     fs.writeFileSync(FILE, JSON.stringify(providers, null, 2), 'utf-8');
-  } catch {}
+  } catch (err: any) {
+    fileProblem('save your free and extra AIs', err);
+  }
 };
 
 const keyOf = (p: ExtraProvider) => p.apiKey || (p.keyFromEnv ? process.env[p.keyFromEnv] : '') || '';
