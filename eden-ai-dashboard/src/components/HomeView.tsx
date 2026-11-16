@@ -43,8 +43,8 @@ const STARTERS = [
   },
 ];
 
-type PanelId = 'projects' | 'team' | 'lyra' | 'ai' | 'workflows' | 'files';
-const DEFAULT_ORDER: PanelId[] = ['projects', 'team', 'lyra', 'ai', 'workflows', 'files'];
+type PanelId = 'roadmaps' | 'projects' | 'team' | 'lyra' | 'ai' | 'workflows' | 'files';
+const DEFAULT_ORDER: PanelId[] = ['roadmaps', 'projects', 'team', 'lyra', 'ai', 'workflows', 'files'];
 const ORDER_KEY = 'eden_dashboard_order';
 const COLLAPSED_KEY = 'eden_dashboard_collapsed';
 
@@ -152,7 +152,64 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     });
   };
 
+  // Every project's roadmap side by side, and how far along you are overall (building blocks, not AI tasks).
+  const withRoadmap = projects.filter((p) => roadmapProgress(p.roadmap));
+  const allBlocks = withRoadmap.flatMap((p) => (p.roadmap || []).flatMap((g) => g.blocks));
+  const overallPct = progressOf(allBlocks);
   const panels: Record<PanelId, { title: string; count?: number; action: string; onAction: () => void; body: React.ReactNode }> = {
+    roadmaps: {
+      title: '🏗️ Under construction',
+      count: withRoadmap.length,
+      action: 'Open boards',
+      onAction: () => onOpen('projects'),
+      body: (
+        <div className="space-y-3">
+          {withRoadmap.length > 0 && (
+            <div>
+              <div className="flex items-baseline gap-2 text-sm text-slate-600 dark:text-slate-300">
+                <span className="font-medium">All projects</span>
+                <b className="text-lg tabular-nums text-slate-900 dark:text-white">{overallPct}%</b>
+                <span className="text-xs tabular-nums text-slate-500">
+                  {allBlocks.filter((b) => b.state === 'done').length}/{allBlocks.length} blocks done · {allBlocks.filter((b) => b.state === 'building').length} building
+                </span>
+              </div>
+              <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-500" style={{ width: `${overallPct}%` }} />
+              </div>
+            </div>
+          )}
+          {projects.map((p) => {
+            const rm = roadmapProgress(p.roadmap);
+            return (
+              <button key={p.id} onClick={() => onOpenProject(p.id)} className="block w-full rounded-lg border border-slate-200 p-3 text-left hover:border-indigo-400 dark:border-slate-800 dark:hover:border-indigo-500">
+                <span className="flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: p.color }} />
+                  <span className="min-w-0 flex-1 truncate font-medium text-slate-900 dark:text-white">{p.name}</span>
+                  {rm ? <b className="tabular-nums text-slate-700 dark:text-slate-200">{rm.pct}%</b> : <span className="text-xs text-indigo-600 dark:text-indigo-400">Plan a roadmap →</span>}
+                </span>
+                {rm && (
+                  <span className="mt-2 grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min((p.roadmap || []).length, 5)}, minmax(0, 1fr))` }}>
+                    {(p.roadmap || []).map((g) => {
+                      const pct = progressOf(g.blocks);
+                      return (
+                        <span key={g.id} title={`${g.title}: ${pct}% (${g.blocks.filter((b) => b.state === 'done').length}/${g.blocks.length} done)`} className="min-w-0">
+                          <span className="flex items-center gap-1 truncate text-xs tabular-nums text-slate-500 dark:text-slate-400">
+                            <span aria-hidden>{g.icon}</span> {pct}%<span className="sr-only"> {g.title}</span>
+                          </span>
+                          <span className="mt-0.5 block h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                            <span className={`block h-full rounded-full ${pct >= 100 ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${pct}%` }} />
+                          </span>
+                        </span>
+                      );
+                    })}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      ),
+    },
     projects: {
       title: 'Projects',
       count: projects.length,

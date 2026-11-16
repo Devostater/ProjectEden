@@ -38,6 +38,22 @@ export function releaseTemplate(): RoadmapGoal[] {
   ];
 }
 
+// For a feature or tool inside a bigger product: from idea to shipped.
+export function featureTemplate(): RoadmapGoal[] {
+  const goal = (icon: string, title: string, blocks: string[]): RoadmapGoal => ({ id: newId('goal'), icon, title, blocks: blocks.map((t) => ({ id: newId('block'), title: t, state: 'planned' })) });
+  return [
+    goal('💡', 'Design', ['What it is for', 'How it looks and works', 'Edge cases']),
+    goal('🔧', 'Build', ['First working version', 'Polish']),
+    goal('🧪', 'Test', ['Tried for real', 'Fixes from testing']),
+    goal('📖', 'Docs', ['How-to written', 'Handoff notes']),
+    goal('🚀', 'Ship', ['Released', 'Feedback collected']),
+  ];
+}
+
+export function blankTemplate(): RoadmapGoal[] {
+  return [{ id: newId('goal'), icon: '🎯', title: 'First goal', blocks: [] }];
+}
+
 const Bar: React.FC<{ pct: number; className?: string }> = ({ pct, className = 'h-2' }) => (
   <div className={`${className} w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800`} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
     <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-500 transition-all" style={{ width: `${pct}%` }} />
@@ -71,9 +87,15 @@ export const Roadmap: React.FC<{ project: Project; onSave: (roadmap: RoadmapGoal
   if (!roadmap.length) {
     return (
       <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-        <Hammer className="h-4 w-4" /> No roadmap yet: plan the building blocks toward this project's long-term goals.
-        <button onClick={() => onSave(releaseTemplate())} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500">
-          Start from the release template
+        <Hammer className="h-4 w-4" /> No roadmap yet: plan the building blocks toward this project's long-term goals. Start from:
+        <button onClick={() => onSave(releaseTemplate())} title="Product, Store page, Devblog, Website, Support" className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500">
+          🚀 Release
+        </button>
+        <button onClick={() => onSave(featureTemplate())} title="Design, Build, Test, Docs, Ship" className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">
+          🔧 Feature
+        </button>
+        <button onClick={() => onSave(blankTemplate())} className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">
+          Blank
         </button>
       </div>
     );
