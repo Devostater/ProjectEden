@@ -1,3 +1,4 @@
+import { textScale } from './textSize.ts'; // first: sets the saved text size before anything paints
 import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar, type AppTab, type SidebarRequest } from './components/Sidebar.tsx';
 import { HomeView } from './components/HomeView.tsx';
@@ -27,6 +28,17 @@ import type { Agent, DAGPipeline, HostedFile } from './types/index.ts';
 import { useChatThreads } from './chatThreads.ts';
 import { useProjects } from './projectsStore.ts';
 import { ProjectsView } from './components/ProjectsView.tsx';
+
+// Once per device: open the bottom dock taller than the old 256px so it can be read (about 22rem at the chosen
+// text size, at most 45% of the window). A taller height you already saved is kept; you can still drag it.
+try {
+  if (!localStorage.getItem('eden_panel_height_seeded')) {
+    const want = Math.round(Math.min(22 * 16 * textScale(), window.innerHeight * 0.45));
+    const saved = Number(localStorage.getItem('eden_panel_height')) || 256;
+    localStorage.setItem('eden_panel_height', String(Math.max(saved, want)));
+    localStorage.setItem('eden_panel_height_seeded', '1');
+  }
+} catch {}
 
 export default function App() {
   const [darkMode, setDarkMode] = useState<boolean>(() => localStorage.getItem('nexus_theme') !== 'light');
@@ -347,6 +359,7 @@ export default function App() {
         <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} onMore={() => setDrawer(true)} reviewCount={reviewCount} />
         <MobilePanel review={review} />
 
+        <div className="eden-dock contents">
         <BottomPanel
           onOpenPreferences={() => openAccount('preferences')}
           onRetryCard={async (id) => {
@@ -377,6 +390,7 @@ export default function App() {
               : null
           }
         />
+        </div>
       </div>
     </div>
   );

@@ -21,6 +21,25 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- Text size (Aa in the top bar, see textSize.ts). The app is sized in rem, so this scales text, buttons,
+   icons and spacing together. Percentages keep the browser's own font setting in play. ---- */
+html[data-text-size='large'] { font-size: 112.5%; }
+html[data-text-size='larger'] { font-size: 125%; }
+html[data-text-size='largest'] { font-size: 150%; }
+@media (max-width: 767px) {
+  html[data-text-size='largest'] { font-size: 137.5%; }
+}
+/* Smallest text: 13px at Normal instead of 12px. */
+@theme {
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.5;
+}
+/* Fixed-pixel text scales with the text size too, and never below 12px at Normal. */
+.text-\[10px\],
+.text-\[11px\] { font-size: 0.75rem; }
+.text-\[8px\] { font-size: 0.625rem; }
+.text-\[15px\] { font-size: 0.9375rem; }
+
 @layer base {
   :root {
     --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -45,18 +64,18 @@
 
 /* Custom scrollbars for high-density command center viewports */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 12px;
+  height: 12px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.25);
-  border-radius: 3px;
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.45);
+  background: rgba(148, 163, 184, 0.7);
 }
 
 /* ---- App background: soft colour glows that drift slowly behind the pages ---- */
@@ -205,10 +224,10 @@
   align-items: center;
   justify-content: center;
   gap: 0.375rem;
-  height: 2.25rem;
+  height: 2.5rem;
   padding: 0 1rem;
-  font-size: 0.75rem;
-  line-height: 1rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
   white-space: nowrap;
   border-radius: 0.5rem;
   cursor: pointer;
@@ -218,7 +237,7 @@
 }
 /* Smaller version used inside tab-style switchers so they line up with the main buttons */
 .eden-btn-tab {
-  height: 1.75rem;
+  height: 2rem;
   padding: 0 0.75rem;
 }
 
@@ -235,7 +254,11 @@
   input:not([type='checkbox']):not([type='radio']):not([type='range']),
   select,
   textarea {
-    font-size: 16px;
+    font-size: max(16px, 1rem);
+  }
+  /* The More drawer must leave a strip of backdrop to tap, even at the largest text. */
+  aside.w-64 {
+    max-width: 86vw;
   }
   /* Leave room for the notch and the rounded screen corners when installed as an app. */
   #root {
@@ -261,10 +284,59 @@
   }
 }
 
-/* ---- Readability: lift the faintest grey text so labels stay legible on both themes. ---- */
-html:not(.dark) .text-slate-400 { color: #64748b; } /* slate-500: about 4.8:1 on white */
-.dark .text-slate-500 { color: #94a3b8; } /* slate-400: about 6.9:1 on the dark panels */
-.dark .text-slate-400 { color: #cbd5e1; } /* slate-300 */
+/* Touch screens (tablets too): no zooming into a box when you tap it. */
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: max(16px, 1rem);
+  }
+}
+
+/* ---- Readability: lift the faint grey text so labels stay legible on both themes. ---- */
+html:not(.dark) .text-slate-400,
+html:not(.dark) .text-slate-500 { color: #45556c; } /* about 7.6:1 on white */
+.dark .text-slate-500,
+.dark .dark\:text-slate-400,
+.dark .dark\:text-slate-500 { color: #aab7c9; } /* about 8.8:1 on slate-900 */
+.dark .text-slate-400 { color: #cbd5e1; } /* keep last */
+html:not(.dark) .text-emerald-600 { color: #007a55; } /* 5.4:1 (was 3.7:1) */
+/* Count badges: dark digits on amber/green instead of white (white was about 2.2-2.5:1). */
+.bg-amber-500.text-white,
+.bg-emerald-500.text-white { color: #020618; }
+/* A clear keyboard focus ring on everything you can press (not text boxes: they have their own). */
+:root { --eden-focus: #4f39f6; }
+.dark { --eden-focus: #a3b3ff; }
+:where(a, button, summary, [role='separator'], [tabindex]:not([tabindex='-1'])):focus-visible {
+  outline: 3px solid var(--eden-focus);
+  outline-offset: 2px;
+}
+
+/* ---- The bottom dock (and the phone's full-screen sheets): one text step larger than the pages. ---- */
+.eden-dock,
+.eden-read {
+  --text-xs: 0.875rem;
+  --text-xs--line-height: 1.5;
+  --text-sm: 1rem;
+  --text-sm--line-height: 1.5;
+}
+.eden-dock .text-\[10px\],
+.eden-dock .text-\[11px\],
+.eden-read .text-\[10px\],
+.eden-read .text-\[11px\] { font-size: 0.8125rem; }
+/* A bigger, visible grip to drag the dock taller or shorter. */
+.eden-dock [aria-label='Resize panel'] { height: 14px; top: -7px; }
+.eden-dock [aria-label='Resize panel']::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 5px;
+  width: 48px;
+  height: 4px;
+  margin-left: -24px;
+  border-radius: 2px;
+  background: #94a3b8;
+}
 
 /* Refresh buttons (any button with the circular-arrows icon): a quarter turn on hover, a full spin when
    clicked, and a steady spin while a refresh is running (the icon has animate-spin, or the button is busy). */
