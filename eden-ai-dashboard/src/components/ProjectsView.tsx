@@ -24,7 +24,7 @@ interface ProjectsViewProps {
 }
 
 const COLORS = ['#6366F1', '#06B6D4', '#10B981', '#F97316', '#EC4899', '#8B5CF6', '#EAB308', '#F43F5E'];
-const STATUS_LABEL: Record<Project['status'], string> = { active: 'Active', paused: 'Paused', done: 'Finished' };
+const STATUS_LABEL: Record<Project['status'], string> = { active: 'On', paused: 'Off', done: 'Finished' };
 
 const inputClass =
   'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white';
@@ -71,16 +71,23 @@ const Dialog: React.FC<{ title: string; wide?: boolean; onClose: () => void; onS
 const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClose: () => void }> = ({ project, api, onClose }) => {
   const [name, setName] = useState(project?.name || '');
   const [goal, setGoal] = useState(project?.goal || '');
-  const [repo, setRepo] = useState(project?.repo || '');
+  // The code this project's cards may change. Choices: the codebases Eden already knows, plus every project folder
+  // in C:\AZI (a folder not yet known is registered when you save). Value: a codebase id, or 'dir:<folder>'.
   const [codebaseId, setCodebaseId] = useState(project?.codebaseId || '');
-  const [codebases, setCodebases] = useState<{ id: string; name: string; dir: string }[]>([]);
+  const [choices, setChoices] = useState<{ value: string; name: string; dir: string }[]>([]);
+  const [saveError, setSaveError] = useState('');
   useEffect(() => {
-    fetch('/api/updates')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d && setCodebases(d.codebases.filter((c: any) => c.ok)))
-      .catch(() => {});
+    Promise.all([fetch('/api/updates').then((r) => (r.ok ? r.json() : null)).catch(() => null), fetch('/api/azi/repos').then((r) => (r.ok ? r.json() : null)).catch(() => null)]).then(([u, a]) => {
+      const known: { id: string; name: string; dir: string }[] = (u?.codebases || []).filter((c: any) => c.ok);
+      const norm = (d: string) => d.replace(/[\\/]+$/, '').toLowerCase();
+      // A known codebase covers its folder and anything inside it (Eden's code lives in ProjectEden\eden-ai-dashboard).
+      const covered = (dir: string) => known.some((k) => norm(k.dir) === norm(dir) || norm(k.dir).startsWith(norm(dir) + '\\'));
+      const folders = ((a?.repos || []) as { name: string; folder?: string }[]).filter((r) => r.folder && !/^notes/i.test(r.name) && !covered(r.folder!));
+      setChoices([...known.map((k) => ({ value: k.id, name: k.name, dir: k.dir })), ...folders.map((f) => ({ value: `dir:${f.folder}`, name: f.name, dir: f.folder! }))]);
+    });
   }, []);
-  const [status, setStatus] = useState<Project['status']>(project?.status || 'active');
+  // On / off: off pauses the project (its cards are not worked on automatically). A finished project shows as off.
+  const [on, setOn] = useState((project?.status || 'active') === 'active');
   const [color, setColor] = useState(project?.color || COLORS[api.projects.length % COLORS.length]);
   const [confirming, setConfirming] = useState(false);
   const cardCount = project ? api.cards.filter((c) => c.projectId === project.id).length : 0;
@@ -88,7 +95,19 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    await api.saveProject({ id: project?.id, name, goal, repo, status, color, codebaseId });
+    setSaveError('');
+    let code = codebaseId;
+    if (code.startsWith('dir:')) {
+      // First time this folder is used: register it so cards can change its code.
+      const dir = code.slice(4);
+      const r = await fetch('/api/codebases', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: dir.split(/[\\/]/).pop(), dir }) }).catch(() => null);
+      const d = r ? await r.json().catch(() => ({})) : {};
+      if (!r?.ok || !d.id) return setSaveError(d.error || 'Could not add that folder as code for this project.');
+      code = d.id;
+    }
+    // Keep a finished project finished unless it was switched on.
+    const status: Project['status'] = on ? 'active' : project?.status === 'done' ? 'done' : 'paused';
+    await api.saveProject({ id: project?.id, name, goal, status, color, codebaseId: code });
     onClose();
   };
 
@@ -139,32 +158,40 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
         <label htmlFor="pj-goal" className={labelClass}>What is it, and what's the goal?</label>
         <textarea id="pj-goal" rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="e.g. A cozy farming game for PC. Goal: playable demo on itch.io by March." className={inputClass} />
       </div>
-      {codebases.length > 0 && (
-        <div>
-          <label htmlFor="pj-code" className={labelClass}>Code this project works on (optional)</label>
-          <select id="pj-code" value={codebaseId} onChange={(e) => setCodebaseId(e.target.value)} className={inputClass}>
-            <option value="">None</option>
-            {codebases.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}: {c.dir}</option>
-            ))}
-          </select>
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Cards in this project get a "Change the code" button: the AI makes the change on a copy, and you review it in Code updates.</p>
+      <fieldset>
+        <legend className={labelClass}>Code it changes</legend>
+        <div role="radiogroup" className="grid gap-2">
+          {[{ value: '', name: 'None', dir: 'Cards only write text' }, ...choices].map((c) => {
+            const picked = codebaseId === c.value;
+            return (
+              <button
+                key={c.value || 'none'}
+                type="button"
+                role="radio"
+                aria-checked={picked}
+                onClick={() => setCodebaseId(c.value)}
+                className={`flex min-h-12 items-center gap-3 rounded-lg border-2 px-3 py-2 text-left ${picked ? 'border-indigo-600 bg-indigo-50 dark:border-indigo-400 dark:bg-indigo-950/40' : 'border-slate-200 hover:border-indigo-300 dark:border-slate-700'}`}
+              >
+                <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${picked ? 'border-indigo-600 bg-indigo-600 text-white dark:border-indigo-400 dark:bg-indigo-400' : 'border-slate-400'}`}>{picked && <Check className="h-3 w-3" />}</span>
+                <span className="min-w-0">
+                  <span className="block font-medium text-slate-900 dark:text-white">{c.name}</span>
+                  <span className="block truncate text-xs text-slate-500" title={c.dir}>{c.dir}</span>
+                </span>
+              </button>
+            );
+          })}
         </div>
-      )}
-      <div>
-        <label htmlFor="pj-repo" className={labelClass}>GitHub repository (optional)</label>
-        <input id="pj-repo" value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/name or a GitHub link" className={inputClass} />
-      </div>
-      <div className="flex flex-wrap items-end gap-6">
+        <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">With code picked, cards get “Change the code”: the AI changes a copy and you check it in Code updates.</p>
+      </fieldset>
+      {saveError && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{saveError}</p>}
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
         {project && (
-          <div>
-            <label htmlFor="pj-status" className={labelClass}>Status</label>
-            <select id="pj-status" value={status} onChange={(e) => setStatus(e.target.value as Project['status'])} className={inputClass}>
-              {Object.entries(STATUS_LABEL).map(([v, l]) => (
-                <option key={v} value={v}>{l}</option>
-              ))}
-            </select>
-          </div>
+          <button type="button" role="switch" aria-checked={on} onClick={() => setOn(!on)} className="flex min-h-11 items-center gap-3 text-sm font-medium text-slate-800 dark:text-slate-100">
+            <span className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${on ? 'bg-emerald-500' : 'bg-slate-400 dark:bg-slate-600'}`}>
+              <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${on ? 'left-6' : 'left-1'}`} />
+            </span>
+            {on ? 'Project is on' : 'Project is off'}
+          </button>
         )}
         <div>
           <span className={labelClass}>Colour</span>
