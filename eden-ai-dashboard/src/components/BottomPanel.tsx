@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox } from 'lucide-react';
-import type { Agent, Card, Project } from '../types/index.ts';
+import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink } from 'lucide-react';
+import type { Agent, Card, Project, RoadmapGoal } from '../types/index.ts';
 import { FlowTab, WorkloadTab, ProgressTab } from './ProjectVisuals.tsx';
+import { Roadmap, roadmapProgress } from './Roadmap.tsx';
+import { Toolbox } from './Toolbox.tsx';
 import { ReviewTab, type ReviewProps } from './ReviewTab.tsx';
 import { LyraPanel, LyraChibi } from './LyraPanel.tsx';
 import { OPEN_PANEL_EVENT } from '../panel.ts';
 
-type PanelTab = 'flow' | 'workload' | 'progress' | 'review' | 'lyra' | 'activity' | 'terminal';
-const PROJECT_TABS: PanelTab[] = ['flow', 'workload', 'progress'];
+type PanelTab = 'flow' | 'workload' | 'progress' | 'roadmap' | 'toolbox' | 'review' | 'lyra' | 'activity' | 'terminal';
+const PROJECT_TABS: PanelTab[] = ['flow', 'workload', 'progress', 'roadmap', 'toolbox'];
 const ALL_TABS: PanelTab[] = [...PROJECT_TABS, 'review', 'lyra', 'activity', 'terminal'];
 
 // The little LYRA face used as the tab's icon.
@@ -19,6 +21,7 @@ export interface PanelProject {
   cards: Card[];
   agents: Agent[];
   onOpenCard: (id: string) => void;
+  onSaveRoadmap: (roadmap: RoadmapGoal[]) => Promise<void>;
 }
 
 interface ActivityEntry {
@@ -80,6 +83,14 @@ export const BottomPanel: React.FC<{
   const tab: PanelTab = PROJECT_TABS.includes(savedTab) && !project ? 'activity' : savedTab;
 
   const [maximized, setMaximized] = useState(false);
+  // Large screen: the panel covers the whole window (for a roadmap, a graph, tool output, a preview). Esc leaves it.
+  const [fullScreen, setFullScreen] = useState(false);
+  useEffect(() => {
+    if (!fullScreen) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setFullScreen(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullScreen]);
   // Flow graph zoom: 'fit' scales the whole graph to the panel.
   const [zoom, setZoom] = useState<number | 'fit'>('fit');
   const zoomBy = (delta: number) => setZoom((z) => Math.max(0.4, Math.min(2, Math.round(((z === 'fit' ? 1 : z) + delta) * 10) / 10)));
@@ -237,14 +248,17 @@ export const BottomPanel: React.FC<{
     const show = (e: Event) => {
       const want = (e as CustomEvent).detail as PanelTab;
       if (want === 'review' || want === 'lyra' || want === 'activity' || want === 'terminal') pick(want);
+      if ((want === 'roadmap' || want === 'toolbox') && project) pick(want);
     };
     window.addEventListener(OPEN_PANEL_EVENT, show);
     return () => window.removeEventListener(OPEN_PANEL_EVENT, show);
-  }, [open]);
+  }, [open, project?.project.id]);
   const toggle = () => {
     write(OPEN_KEY, open ? '0' : '1');
     setOpen(!open);
+    if (open) setFullScreen(false);
   };
+  const roadmapPct = project ? roadmapProgress(project.project.roadmap)?.pct : undefined;
 
   const toolClass =
     'flex h-9 min-w-9 items-center justify-center rounded-lg px-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white';
@@ -266,8 +280,11 @@ export const BottomPanel: React.FC<{
   );
 
   return (
-    <div className="relative z-[5] hidden shrink-0 flex-col md:flex border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900" style={{ height: open ? (maximized ? '75dvh' : height) : '3.25rem' }}>
-      {open && (
+    <div
+      className={`hidden shrink-0 flex-col md:flex border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 ${open && fullScreen ? 'fixed inset-0 z-[70]' : 'relative z-[5]'}`}
+      style={open && fullScreen ? undefined : { height: open ? (maximized ? '75dvh' : height) : '3.25rem' }}
+    >
+      {open && !fullScreen && (
         <div
           role="separator"
           aria-orientation="horizontal"
@@ -287,6 +304,16 @@ export const BottomPanel: React.FC<{
         {project && tabButton('flow', 'Flow', Workflow)}
         {project && tabButton('workload', 'Workload', Users)}
         {project && tabButton('progress', 'Progress', TrendingUp)}
+        {project &&
+          tabButton(
+            'roadmap',
+            <>
+              Roadmap
+              {roadmapPct !== undefined && <span className={`rounded-full px-1.5 text-xs font-semibold tabular-nums ${open && tab === 'roadmap' ? 'bg-white/25 text-white' : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200'}`}>{roadmapPct}%</span>}
+            </>,
+            Hammer
+          )}
+        {project && tabButton('toolbox', 'Toolbox', Wrench)}
         {project && <span className="mx-1.5 h-6 w-px shrink-0 bg-slate-200 dark:bg-slate-700" />}
         {tabButton(
           'review',
@@ -328,9 +355,14 @@ export const BottomPanel: React.FC<{
               <Trash2 className="h-4 w-4" /> Clear
             </button>
           )}
-          {open && (
+          {open && !fullScreen && (
             <button onClick={() => setMaximized(!maximized)} aria-pressed={maximized} aria-label={maximized ? 'Restore panel size' : 'Make panel bigger'} title={maximized ? 'Restore size' : 'Make bigger'} className={toolClass}>
               {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </button>
+          )}
+          {open && (
+            <button onClick={() => setFullScreen(!fullScreen)} aria-pressed={fullScreen} aria-label={fullScreen ? 'Leave the large screen' : 'Open on the large screen'} title={fullScreen ? 'Back to the panel (Esc)' : 'Large screen: fill the window'} className={`${toolClass} gap-1.5 px-2.5 text-sm`}>
+              {fullScreen ? <Shrink className="h-4 w-4" /> : <Expand className="h-4 w-4" />} {fullScreen ? 'Close large screen' : 'Large screen'}
             </button>
           )}
           <button onClick={toggle} aria-expanded={open} aria-label={open ? 'Collapse panel' : 'Expand panel'} title={open ? 'Collapse' : 'Expand'} className={toolClass}>
@@ -350,6 +382,16 @@ export const BottomPanel: React.FC<{
           {tab === 'flow' && <FlowTab {...project} zoom={zoom} />}
           {tab === 'workload' && <WorkloadTab {...project} />}
           {tab === 'progress' && <ProgressTab {...project} />}
+          {tab === 'roadmap' && (
+            <div className="h-full overflow-y-auto">
+              <Roadmap key={project.project.id} project={project.project} onSave={project.onSaveRoadmap} embedded />
+            </div>
+          )}
+          {tab === 'toolbox' && (
+            <div className="h-full overflow-y-auto">
+              <Toolbox key={project.project.id} project={project.project} embedded />
+            </div>
+          )}
         </div>
       )}
 

@@ -6,7 +6,8 @@ import { SendBackBox } from './SendBackBox.tsx';
 import { WorkstreamTabs, WorkstreamDialog } from './Workstreams.tsx';
 import { RunPicker } from './RunPicker.tsx';
 import { WhyWaiting } from './WhyWaiting.tsx';
-import { Roadmap } from './Roadmap.tsx';
+import { Roadmap, roadmapProgress } from './Roadmap.tsx';
+import { openPanel } from '../panel.ts';
 import { Toolbox } from './Toolbox.tsx';
 import { runsOf } from '../runs.ts';
 import type { Agent, Branch, Card, CardColumn, CardSource, Project } from '../types/index.ts';
@@ -1207,21 +1208,53 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
             {aziDialog && <NewAziProjectDialog api={api} initialName={aziName} onClose={() => { setAziDialog(false); setAziName(''); }} />}
           </div>
 
-          <Roadmap
-            key={active.id}
-            project={active}
-            onSave={async (roadmap) => {
-              try {
-                const r = await fetch(`/api/projects/${active.id}/roadmap`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roadmap }) });
-                if (!r.ok) api.setError((await r.json().catch(() => ({}))).error || 'Could not save the roadmap.');
-              } catch {
-                api.setError('Could not save the roadmap: the hub did not answer.');
-              }
-              await api.refresh();
-            }}
-          />
-
-          <Toolbox key={`tb-${active.id}`} project={active} />
+          {/* Bigger screens: the roadmap and toolbox live in the bottom bar (next to Flow, Workload, Progress); here
+              there is one slim line that opens them. Phones have no bottom bar, so they stay on the page there. */}
+          {(() => {
+            const rm = roadmapProgress(active.roadmap);
+            const chip = 'flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:border-indigo-400 dark:border-slate-800 dark:text-slate-300 dark:hover:border-indigo-500';
+            return (
+              <div className="mt-3 hidden flex-wrap items-center gap-2 md:flex">
+                <button onClick={() => openPanel('roadmap')} title="Open the roadmap in the bottom bar" className={`${chip} min-w-0 flex-1 sm:flex-none`}>
+                  🏗️ <span className="font-medium text-slate-900 dark:text-white">Roadmap</span>
+                  {rm ? (
+                    <>
+                      <span className="hidden h-1.5 w-32 overflow-hidden rounded-full bg-slate-200 lg:block dark:bg-slate-800">
+                        <span className="block h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-500" style={{ width: `${rm.pct}%` }} />
+                      </span>
+                      <span className="tabular-nums">
+                        {rm.pct}% · {rm.done}/{rm.total} done{rm.building ? ` · ${rm.building} building` : ''}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-indigo-600 dark:text-indigo-400">Plan the building blocks →</span>
+                  )}
+                </button>
+                <button onClick={() => openPanel('toolbox')} title="Open this project's tools, keys and links in the bottom bar" className={chip}>
+                  🧰 <span className="font-medium text-slate-900 dark:text-white">Toolbox</span>
+                  <span>
+                    {active.toolbox?.tools.length || 0} tools · {active.toolbox?.links.length || 0} links{active.ai?.use ? ' · own AI' : ''}
+                  </span>
+                </button>
+              </div>
+            );
+          })()}
+          <div className="md:hidden">
+            <Roadmap
+              key={active.id}
+              project={active}
+              onSave={async (roadmap) => {
+                try {
+                  const r = await fetch(`/api/projects/${active.id}/roadmap`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roadmap }) });
+                  if (!r.ok) api.setError((await r.json().catch(() => ({}))).error || 'Could not save the roadmap.');
+                } catch {
+                  api.setError('Could not save the roadmap: the hub did not answer.');
+                }
+                await api.refresh();
+              }}
+            />
+            <Toolbox key={`tb-${active.id}`} project={active} />
+          </div>
 
           <WhyWaiting
             cards={cards}

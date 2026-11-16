@@ -29,14 +29,16 @@ const newId = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toS
 const input = 'w-full rounded-lg border border-slate-300 bg-transparent px-2 py-1.5 text-sm dark:border-slate-700';
 const small = 'rounded-lg border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900';
 
-export const Toolbox: React.FC<{ project: Project }> = ({ project }) => {
-  const [open, setOpen] = useState(() => {
+// embedded: shown inside the bottom panel (always open, no frame of its own).
+export const Toolbox: React.FC<{ project: Project; embedded?: boolean }> = ({ project, embedded = false }) => {
+  const [openState, setOpen] = useState(() => {
     try {
       return localStorage.getItem(`eden-toolbox-open-${project.id}`) === '1';
     } catch {
       return false;
     }
   });
+  const open = embedded || openState;
   const [data, setData] = useState<ToolboxData | null>(null);
   const [error, setError] = useState('');
   const [runs, setRuns] = useState<Record<string, ToolRun>>({});
@@ -130,12 +132,12 @@ export const Toolbox: React.FC<{ project: Project }> = ({ project }) => {
   const shown = showRun ? runs[showRun] : null;
 
   return (
-    <section className="mt-3 rounded-xl border border-slate-200 bg-white/60 dark:border-slate-800 dark:bg-slate-900/60">
-      <button onClick={toggle} aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left">
+    <section className={embedded ? "" : "mt-3 rounded-xl border border-slate-200 bg-white/60 dark:border-slate-800 dark:bg-slate-900/60"}>
+      <button onClick={embedded ? undefined : toggle} aria-expanded={open} disabled={embedded} className="flex w-full items-center gap-3 px-4 py-3 text-left disabled:cursor-default">
         <Wrench className="h-4 w-4 text-sky-500" />
         <span className="font-semibold text-slate-900 dark:text-white">Toolbox</span>
         <span className="text-sm text-slate-500 dark:text-slate-400">{open ? counts : 'Tools, keys and links for this project only'}</span>
-        <ChevronDown className={`ml-auto h-4 w-4 text-slate-400 transition-transform ${open ? '' : '-rotate-90'}`} />
+        {!embedded && <ChevronDown className={`ml-auto h-4 w-4 text-slate-400 transition-transform ${open ? '' : '-rotate-90'}`} />}
       </button>
       {open && (
         <div className="border-t border-slate-200 px-4 pb-4 pt-3 dark:border-slate-800">

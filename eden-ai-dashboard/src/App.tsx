@@ -363,6 +363,16 @@ export default function App() {
                   cards: projectsApi.cards.filter((c) => c.projectId === projectsApi.active!.id && projectsApi.visible(c)),
                   agents,
                   onOpenCard: projectsApi.setOpenCardId,
+                  onSaveRoadmap: async (roadmap) => {
+                    const id = projectsApi.active!.id;
+                    try {
+                      const r = await fetch(`/api/projects/${id}/roadmap`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roadmap }) });
+                      if (!r.ok) projectsApi.setError((await r.json().catch(() => ({}))).error || 'Could not save the roadmap.');
+                    } catch {
+                      projectsApi.setError('Could not save the roadmap: the hub did not answer.');
+                    }
+                    await projectsApi.refresh();
+                  },
                 }
               : null
           }

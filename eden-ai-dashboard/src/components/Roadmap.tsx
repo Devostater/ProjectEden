@@ -60,15 +60,17 @@ const Bar: React.FC<{ pct: number; className?: string }> = ({ pct, className = '
   </div>
 );
 
-export const Roadmap: React.FC<{ project: Project; onSave: (roadmap: RoadmapGoal[]) => Promise<void> }> = ({ project, onSave }) => {
+// embedded: shown inside the bottom panel (always open, no frame of its own).
+export const Roadmap: React.FC<{ project: Project; onSave: (roadmap: RoadmapGoal[]) => Promise<void>; embedded?: boolean }> = ({ project, onSave, embedded = false }) => {
   const roadmap = project.roadmap || [];
-  const [open, setOpen] = useState(() => {
+  const [openState, setOpen] = useState(() => {
     try {
       return localStorage.getItem(`eden-roadmap-open-${project.id}`) !== '0';
     } catch {
       return true;
     }
   });
+  const open = embedded || openState;
   const [adding, setAdding] = useState<string | null>(null); // goal id getting a new block
   const [blockTitle, setBlockTitle] = useState('');
   const [newGoal, setNewGoal] = useState('');
@@ -102,8 +104,8 @@ export const Roadmap: React.FC<{ project: Project; onSave: (roadmap: RoadmapGoal
   }
 
   return (
-    <section className="mt-3 rounded-xl border border-slate-200 bg-white/60 dark:border-slate-800 dark:bg-slate-900/60">
-      <button onClick={toggle} aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left">
+    <section className={embedded ? "" : "mt-3 rounded-xl border border-slate-200 bg-white/60 dark:border-slate-800 dark:bg-slate-900/60"}>
+      <button onClick={embedded ? undefined : toggle} aria-expanded={open} disabled={embedded} className="flex w-full items-center gap-3 px-4 py-3 text-left disabled:cursor-default">
         <Hammer className="h-4 w-4 text-amber-500" />
         <span className="font-semibold text-slate-900 dark:text-white">Under construction</span>
         {overall && (
@@ -116,7 +118,7 @@ export const Roadmap: React.FC<{ project: Project; onSave: (roadmap: RoadmapGoal
             </span>
           </>
         )}
-        <ChevronDown className={`ml-auto h-4 w-4 text-slate-400 transition-transform ${open ? '' : '-rotate-90'}`} />
+        {!embedded && <ChevronDown className={`ml-auto h-4 w-4 text-slate-400 transition-transform ${open ? '' : '-rotate-90'}`} />}
       </button>
       {open && (
         <div className="border-t border-slate-200 px-4 pb-4 pt-3 dark:border-slate-800">
