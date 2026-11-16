@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.ts';
+import { useFolded, FoldHeader } from './Foldable.tsx';
 import { Wand2, Loader2, ListPlus, Lightbulb, RefreshCw, X, Pencil, AlertTriangle } from 'lucide-react';
 
 // The "Update" card: everything for asking for the next change lives here, in small pieces.
@@ -270,9 +271,13 @@ export const NextUpdate: React.FC<{
 }> = (p) => {
   const current = p.codebases.find((c) => c.id === p.target);
   const name = current?.name || 'the hub';
+  const [folded, toggle] = useFolded('eden_update_panel_folded');
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-      <h2 className="mb-3 font-semibold text-slate-900 dark:text-white">Update</h2>
+      <h2 className={folded ? '' : 'mb-3'}>
+        <FoldHeader title="Update" folded={folded} onToggle={toggle} foldedHint={`Ask for a change to ${name}. Press to open.`} />
+      </h2>
+      {!folded && <>
       <CodebasePicker codebases={p.codebases} target={p.target} onPick={p.onPickTarget} canAdd={!p.remote} onAdded={p.onAdded} onError={p.onError} />
       <RequestBox codebaseName={name} value={p.request} onChange={p.onRequestChange} />
       <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -297,6 +302,7 @@ export const NextUpdate: React.FC<{
           onStarted={p.onIdeaStarted}
         />
       </div>
+      </>}
     </section>
   );
 };

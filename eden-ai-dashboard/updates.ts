@@ -929,14 +929,20 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
   // Allowed for failed and discarded updates, and for ones that no longer fit the code (Apply said the code
   // has changed). The fresh update works on a new copy of the code as it is now (see makeCopy), and the old
   // one is cleared away.
+  // The fix buttons in Code updates can also send:
+  //   useClaude: true  -> run it on your Claude plan instead of an AI on this PC (when the local model failed)
+  //   note: "..."     -> added under the request, e.g. the checks that failed last time, so the AI can fix them
   app.post('/api/updates/:id/retry', (req, res) => {
     const denied = guard(req);
     if (denied) return res.status(403).json({ error: denied });
     const job = jobs.find((j) => j.id === req.params.id);
     if (!job) return res.status(404).json({ error: 'Update not found.' });
     const noLongerFits = !!job.stale && (job.status === 'ready' || job.status === 'undone');
-    if (job.status !== 'failed' && job.status !== 'discarded' && !noLongerFits) {
-      return res.status(400).json({ error: 'Only a failed or discarded update, or one that no longer fits the code, can be tried again.' });
+    // A finished update whose checks failed can be redone in one step ("Ask the AI to fix it"): like every retry,
+    // the old one is only cleared once the new one has started, so a refused retry never loses the finished change.
+    const checksFailed = job.status === 'ready' && !!job.check && !job.check.ok;
+    if (job.status !== 'failed' && job.status !== 'discarded' && !noLongerFits && !checksFailed) {
+      return res.status(400).json({ error: 'Only a failed or discarded update, one whose checks failed, or one that no longer fits the code, can be tried again.' });
     }
     // A second press (or a second device) must not start the same update twice.
     const already = job.retriedAs && jobs.find((j) => j.id === job.retriedAs);
@@ -944,7 +950,13 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
       return res.status(409).json({ error: 'This update was already tried again. Look for the newer one in the list.' });
     }
     try {
-      const id = requestCodeUpdate(job.codebaseId, job.request, job.cardId, job.local === true);
+      const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 3000) : '';
+      // The note always fits: the request is shortened to make room for it, never the other way round.
+      const header = '\n\nLast time this failed:\n';
+      const base = job.request.split(header.trimEnd())[0].trimEnd();
+      const request = note ? `${base.slice(0, Math.max(500, 4000 - header.length - note.length))}${header}${note}`.slice(0, 4000 + 3000) : job.request;
+      const local = req.body?.useClaude === true ? false : job.local === true;
+      const id = requestCodeUpdate(job.codebaseId, request, job.cardId, local);
       const fresh = jobs.find((j) => j.id === id);
       if (fresh) fresh.retryOf = job.id;
       job.retriedAs = id;
@@ -955,6 +967,30 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
+  });
+
+  // Change the queue order. Waiting updates run in the order they sit in `jobs` (oldest first), so moving one
+  // swaps its place with the waiting update next to it. `to`: 'up' (runs sooner), 'down', 'first' or 'last'.
+  // Only waiting updates move; the one running now and finished ones keep their place.
+  app.post('/api/updates/:id/move', (req, res) => {
+    const denied = guard(req);
+    if (denied) return res.status(403).json({ error: denied });
+    const job = jobs.find((j) => j.id === req.params.id);
+    if (!job) return res.status(404).json({ error: 'Update not found.' });
+    if (job.status !== 'queued') return res.status(400).json({ error: 'Only updates waiting in the queue can be moved.' });
+    const to = String(req.body?.to || '');
+    if (!['up', 'down', 'first', 'last'].includes(to)) return res.status(400).json({ error: 'Say where to move it: up, down, first or last.' });
+    const slots = jobs.map((j, i) => (j.status === 'queued' ? i : -1)).filter((i) => i >= 0); // queue places, in run order
+    const order = slots.map((i) => jobs[i]);
+    const from = order.indexOf(job);
+    const target = to === 'first' ? 0 : to === 'last' ? order.length - 1 : to === 'up' ? Math.max(0, from - 1) : Math.min(order.length - 1, from + 1);
+    if (target !== from) {
+      order.splice(from, 1);
+      order.splice(target, 0, job);
+      slots.forEach((slot, k) => (jobs[slot] = order[k]));
+      save();
+    }
+    res.json({ ok: true, queue: order.map((j) => j.id) });
   });
 
   app.post('/api/updates/:id/discard', (req, res) => {

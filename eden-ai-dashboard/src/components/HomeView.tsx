@@ -5,6 +5,16 @@ import { newlineOnCtrlEnter } from '../textbox.ts';
 import { UsageBar, useProviderUsage, RefreshUsageButton } from './UsageBars.tsx';
 import { openPanel } from '../panel.ts';
 import { roadmapProgress, progressOf } from './Roadmap.tsx';
+import { diagnose, applyFix, canFix, limitStillOn, type FixableJob } from '../updateFixes.ts';
+import { useFolded, FoldHeader } from './Foldable.tsx';
+
+// A JSON POST to the hub that throws with the hub's own message when it says no.
+const postJson = async (url: string, body?: unknown) => {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || `The hub said no (${r.status}).`);
+  return d;
+};
 
 // An [error] line from the activity log (see activity.ts).
 interface HomeError {
@@ -121,19 +131,24 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
   const [fixing, setFixing] = useState(false);
   const [fixNote, setFixNote] = useState('');
   const [fixedIds, setFixedIds] = useState<number[]>([]);
+  const [needsFolded, toggleNeeds] = useFolded('eden_needs_you_folded');
   const toFix = recentErrors.filter((e) => !fixedIds.includes(e.id));
   const fixAll = async () => {
     if (fixing || toFix.length === 0) return;
     setFixing(true);
     setFixNote('');
-    let cards = 0, updates = 0, skipped = 0;
+    let cards = 0, updates = 0, skipped = 0, cleared = 0;
     const seen = new Set<string>();
     const rest: string[] = [];
     let limited = 0;
+    const keep = new Set<number>(); // errors not fixed this time: they stay listed so the button can try again
+    const refusals: string[] = []; // what the hub said when it refused, shown so you know what to do
+    let updates_: { jobs: FixableJob[]; claudeReady: boolean } | null = null; // read once, only if a code update needs fixing
     for (const e of toFix) {
       // Out of AI usage: trying again now only fails again, so these wait for the limit to reset.
-      if (/hit your .*limit|usage limit|rate.?limit/i.test(e.text)) {
+      if (limitStillOn(e.text, e.at)) {
         limited++;
+        keep.add(e.id);
         continue;
       }
       if (e.retry) {
@@ -144,10 +159,31 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
           if (e.retry.kind === 'card') {
             if (await onRetryCard(e.retry.id)) cards++; else skipped++;
           } else {
-            const r = await fetch(`/api/updates/${e.retry.id}/retry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-            if (r.ok) updates++; else skipped++;
+            // Code updates get the same easy fix as in Code updates: run again, with Claude, with what failed, or clear a twin.
+            if (!updates_) {
+              updates_ = await fetch('/api/updates')
+                .then((r) => r.json())
+                .then((d) => ({ jobs: Array.isArray(d.jobs) ? d.jobs : [], claudeReady: d.claudeReady !== false }))
+                .catch(() => ({ jobs: [], claudeReady: false }));
+            }
+            const { jobs, claudeReady } = updates_!;
+            const job = jobs.find((j) => j.id === e.retry!.id);
+            const fix = job ? diagnose(job, jobs) : null;
+            if (!job || !fix) skipped++; // already tried again or cleared
+            else if (fix.action === 'wait') {
+              limited++;
+              keep.add(e.id);
+            } else if (!canFix(job, fix, claudeReady)) {
+              keep.add(e.id);
+              if (!refusals.includes('Sign in to Claude in Account → Connections first.')) refusals.push('Sign in to Claude in Account → Connections first.');
+            } else if (await applyFix(job, fix, postJson)) updates++;
+            else cleared++;
           }
-        } catch { skipped++; }
+        } catch (err: any) {
+          keep.add(e.id);
+          const msg = String(err?.message || "The hub didn't answer.");
+          if (!refusals.includes(msg)) refusals.push(msg);
+        }
       } else if (!rest.includes(e.text)) {
         rest.push(e.text);
       }
@@ -165,11 +201,13 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     if (cards) parts.push(`sent ${cards} ${cards === 1 ? 'task' : 'tasks'} back to the team`);
     if (updates) parts.push(`started ${updates} code ${updates === 1 ? 'update' : 'updates'} again`);
     if (asked) parts.push(`asked Claude to fix ${asked} ${asked === 1 ? 'problem' : 'problems'} (see Code updates)`);
+    if (cleared) parts.push(`cleared ${cleared} ${cleared === 1 ? 'update' : 'updates'} that ${cleared === 1 ? "wasn't" : "weren't"} needed`);
     if (skipped) parts.push(`${skipped} already handled`);
     if (limited) parts.push(`${limited} hit the AI usage limit, so press again after it resets`);
-    if (parts.length) setFixNote(parts.join(', ').replace(/^./, (c) => c.toUpperCase()) + '.');
-    // Usage-limit errors stay listed so the button can try them again once the limit resets.
-    setFixedIds((ids) => [...ids, ...toFix.filter((e) => !/hit your .*limit|usage limit|rate.?limit/i.test(e.text)).map((e) => e.id)]);
+    if (refusals.length) parts.push(`${keep.size - limited} not fixed: ${refusals.join(' ')}`);
+    if (parts.length) setFixNote(parts.join(', ').replace(/^./, (c) => c.toUpperCase()).replace(/([^.])$/, '$1.'));
+    // Errors that weren't fixed (usage limit, refused) stay listed so the button can try them again.
+    setFixedIds((ids) => [...ids, ...toFix.filter((e) => !keep.has(e.id)).map((e) => e.id)]);
     setFixing(false);
   };
   const recentFiles = [...files].sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).slice(0, 4);
@@ -453,7 +491,15 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
           </p>
         ) : (
           <div className="space-y-3">
-            <h2 className="font-semibold text-slate-900 dark:text-white">Needs you</h2>
+            <h2>
+              <FoldHeader
+                title="Needs you"
+                folded={needsFolded}
+                onToggle={toggleNeeds}
+                foldedHint={[reviewCount && `${reviewCount} to review`, readyUpdates && `${readyUpdates} ${readyUpdates === 1 ? 'update' : 'updates'} ready`, recentErrors.length && `${recentErrors.length} ${recentErrors.length === 1 ? 'problem' : 'problems'}`, lyraEdits && `${lyraEdits} LYRA ${lyraEdits === 1 ? 'edit' : 'edits'}`].filter(Boolean).join(' · ')}
+              />
+            </h2>
+            {!needsFolded && <>
             {reviewCount > 0 && (
               <div className="flex flex-wrap items-center gap-2 text-sm text-slate-800 dark:text-slate-200">
                 <span className="min-w-0 flex-1">
@@ -518,6 +564,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                 )}
               </div>
             )}
+            </>}
           </div>
         )}
       </section>}

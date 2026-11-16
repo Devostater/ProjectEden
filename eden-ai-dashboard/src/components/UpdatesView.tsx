@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
-import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, RefreshCw, Lock } from 'lucide-react';
+import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, RefreshCw, Lock, Wrench, ArrowUp, ArrowDown, ChevronsUp } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
 import { NextUpdate, type CodebaseInfo } from './NextUpdate.tsx';
+import { diagnose, applyFix, canFix, planFixAll, type Fix } from '../updateFixes.ts';
 
 interface Job {
   id: string;
@@ -26,6 +27,7 @@ interface Job {
   stale?: boolean; // the code changed since this update was made, so it no longer fits
   retryOf?: string; // started by "Try again" from this earlier update
   retriedAs?: string; // "Try again" was pressed: the newer update that took its place
+  local?: boolean; // ran on an AI on this PC instead of your Claude plan
 }
 
 const unsavedNote = (n: number) => `Based on your current files, including ${n} not yet saved to GitHub`;
@@ -128,6 +130,9 @@ export const UpdatesView: React.FC = () => {
   const [restartPending, setRestartPending] = useState(false); // an applied update needs the hub restarted
   const [restarting, setRestarting] = useState(false);
   const [tab, setTab] = useState<UpdatesTab>('active');
+  const [confirmFixAll, setConfirmFixAll] = useState(false); // "Fix all": waiting for "Yes, fix them"
+  const [fixingAll, setFixingAll] = useState(false);
+  const [closedIds, setClosedIds] = useState<string[]>([]); // active cards you folded (they start open)
   const live = useRef(false);
 
   const load = async () => {
@@ -261,6 +266,20 @@ export const UpdatesView: React.FC = () => {
   // Waiting updates in the order they will run (oldest first; the list above is newest first).
   const queue =jobs.filter((j) => j.status === 'queued').map((j) => j.id).reverse();
 
+  // Change a waiting update's place in the queue.
+  const move = async (job: Job, to: 'up' | 'down' | 'first') => {
+    setError('');
+    setActing(job.id);
+    try {
+      await post(`/api/updates/${job.id}/move`, { to });
+      await load();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setActing(null);
+    }
+  };
+
   const retry = async (job: Job) => {
     setError('');
     setNote('');
@@ -276,6 +295,70 @@ export const UpdatesView: React.FC = () => {
     } finally {
       setActing(null);
     }
+  };
+
+  // One easy fix (see updateFixes.ts). Throws on failure so "Fix all" can count it; returns the new update's id, if any.
+  const doFix = (job: Job, fix: Fix) => applyFix(job, fix, post);
+
+  const fixOne = async (job: Job, fix: Fix) => {
+    setError('');
+    setNote('');
+    setActing(job.id);
+    try {
+      const id = await doFix(job, fix);
+      if (id) {
+        setOpenId(id);
+        setTab('active');
+        live.current = true;
+        setNote(busy ? 'Started again. It waits in the queue and runs by itself.' : 'Started again.');
+      } else {
+        setNote('Cleared.');
+      }
+      await load();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const fixPlan = planFixAll(jobs, Date.now(), claudeReady);
+  const fixAll = async () => {
+    setConfirmFixAll(false);
+    setError('');
+    setNote('');
+    setFixingAll(true);
+    let started = 0;
+    let cleared = 0;
+    const problems: string[] = [];
+    // Clear the extra copies first, so the run-again step never trips over a twin still in the list.
+    const ordered = [
+      ...fixPlan.plan.filter((p) => p.fix.action === 'discard'),
+      ...fixPlan.plan.filter((p) => p.fix.action !== 'discard' && p.fix.action !== 'wait' && !p.blocked).reverse(),
+    ];
+    for (const { job, fix } of ordered) {
+      setActing(job.id);
+      try {
+        if (await doFix(job as Job, fix)) started++;
+        else cleared++;
+      } catch (err: any) {
+        problems.push(`"${job.request.length > 50 ? `${job.request.slice(0, 50)}…` : job.request}": ${err.message}`);
+      }
+    }
+    setActing(null);
+    setFixingAll(false);
+    const parts: string[] = [];
+    if (started) parts.push(`started ${started} again (they run one at a time)`);
+    if (cleared) parts.push(`cleared ${cleared} that ${cleared === 1 ? "wasn't" : "weren't"} needed`);
+    if (fixPlan.waiting) parts.push(`left ${fixPlan.waiting} that hit the Claude usage limit, so press Fix all again after it resets`);
+    if (fixPlan.blocked) parts.push(`left ${fixPlan.blocked} that need Claude: sign in to Claude in Account → Connections, then press Fix all again`);
+    if (parts.length) setNote(parts.join(', ').replace(/^./, (c) => c.toUpperCase()) + '.');
+    if (problems.length) setError(`${problems.length} couldn't be fixed: ${problems.join(' ')}`);
+    if (started) {
+      setTab('active');
+      live.current = true;
+    }
+    await load();
   };
 
   if (locked) {
@@ -384,13 +467,46 @@ export const UpdatesView: React.FC = () => {
             </button>
           </div>
         )}
+        {(tab === 'error' || (tab === 'active' && fixPlan.plan.some((p) => p.job.status === 'ready'))) && fixPlan.plan.length > 0 && (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-100">
+            <Wrench className="h-5 w-5 shrink-0 text-indigo-500" />
+            <span className="min-w-0 flex-1">
+              {fixPlan.run > 0 && <>{fixPlan.run} can run again{fixPlan.fixChecks > 0 && ` (${fixPlan.fixChecks} with what went wrong)`}. </>}
+              {fixPlan.clear > 0 && <>{fixPlan.clear} {fixPlan.clear === 1 ? "isn't" : "aren't"} needed and can be cleared. </>}
+              {fixPlan.waiting > 0 && <>{fixPlan.waiting} must wait for Claude usage to reset. </>}
+              {fixPlan.blocked > 0 && <>{fixPlan.blocked} need you to sign in to Claude first.</>}
+            </span>
+            <button
+              onClick={() => setConfirmFixAll(true)}
+              disabled={fixingAll || !!acting || fixPlan.run + fixPlan.clear === 0}
+              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            >
+              {fixingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />} {fixingAll ? 'Fixing…' : 'Fix all'}
+            </button>
+          </div>
+        )}
         {!jobs.some((j) => TAB_OF[j.status] === tab) && <p className="text-sm text-slate-500 dark:text-slate-400">{TABS.find((t) => t.id === tab)?.empty}</p>}
         {jobs.filter((j) => TAB_OF[j.status] === tab).map((job) => {
-          const open = openId === job.id || job.status === 'queued' || job.status === 'working' || job.status === 'checking' || job.status === 'ready' || (job.status === 'failed' && !!job.interrupted);
+          // Active ones start open, but every card folds: pressing its title closes it until you open it again.
+          const startsOpen = job.status === 'queued' || job.status === 'working' || job.status === 'checking' || job.status === 'ready' || (job.status === 'failed' && !!job.interrupted);
+          const open = openId === job.id || (startsOpen && !closedIds.includes(job.id));
           const st = STATUS[job.status];
+          const fix = diagnose(job, jobs);
           return (
             <article key={job.id} className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-              <button onClick={() => setOpenId(openId === job.id ? null : job.id)} aria-expanded={open} className="flex w-full items-start gap-3 p-4 text-left">
+              <button
+                onClick={() => {
+                  if (open) {
+                    if (openId === job.id) setOpenId(null);
+                    if (startsOpen) setClosedIds((ids) => [...ids, job.id]);
+                  } else {
+                    setClosedIds((ids) => ids.filter((x) => x !== job.id));
+                    if (!startsOpen) setOpenId(job.id);
+                  }
+                }}
+                aria-expanded={open}
+                className="flex w-full items-start gap-3 p-4 text-left"
+              >
                 <ChevronDown className={`mt-0.5 h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? '' : '-rotate-90'}`} />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium text-slate-900 dark:text-white">
@@ -411,9 +527,30 @@ export const UpdatesView: React.FC = () => {
                   {typeof job.uncommitted === 'number' && job.uncommitted > 0 && <p className="text-xs text-slate-500 dark:text-slate-400">{unsavedNote(job.uncommitted)}.</p>}
 
                   {job.status === 'queued' && (
-                    <p className="text-sm text-slate-600 dark:text-slate-300">
-                      Number {queue.indexOf(job.id) + 1} in the queue. It starts by itself when the one before it finishes.
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="min-w-0 flex-1 text-sm text-slate-600 dark:text-slate-300">
+                        Number {queue.indexOf(job.id) + 1} of {queue.length} in the queue. It starts by itself when the one before it finishes.
+                      </p>
+                      {queue.length > 1 && (
+                        <div role="group" aria-label="Change its place in the queue" className="flex gap-1">
+                          {queue.indexOf(job.id) > 1 && (
+                            <button onClick={() => move(job, 'first')} disabled={!!acting} className="flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+                              <ChevronsUp className="h-4 w-4" /> Run next
+                            </button>
+                          )}
+                          {queue.indexOf(job.id) > 0 && (
+                            <button onClick={() => move(job, 'up')} disabled={!!acting} aria-label="Run sooner" title="Run sooner" className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+                              <ArrowUp className="h-4 w-4" />
+                            </button>
+                          )}
+                          {queue.indexOf(job.id) < queue.length - 1 && (
+                            <button onClick={() => move(job, 'down')} disabled={!!acting} aria-label="Run later" title="Run later" className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+                              <ArrowDown className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   )}
 
                   {(job.status === 'working' || job.status === 'checking' || (job.status === 'failed' && job.interrupted)) && (
@@ -425,6 +562,21 @@ export const UpdatesView: React.FC = () => {
                   )}
 
                   {job.error && <p className="text-sm text-red-600 dark:text-red-400">{job.error}</p>}
+
+                  {fix && (
+                    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2.5 text-sm dark:border-indigo-800 dark:bg-indigo-950/40">
+                      <Wrench className="h-4 w-4 shrink-0 text-indigo-500" />
+                      <span className="min-w-0 flex-1 text-indigo-950 dark:text-indigo-100">{fix.reason}</span>
+                      <button
+                        onClick={() => fixOne(job, fix)}
+                        disabled={acting === job.id || fixingAll || !canFix(job, fix, claudeReady)}
+                        title={canFix(job, fix, claudeReady) ? undefined : 'Sign in to Claude in Account → Connections first'}
+                        className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium disabled:opacity-50 ${fix.action === 'wait' ? 'border border-indigo-300 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700 dark:text-indigo-200 dark:hover:bg-indigo-900/50' : 'bg-indigo-600 text-white hover:bg-indigo-500'}`}
+                      >
+                        {acting === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : fix.action === 'discard' ? <Trash2 className="h-4 w-4" /> : <Wrench className="h-4 w-4" />} {fix.label}
+                      </button>
+                    </div>
+                  )}
 
                   {job.stale && (job.status === 'ready' || job.status === 'undone') && (
                     <p className="text-sm text-amber-700 dark:text-amber-300">The code has changed since this update was made, so it no longer fits. "Try again" redoes it on the current code.</p>
@@ -500,7 +652,8 @@ export const UpdatesView: React.FC = () => {
                         <RotateCcw className="h-4 w-4" /> Undo
                       </button>
                     )}
-                    {(job.status === 'failed' || job.status === 'discarded' || (job.stale && (job.status === 'ready' || job.status === 'undone'))) && (
+                    {/* The fix box above already offers running it again, so "Try again" only shows when it doesn't. */}
+                    {(job.status === 'failed' || job.status === 'discarded' || (job.stale && (job.status === 'ready' || job.status === 'undone'))) && !(fix && fix.action !== 'discard') && (
                       <button
                         onClick={() => retry(job)}
                         disabled={acting === job.id || !claudeReady}
@@ -554,6 +707,44 @@ export const UpdatesView: React.FC = () => {
                 className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500"
               >
                 <Check className="h-4 w-4" /> Yes, apply it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmFixAll && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setConfirmFixAll(false)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="fix-all-title"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.key === 'Escape' && setConfirmFixAll(false)}
+            className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl dark:bg-slate-900"
+          >
+            <h2 id="fix-all-title" className="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-white">
+              <Wrench className="h-5 w-5 text-indigo-500" /> Fix all {fixPlan.plan.length} problem{fixPlan.plan.length === 1 ? '' : 's'}?
+            </h2>
+            <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto text-sm">
+              {fixPlan.plan.map(({ job, fix, blocked }) => (
+                <li key={job.id} className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/60">
+                  <span className="block text-slate-800 dark:text-slate-100">{job.request.length > 90 ? `${job.request.slice(0, 90)}…` : job.request}</span>
+                  <span className={`block text-xs ${fix.action === 'wait' || blocked ? 'text-amber-700 dark:text-amber-300' : 'text-slate-600 dark:text-slate-400'}`}>
+                    {fix.action === 'wait' ? 'Left for now: out of Claude usage.' : blocked ? 'Left for now: sign in to Claude first.' : fix.action === 'discard' ? `Cleared: ${fix.reason}` : `${fix.label}.`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
+              Updates that run again wait in the queue and go one at a time. Nothing is applied to your code until you press Apply.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button autoFocus onClick={() => setConfirmFixAll(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+                Not yet
+              </button>
+              <button onClick={fixAll} disabled={fixPlan.run + fixPlan.clear === 0} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50">
+                <Wrench className="h-4 w-4" /> Yes, fix them
               </button>
             </div>
           </div>
