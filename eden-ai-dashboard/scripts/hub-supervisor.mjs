@@ -51,13 +51,13 @@ function alive(pid) {
 }
 
 function openApp() {
-  // The installed Chrome app if there is one, otherwise a Chrome app window, otherwise the default browser.
-  const chrome = ['C:\\Program Files\\Google\\Chrome\\Application\\chrome_proxy.exe', 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'];
-  const appId = 'hbblfifohofgngfbjbiimbbcimepbdcb';
+  // Always opens Eden's own address, so it can't open a different installed app (LYRA has one too).
+  // A Chrome app window if Chrome is installed, otherwise the default browser.
+  const url = `http://localhost:${PORT}`;
+  const chrome = ['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'].find((p) => fs.existsSync(p));
   let child;
-  if (process.platform === 'win32' && fs.existsSync(chrome[0])) child = spawn(chrome[0], ['--profile-directory=Default', `--app-id=${appId}`], { detached: true, stdio: 'ignore' });
-  else if (process.platform === 'win32' && fs.existsSync(chrome[1])) child = spawn(chrome[1], [`--app=http://localhost:${PORT}`], { detached: true, stdio: 'ignore' });
-  else child = spawn(process.platform === 'win32' ? 'cmd' : 'xdg-open', process.platform === 'win32' ? ['/c', 'start', '', `http://localhost:${PORT}`] : [`http://localhost:${PORT}`], { detached: true, stdio: 'ignore' });
+  if (process.platform === 'win32' && chrome) child = spawn(chrome, [`--app=${url}`], { detached: true, stdio: 'ignore' });
+  else child = spawn(process.platform === 'win32' ? 'cmd' : 'xdg-open', process.platform === 'win32' ? ['/c', 'start', '', url] : [url], { detached: true, stdio: 'ignore' });
   child.unref();
 }
 
