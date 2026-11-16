@@ -286,13 +286,11 @@ export async function generate(req: GenerateRequest): Promise<GenerateResult> {
   if (req.web && !req.system?.includes(WEB_NOTE)) req = { ...req, system: `${req.system ? `${req.system}\n\n` : ''}${WEB_NOTE}` };
   let model = req.model || defaultModel();
   // Offline mode: anything bound for a cloud AI goes to a model on this PC that suits the job instead.
-  if (isOffline() && !(model.startsWith('x:') && localModelFor('general') && isLocalModel(model))) {
+  if (isOffline() && !(model.startsWith('x:') && isLocalModel(model))) {
     if (isAuraModel(model)) throw new Error('Aura needs the internet (it runs through Claude). This waits until you are back online.');
-    if (!model.startsWith('lyra')) {
-      const local = (req.localModel && localUsable(req.localModel)) || localModelFor(kindFor(model, req.role));
-      if (!local) throw new Error('Offline, and no AI on this PC is running. Start Ollama (it runs local models), then try again.');
-      model = local;
-    }
+    const local = (req.localModel && localUsable(req.localModel)) || localModelFor(kindFor(model, req.role));
+    if (!local) throw new Error('Offline, and no AI on this PC is running. Start Ollama (it runs local models), then try again.');
+    model = local;
   }
   // Local first: everyday work tries the AI on this PC; hard work (Opus, Aura, High priority cards), a busy PC
   // or an answer that doesn't look right goes to the cloud as before.
@@ -342,7 +340,7 @@ export async function generate(req: GenerateRequest): Promise<GenerateResult> {
   }
 }
 
-const isLocalModel = (id: string) => /^x:(ollama|lmstudio):/.test(id);
+const isLocalModel = (id: string) => /^x:(ollama|lmstudio|tablet.*):/.test(id);
 // A local answer is used only if it looks like a real answer; otherwise the cloud answers instead.
 const goodAnswer = (text: string) => {
   const t = text.trim();
@@ -456,6 +454,7 @@ const limited = (p: ProviderId) => {
 };
 
 export function providerUnavailable(p: ProviderId): boolean {
+  if (isOffline() && (p === 'anthropic' || p === 'google' || p === 'openai' || p === 'lyra')) return true;
   // While the PC is busy, LYRA (which runs models on this PC) is skipped and cloud AIs answer instead.
   return providerMode(p) === 'off' || limited(p) || (downUntil[p] || 0) > Date.now() || (p === 'lyra' && pcBusy());
 }

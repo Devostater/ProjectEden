@@ -19,7 +19,7 @@ import { registerUsageGuard } from './usageGuard';
 import { registerUpdateRoutes } from './updates';
 import { registerRestartRoutes } from './restart';
 import { registerBusyRoutes } from './busy';
-import { registerOfflineRoutes } from './offline';
+import { registerOfflineRoutes, isOffline, localModelFor, localModels, kindFor, fitsNow } from './offline';
 import { registerKnowledgeRoutes, knowledgeFor } from './knowledge';
 import { registerGraphicsRoutes } from './graphics';
 import { registerBackupRoutes } from './backup';
@@ -450,11 +450,16 @@ async function startServer() {
       const wanted = agent?.model || model || defaultModel();
       const wantedProvider = providerFor(wanted);
       // Skip an AI we already know can't answer right now, then try the others in turn.
-      const queue = [...(providerUnavailable(wantedProvider) ? [] : [wanted]), ...fallbackModels(wantedProvider)];
-      let lastError = `${providerLabel(wantedProvider)} isn't available right now, and no other AI is connected. Set one up in Account → Connections.`;
+      const offlineFirst = (agent?.localModel && localModels().includes(agent.localModel) && fitsNow(agent.localModel) ? agent.localModel : null) || localModelFor(kindFor(wanted, agent?.role));
+      const queue = isOffline()
+        ? [...new Set([offlineFirst, ...localModels()].filter(Boolean) as string[])]
+        : [...(providerUnavailable(wantedProvider) ? [] : [wanted]), ...fallbackModels(wantedProvider)];
+      let lastError = isOffline()
+        ? "Offline, and no AI on this PC is running. Start Ollama, then try again."
+        : `${providerLabel(wantedProvider)} isn't available right now, and no other AI is connected. Set one up in Account → Connections.`;
       for (const m of queue) {
         try {
-          const r = await generate({ model: m, system: systemFor(agent) + knowledgeFor(history[history.length - 1]?.content || ''), messages: history, web: canUseWeb(agent) });
+          const r = await generate({ model: m, system: systemFor(agent) + knowledgeFor(history[history.length - 1]?.content || ''), messages: history, web: canUseWeb(agent), role: agent?.role, localModel: agent?.localModel });
           if (agent) {
             agent.totalRuns += 1;
             agent.totalTokens += r.tokens || 0;

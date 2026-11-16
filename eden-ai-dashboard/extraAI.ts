@@ -242,7 +242,7 @@ export const extraConnected = () => providers.some((p) => p.enabled && !p.lastEr
 // (always available). Models that just hit a limit are skipped while they rest.
 export function freeFallbacks(max = 6): string[] {
   const now = Date.now();
-  const cloud = extraModels().filter((m) => m.free && !m.local && !m.device);
+  const cloud = isOffline() ? [] : extraModels().filter((m) => m.free && !m.local && !m.device);
   const tablet = extraModels().filter((m) => m.device);
   // Models on this PC need 3+ GB of free memory to load; skip them when memory is short so the PC doesn't lag.
   // Offline, models on this PC are the only option, so they are used even when memory is tight.
@@ -251,7 +251,9 @@ export function freeFallbacks(max = 6): string[] {
   // Models that answered a test go first; newest versions before older ones; code-only and previews last.
   const version = (id: string) => Number(id.match(/(\d+(?:\.\d+)?)/)?.[1] || 0);
   const score = (m: { id: string; proven: boolean }) => (m.proven ? 0 : 10) + (/(coder|code)/i.test(m.id) ? 2 : 0) + (/preview|exp|latest/i.test(m.id) ? 1 : 0) - version(m.id) / 100;
-  const ordered = [...cloud.sort((a, b) => score(a) - score(b)), ...tablet, ...local.sort((a, b) => score(a) - score(b))];
+  const ordered = isOffline()
+    ? [...tablet, ...local.sort((a, b) => score(a) - score(b))]
+    : [...cloud.sort((a, b) => score(a) - score(b)), ...tablet, ...local.sort((a, b) => score(a) - score(b))];
   return ordered.filter((m) => (resting.get(m.id) || 0) < now).slice(0, max).map((m) => m.id);
 }
 
@@ -260,18 +262,36 @@ export async function callExtra(id: string, req: { system?: string; messages: { 
   if (!parsed?.provider) throw new Error(`Unknown AI: ${id}`);
   const { provider, model } = parsed;
   const messages = [...(req.system ? [{ role: 'system', content: req.system }] : []), ...req.messages];
+  const isOllama = provider.id === 'ollama' || provider.baseUrl.includes('11434') || !!provider.device;
+  const restDuration = provider.local || provider.device ? 15 * 1000 : REST_MS;
   let res: Response;
   if (provider.device) await ensureTabletRoute(provider.baseUrl).catch(() => {});
   try {
-    res = await fetch(`${provider.baseUrl}/chat/completions`, {
+    const url = isOllama ? `${provider.baseUrl.replace(/\/v1\/?$/, '')}/api/chat` : `${provider.baseUrl}/chat/completions`;
+    const body = isOllama
+      ? JSON.stringify({
+          model,
+          messages,
+          stream: false,
+          think: false,
+          options: { num_predict: Math.min(req.maxTokens ?? 4096, 8192) },
+        })
+      : JSON.stringify({
+          model,
+          messages,
+          max_tokens: Math.min(req.maxTokens ?? 4096, 8192),
+          stream: false,
+          ...(provider.local ? { reasoning_effort: 'none' } : {}),
+        });
+
+    res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(keyOf(provider) ? { authorization: `Bearer ${keyOf(provider)}` } : {}) },
-      // Small models on this PC answer much faster (and don't run out of room) without "thinking" first.
-      body: JSON.stringify({ model, messages, max_tokens: Math.min(req.maxTokens ?? 4096, 8192), stream: false, ...(provider.local ? { reasoning_effort: 'none' } : {}) }),
+      body,
       signal: AbortSignal.timeout(provider.local || provider.device ? 10 * 60 * 1000 : 3 * 60 * 1000),
     });
   } catch (err: any) {
-    resting.set(id, Date.now() + REST_MS);
+    resting.set(id, Date.now() + restDuration);
     throw new Error(`${provider.name} couldn't be reached: ${err?.cause?.code || err.message}`);
   }
   const data: any = await res.json().catch(() => ({}));
@@ -280,15 +300,20 @@ export async function callExtra(id: string, req: { system?: string; messages: { 
     if (permanent(res.status, msg)) {
       provider.tested = { ...provider.tested, [model]: msg.slice(0, 120) };
       save();
-    } else resting.set(id, Date.now() + REST_MS);
+    } else resting.set(id, Date.now() + restDuration);
     throw new Error(`${provider.name} (${model}): ${msg.slice(0, 200)}`);
   }
+  // Extract text, handling Ollama native format, OpenAI format, and thinking models
+  const raw = String(isOllama ? data?.message?.content ?? '' : data?.choices?.[0]?.message?.content || data?.choices?.[0]?.message?.reasoning || '');
   // Drop the model's private "thinking" (some put it in <think> or <thought> tags, possibly unclosed).
-  const text = String(data?.choices?.[0]?.message?.content ?? '')
-    .replace(/<(think|thought)>[\s\S]*?(<\/\1>|$)/g, '')
-    .trim();
+  let text = raw.replace(/<(think|thought)>[\s\S]*?(<\/\1>|$)/g, '').trim();
+  if (!text && raw.trim()) {
+    text = raw.replace(/<\/?(think|thought)>/g, '').trim();
+  }
   if (!text) throw new Error(`${provider.name} (${model}) returned an empty answer.`);
-  const tokens = (data?.usage?.prompt_tokens || 0) + (data?.usage?.completion_tokens || 0);
+  const tokens = isOllama
+    ? (data?.prompt_eval_count || 0) + (data?.eval_count || 0)
+    : (data?.usage?.prompt_tokens || 0) + (data?.usage?.completion_tokens || 0);
   return { text, tokens, model: `${provider.name.replace(/ \(.*\)$/, '')} · ${model}` };
 }
 

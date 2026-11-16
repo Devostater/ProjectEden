@@ -103,8 +103,8 @@ export type JobKind = 'code' | 'general' | 'quick';
 const PREFER: Record<JobKind, RegExp[]> = {
   // gpt-oss-20b (when downloaded) is much stronger; it is only picked when memory allows (see localModelFor).
   code: [/qwen2\.5-coder:7b/, /coder:7b|coder:6\.7b|coder:8b/, /coder/, /qwen3\.5:4b/],
-  general: [/gpt-oss:20b/, /qwen3\.5:4b/, /qwen3:8b/, /llama3\.[12]:8b|gemma3:4b|gemma3n/, /qwen|llama|gemma|mistral|phi/],
-  quick: [/qwen3\.5:4b/, /:(1|1\.5|2|3|4)b/, /qwen|llama|gemma|phi/],
+  general: [/gpt-oss:20b/, /qwen2\.5-coder:7b/, /coder:7b|coder:6\.7b|coder:8b/, /coder/, /qwen3\.5:4b/, /qwen3:8b/, /llama3\.[12]:8b|gemma3:4b|gemma3n/, /qwen|llama|gemma|mistral|phi/],
+  quick: [/qwen2\.5-coder:7b/, /qwen3\.5:4b/, /:(1|1\.5|2|3|4)b/, /qwen|llama|gemma|phi/],
 };
 
 export function localModels(): string[] {

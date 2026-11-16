@@ -433,7 +433,7 @@ export const BottomPanel: React.FC<{
         <div className="flex-1 overflow-y-auto px-3 py-2 font-mono text-xs leading-relaxed">
           {entries.length === 0 && <p className="font-sans text-sm text-slate-500">Nothing yet. Card work, plans and chat replies show up here as they happen.</p>}
           {entries.map((e, i) => (
-            <React.Fragment key={e.id}>
+            <React.Fragment key={`${e.id}-${e.at}-${i}`}>
             {i > 0 && e.id >= sessionStart && entries[i - 1].id < sessionStart && (
               <div className="my-1.5 flex items-center gap-2 font-sans text-xs text-slate-400 dark:text-slate-500" role="separator">
                 <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />

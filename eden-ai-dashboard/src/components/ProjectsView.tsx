@@ -230,7 +230,7 @@ const toLocalInput = (iso?: string) => {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
-export const whenLabel = (iso?: string) =>
+const whenLabel = (iso?: string) =>
   iso ? new Date(iso).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'As soon as possible';
 
 const StartPicker: React.FC<{ value?: string; onChange: (iso: string | undefined) => void; id?: string }> = ({ value, onChange, id }) => {
