@@ -90,7 +90,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
   const square = 'flex aspect-square flex-col items-center justify-center gap-2 rounded-xl border-2 p-2 text-center text-sm font-medium transition-colors';
 
   return (
-    <aside aria-label="Project panel" style={{ order: 3, width }} className="relative hidden shrink-0 flex-col gap-3 overflow-hidden border-l border-slate-200 bg-slate-50 p-3 xl:flex dark:border-slate-800 dark:bg-slate-950">
+    <aside aria-label="Project panel" style={{ order: 3, width }} className="relative hidden shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-slate-50 xl:flex dark:border-slate-800 dark:bg-slate-950">
       <div
         role="separator"
         aria-orientation="vertical"
@@ -101,6 +101,8 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
         className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-indigo-400/60"
       />
 
+      {/* Everything scrolls together when the window is too short to show it all. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overflow-x-hidden overscroll-contain p-3">
       <section className="shrink-0 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center justify-between">
           <Label>Project health</Label>
@@ -159,6 +161,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
           {tab === 'toolbox' && <Toolbox key={project.project.id} project={project.project} embedded />}
         </div>
       </section>
+      </div>
     </aside>
   );
 };
