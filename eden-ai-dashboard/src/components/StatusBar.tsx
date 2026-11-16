@@ -86,7 +86,7 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
         )}
         {s.paused && (
           <span className={`${chip} flex border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200`}>
-            <PauseCircle className="h-4 w-4" /> {s.pausedForUpdate ? 'AI paused for a code update' : 'AI paused'}
+            <PauseCircle className="h-4 w-4" /> {s.pausedForUpdate ? 'AI paused while an update is applied' : 'AI paused'}
           </span>
         )}
       </div>

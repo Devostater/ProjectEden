@@ -35,17 +35,29 @@ const saveControl = () => {
   }
 };
 
-// Code updates change the code the team is working on, so while one runs the team's project work waits.
-// Called with true when an update starts and false when none are left. A pause you set yourself is never lifted here.
-export function holdForUpdates(running: boolean) {
-  if (running && !paused) {
-    heldForUpdate = true;
-    setPaused(true, 'AI paused while a code update runs, so Eden projects stop working on code that is changing. It resumes by itself when the updates finish.');
-  } else if (!running && heldForUpdate) {
+// Code updates work on their own separate copy, so the team keeps working while the AI writes one.
+// Only Apply changes the real code (and the hub may restart on it), so Eden projects pause for that moment:
+// from Apply until a short while after. A pause you set yourself is never lifted here.
+const APPLY_HOLD_MS = 20000;
+let releaseTimer: NodeJS.Timeout | null = null;
+function releaseLater() {
+  if (releaseTimer) clearTimeout(releaseTimer);
+  releaseTimer = setTimeout(() => {
+    releaseTimer = null;
+    if (!heldForUpdate) return;
     heldForUpdate = false;
-    setPaused(false, 'AI resumed: code updates finished.');
-  }
+    setPaused(false, 'AI resumed: the code update is in.');
+  }, APPLY_HOLD_MS);
 }
+export function holdForApply() {
+  if (!paused) {
+    heldForUpdate = true;
+    setPaused(true, 'AI paused while a code update is applied, so Eden projects don\'t run on code that is changing. It resumes by itself in a few seconds.');
+  }
+  if (heldForUpdate) releaseLater();
+}
+// The hub restarted in the middle of a hold (applying an update to the hub restarts it): finish the hold.
+if (heldForUpdate) releaseLater();
 export const pausedForUpdate = () => heldForUpdate;
 
 export function setPaused(next: boolean, note?: string) {

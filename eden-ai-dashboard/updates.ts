@@ -15,7 +15,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
 import { logActivity, recentActivity, fileProblem } from './activity';
-import { holdForUpdates } from './control';
+import { holdForApply } from './control';
 import { cliSignedIn } from './providers';
 import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
@@ -574,10 +574,7 @@ let waitingForRoom = false;
 function startNext() {
   if (busy) return;
   const next = jobs.find((j) => j.status === 'queued');
-  if (!next) {
-    holdForUpdates(false); // nothing left to run: the team can work on projects again
-    return;
-  }
+  if (!next) return;
   // PC busy mode: queued updates wait until the PC has room (they start by themselves then).
   const needsInternet = isOffline() && !localAgentModel();
   if (pcBusy() || needsInternet) {
@@ -586,7 +583,6 @@ function startNext() {
     return;
   }
   waitingForRoom = false;
-  holdForUpdates(true); // pause Eden projects so the team doesn't work on code that is changing
   next.status = 'working';
   save();
   process_(next);
@@ -864,6 +860,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     } catch (err: any) {
       return doesNotFit(err);
     }
+    holdForApply(); // Eden projects pause while the real code changes, and resume by themselves shortly after
     // A restore point comes first: nothing is applied unless it was saved. For the hub that is also a full backup.
     const ref = `refs/eden-restore/${job.id}`;
     let restore: NonNullable<UpdateJob['restore']>;
