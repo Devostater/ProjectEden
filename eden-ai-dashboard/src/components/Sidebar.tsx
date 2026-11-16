@@ -24,6 +24,9 @@ import {
   ArrowUpDown,
   Lock,
   Globe,
+  Star as StarIcon,
+  ExternalLink,
+  X,
 } from 'lucide-react';
 import { UsageBars } from './UsageBars.tsx';
 import { PauseAI } from './PauseAI.tsx';
@@ -450,7 +453,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const initial = (profile.name || profile.studio || 'A').trim().charAt(0).toUpperCase();
 
   // Re-arrange the pages in this bar (saved per device). Arrange mode shows Up/Down buttons on each entry.
-  const navOrder = useArrangedOrder('eden_sidebar_order', ['home', 'projects', 'nexus', 'chat', 'team', 'workflows', 'files', 'updates', 'github', 'devices', 'remote']);
+  const custom = useCustomTabs();
+  const navOrder = useArrangedOrder('eden_sidebar_order', ['home', 'projects', 'nexus', 'chat', 'team', 'files', 'updates', ...custom.tabs.map((t) => t.id)]);
   const [arranging, setArranging] = useState(false);
 
   return (
@@ -508,6 +512,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <button onClick={() => setArranging(false)} className="min-h-10 flex-1 rounded-lg bg-indigo-600 px-3 font-semibold text-white hover:bg-indigo-500">Done</button>
                 <button onClick={navOrder.reset} className="min-h-10 rounded-lg border-2 border-slate-300 px-3 font-medium dark:border-slate-600">Reset</button>
               </div>
+              <AddCustomTab onAdd={custom.add} />
             </div>
           )}
           <Arrangeable id="home" label="Dashboard" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
@@ -674,6 +679,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Arrangeable id="updates" label="Code updates" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
           {navButton('updates', 'Code updates', Wand2, 0, runningUpdates)}
           </Arrangeable>
+          {custom.tabs.map((t) => (
+            <Arrangeable key={t.id} id={t.id} label={t.label} arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col">
+              <div className="flex items-center">
+                <button
+                  onClick={() => (CUSTOM_PAGES.some((p) => p.id === t.target) ? setActiveTab(t.target as AppTab) : window.open(t.target, '_blank', 'noopener'))}
+                  title={t.target}
+                  className={`${subItemClass(activeTab === t.target)} min-w-0 flex-1 gap-2 px-3 py-2 text-left`}
+                >
+                  {CUSTOM_PAGES.some((p) => p.id === t.target) ? <StarIcon className="h-4 w-4 shrink-0" /> : <ExternalLink className="h-4 w-4 shrink-0" />}
+                  {!collapsed && <span className="truncate">{t.label}</span>}
+                </button>
+                {arranging && !collapsed && (
+                  <button onClick={() => custom.remove(t.id)} aria-label={`Remove ${t.label}`} title="Remove this tab" className="rounded p-1.5 text-slate-400 hover:text-red-600">
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </Arrangeable>
+          ))}
         </nav>
 
         <div className={`border-t border-slate-200 dark:border-slate-800 ${collapsed ? 'p-2' : 'p-3'}`}>
@@ -703,5 +727,51 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </aside>
     </>
+  );
+};
+
+// Your own tabs in the left bar: a shortcut to an Eden page (e.g. Settings, GitHub) or a web link. Saved on this device.
+interface CustomTab { id: string; label: string; target: string }
+const CUSTOM_PAGES: { id: string; label: string }[] = [
+  { id: 'settings', label: 'Account & settings' },
+  { id: 'repos', label: 'GitHub' },
+  { id: 'pipelines', label: 'Workflows' },
+  { id: 'devices', label: 'Devices' },
+  { id: 'remote', label: 'Remote' },
+  { id: 'my-ai', label: 'My AI' },
+];
+function useCustomTabs() {
+  const [tabs, setTabs] = useState<CustomTab[]>(() => {
+    try { const v = JSON.parse(localStorage.getItem('eden_custom_tabs') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+  });
+  const save = (next: CustomTab[]) => { setTabs(next); try { localStorage.setItem('eden_custom_tabs', JSON.stringify(next)); } catch {} };
+  return {
+    tabs,
+    add: (label: string, target: string) => save([...tabs, { id: `custom-${tabs.length}-${label.replace(/\W+/g, '').slice(0, 12)}`, label, target }]),
+    remove: (id: string) => save(tabs.filter((t) => t.id !== id)),
+  };
+}
+const AddCustomTab: React.FC<{ onAdd: (label: string, target: string) => void }> = ({ onAdd }) => {
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState('');
+  const [target, setTarget] = useState('settings');
+  const [link, setLink] = useState('');
+  const field = 'w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900';
+  if (!open) return <button onClick={() => setOpen(true)} className="mt-2 flex min-h-10 w-full items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-indigo-400 font-medium text-indigo-700 dark:text-indigo-300"><Plus className="h-4 w-4" /> Add custom tab</button>;
+  const finalTarget = target === 'link' ? link.trim() : target;
+  const ok = label.trim() && (target !== 'link' || /^https?:\/\//i.test(finalTarget));
+  return (
+    <div className="mt-2 space-y-2">
+      <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Tab name" aria-label="Tab name" className={field} />
+      <select value={target} onChange={(e) => setTarget(e.target.value)} aria-label="What the tab opens" className={field}>
+        {CUSTOM_PAGES.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+        <option value="link">A web link…</option>
+      </select>
+      {target === 'link' && <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://…" aria-label="Web link" className={field} />}
+      <div className="flex gap-2">
+        <button disabled={!ok} onClick={() => { onAdd(label.trim(), finalTarget); setLabel(''); setLink(''); setOpen(false); }} className="min-h-9 flex-1 rounded-lg bg-indigo-600 font-semibold text-white disabled:opacity-40">Add</button>
+        <button onClick={() => setOpen(false)} className="min-h-9 rounded-lg border-2 border-slate-300 px-3 dark:border-slate-600">Cancel</button>
+      </div>
+    </div>
   );
 };

@@ -8,6 +8,7 @@ import { FilesVaultView } from './components/FilesVaultView.tsx';
 import { ChatView, type ChatDraft } from './components/ChatView.tsx';
 import { AccountView, type AccountTab } from './components/AccountView.tsx';
 import { BottomPanel } from './components/BottomPanel.tsx';
+import { ProjectSidePanel } from './components/ProjectSidePanel.tsx';
 import { NexusView } from './components/NexusView.tsx';
 import { UpdatesView } from './components/UpdatesView.tsx';
 import { DevicesView } from './components/DevicesView.tsx';
@@ -432,6 +433,7 @@ export default function App() {
                 </PaneFrame>
               );
             })}
+            {!split && !picking && activeTab === 'projects' && panelProject && <ProjectSidePanel project={panelProject} />}
             {split && wide && <SplitHandle ratio={ratio} setRatio={setRatio} containerRef={paneRowRef} />}
             {picking && wide && <div style={{ order: 1 }} className="w-3 shrink-0 bg-slate-200 dark:bg-slate-800" aria-hidden />}
             {picking && (
