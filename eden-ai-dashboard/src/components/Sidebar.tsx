@@ -701,8 +701,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </nav>
 
         <div className={`border-t border-slate-200 dark:border-slate-800 ${collapsed ? 'p-2' : 'p-3'}`}>
-          <PauseAI compact={collapsed} />
-          {!collapsed && <UsageBars />}
           <button
             onClick={() => setActiveTab('settings')}
             aria-current={activeTab === 'settings' ? 'page' : undefined}

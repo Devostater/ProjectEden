@@ -402,7 +402,7 @@ export default function App() {
           </div>
         )}
 
-        <StatusBar pauseSlot={<PauseAndWorkers workingNow={projectsApi.cards.filter((c) => c.runState === 'running').length + nexusRooms.rooms.filter((r) => r.running).length} onOpenWorkers={() => setWorkersOpen(true)} />} title={split && wide ? '' : TITLES[activeTab] || ''} split={split || picking} onToggleSplit={() => (split ? close((1 - focus) as 0 | 1) : picking ? cancelPicking() : startPicking())} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} actions={commandActions} />
+        <StatusBar title={split && wide ? '' : TITLES[activeTab] || ''} split={split || picking} onToggleSplit={() => (split ? close((1 - focus) as 0 | 1) : picking ? cancelPicking() : startPicking())} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} actions={commandActions} />
 
         <main ref={mainRef} className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="shrink-0">
@@ -501,6 +501,8 @@ export default function App() {
           onRetryCard={retryCard}
           review={review}
           project={panes.includes('projects') ? panelProject : null}
+          working={projectsApi.cards.filter((c) => c.runState === 'running').length + nexusRooms.rooms.filter((r) => r.running).length}
+          onOpenWorkers={() => setWorkersOpen(true)}
         />
         </div>
       </div>

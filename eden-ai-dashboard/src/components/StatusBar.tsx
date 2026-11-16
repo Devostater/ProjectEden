@@ -50,43 +50,43 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
   }, [aaOpen]);
 
   // Attention chips always show; calm ones ('Online', 'n devices'…) only on bigger screens so a phone bar isn't crowded.
-  const chip = 'min-h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-sm font-medium transition-colors';
+  const chip = 'h-8 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium transition-colors';
   const calm = 'border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800';
   const o = s.offline;
   const b = s.busy;
   return (
-    <div className="relative z-20 flex items-center gap-2 border-b border-slate-200 bg-white/90 px-4 py-2 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
+    <div className="relative z-20 flex items-center gap-2 border-b border-slate-200 bg-white/90 px-3 py-1.5 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
       {title && <span className="mr-1 max-w-[40vw] shrink-0 truncate text-base font-bold text-slate-900 dark:text-white">{title}</span>}
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
         {reviewCount > 0 && (
           <button onClick={() => openPanel('review')} title="Finished work waiting for you: open Review" className={`${chip} flex border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200`}>
-            <Inbox className="h-4 w-4" /> {reviewCount} to review
+            <Inbox className="h-3.5 w-3.5" /> {reviewCount} to review
           </button>
         )}
         {o && (
           <button onClick={() => setActiveTab('settings')} title="Offline mode (Account → Connections)" className={`${chip} ${o.offline ? 'flex border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200' : `hidden md:flex ${calm}`}`}>
-            {o.offline ? <WifiOff className="h-4 w-4" /> : <Wifi className="h-4 w-4 text-emerald-500" />}
+            {o.offline ? <WifiOff className="h-3.5 w-3.5" /> : <Wifi className="h-3.5 w-3.5 text-emerald-500" />}
             {o.offline ? 'Offline: local AI' : 'Online'}
           </button>
         )}
         {o?.localFirst && !o.offline && (
           <button onClick={() => setActiveTab('settings')} title="Local first: share of AI work done on this PC this week" className={`${chip} hidden md:flex border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-950/40`}>
-            <Leaf className="h-4 w-4" /> {o.week.local + o.week.cloud ? `${o.week.localPercent}% local` : 'Local first'}
+            <Leaf className="h-3.5 w-3.5" /> {o.week.local + o.week.cloud ? `${o.week.localPercent}% local` : 'Local first'}
           </button>
         )}
         {b && (
           <button onClick={() => setActiveTab('devices')} title={b.active ? `PC busy: ${b.reason}` : 'This PC (Devices)'} className={`${chip} ${b.active ? 'flex border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200' : `hidden md:flex ${calm}`}`}>
-            <Gauge className="h-4 w-4" /> {b.active ? 'PC busy' : `PC ${b.cpuPercent}% · ${b.freeGb} GB free`}
+            <Gauge className="h-3.5 w-3.5" /> {b.active ? 'PC busy' : `PC ${b.cpuPercent}% · ${b.freeGb} GB free`}
           </button>
         )}
         {s.devices !== undefined && (
           <button onClick={() => setActiveTab('devices')} title="Connected phones and tablets (Devices)" className={`${chip} hidden md:flex ${calm}`}>
-            <Tablet className="h-4 w-4" /> {s.devices} {s.devices === 1 ? 'device' : 'devices'} <Plus className="h-3 w-3 text-indigo-500" />
+            <Tablet className="h-3.5 w-3.5" /> {s.devices} {s.devices === 1 ? 'device' : 'devices'} <Plus className="h-3 w-3 text-indigo-500" />
           </button>
         )}
         {s.paused && (
           <span className={`${chip} flex border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200`}>
-            <PauseCircle className="h-4 w-4" /> {s.pausedForUpdate ? 'AI paused while an update is applied' : 'AI paused'}
+            <PauseCircle className="h-3.5 w-3.5" /> {s.pausedForUpdate ? 'AI paused while an update is applied' : 'AI paused'}
           </span>
         )}
       </div>
@@ -96,9 +96,9 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           onClick={onToggleSplit}
           aria-pressed={split}
           title={split ? 'Close the other page and keep the one you are on' : 'Open a second page beside this one'}
-          className={`hidden h-10 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-medium md:flex ${split ? 'border-indigo-300 bg-indigo-50 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-200' : 'border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800'}`}
+          className={`hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg border md:flex ${split ? 'border-indigo-300 bg-indigo-50 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-200' : 'border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800'}`}
         >
-          {split ? <Square className="h-5 w-5" /> : <Columns2 className="h-5 w-5" />} {split ? 'One page' : 'Two pages'}
+          {split ? <Square className="h-4 w-4" /> : <Columns2 className="h-4 w-4" />}<span className="sr-only">{split ? 'One page' : 'Two pages'}</span>
         </button>
       )}
       <VoiceCommands actions={actions} />
@@ -108,7 +108,7 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           aria-label="Text size"
           aria-expanded={aaOpen}
           title="Text size"
-          className="flex h-10 min-w-10 items-center justify-center rounded-lg px-2 text-base font-bold text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
+          className="flex h-8 min-w-8 items-center justify-center rounded-lg px-1.5 text-sm font-bold text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
         >
           Aa
         </button>
@@ -118,8 +118,8 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           </div>
         )}
       </div>
-      <button onClick={() => setDarkMode(!darkMode)} aria-label="Toggle light or dark theme" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
-        {darkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+      <button onClick={() => setDarkMode(!darkMode)} aria-label="Toggle light or dark theme" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+        {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </button>
     </div>
   );

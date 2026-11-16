@@ -153,7 +153,7 @@ export async function scanExtraAIs(): Promise<{ found: string[] }> {
       if (p) Object.assign(p, { lastError: 'Not running right now.', checkedAt: at });
     }
   }
-  for (const p of providers.filter((x) => x.device && !seenTablets.has(x.id))) Object.assign(p, { lastError: 'Unplugged.', checkedAt: at });
+  for (const p of providers.filter((x) => x.device && !seenTablets.has(x.id))) Object.assign(p, { lastError: 'Tablet not connected. Plug its USB cable into this PC (USB debugging on) and it comes back by itself.', checkedAt: at });
 
   if (process.env.GEMINI_API_KEY && !/^MY_/.test(process.env.GEMINI_API_KEY)) {
     try {

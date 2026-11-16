@@ -100,6 +100,7 @@ export const RefreshUsageButton: React.FC<{ label?: boolean }> = ({ label = fals
   );
 };
 
+export const money2 = (n: number) => `${n.toFixed(2)}`;
 export const money = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`;
 
 export const UsageBar: React.FC<{ u: ProviderUsage; compact?: boolean }> = ({ u, compact }) => {
@@ -193,9 +194,9 @@ export const UsageBars: React.FC = () => {
       {!minimized && (
         <div className="flex items-start gap-1.5 text-xs tabular-nums text-slate-500 dark:text-slate-400">
           <div className="grid flex-1 grid-cols-[auto_1fr] gap-x-2">
-            <span>About</span><span className="text-right">{money(usage.reduce((sum, u) => sum + (u.coveredByPlan === false ? u.cost || 0 : 0), 0))}</span>
-            {sharedTotals && <><span>Est: {sharedTotals.today.tokens.toLocaleString()}</span><span className="text-right">{money(sharedTotals.today.cost)}</span></>}
-            {sharedTotals && <><span>Wk: {sharedTotals.week.tokens.toLocaleString()}</span><span className="text-right">{money(sharedTotals.week.cost)}</span></>}
+            <span>About</span><span className="text-right">{money2(usage.reduce((sum, u) => sum + (u.coveredByPlan === false ? u.cost || 0 : 0), 0))}</span>
+            {sharedTotals && <><span>Est: {sharedTotals.today.tokens.toLocaleString()}</span><span className="text-right">{money2(sharedTotals.today.cost)}</span></>}
+            {sharedTotals && <><span>Wk: {sharedTotals.week.tokens.toLocaleString()}</span><span className="text-right">{money2(sharedTotals.week.cost)}</span></>}
           </div>
           <InfoTip text="About: spent today on pay-per-use AIs. Est: tokens used today and their rough cost. Wk: the same for this week. Estimates, not a bill: AIs on a plan or free count as $0, and the week total fills up over the first week after this was added." />
         </div>
@@ -218,5 +219,30 @@ const InfoTip: React.FC<{ text: string }> = ({ text }) => {
         </span>
       )}
     </span>
+  );
+};
+
+// The AI usage tab in the bottom bar's Activity panel: one card per AI in a grid, the totals beside them.
+export const UsagePanel: React.FC = () => {
+  const usage = useProviderUsage();
+  const totals = useUsageTotals();
+  const payPerUse = usage.reduce((sum, u) => sum + (u.coveredByPlan === false ? u.cost || 0 : 0), 0);
+  const card = 'rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900';
+  return (
+    <div className="grid gap-3 lg:grid-cols-[1fr_220px]">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+        {usage.length === 0 && <p className="text-sm text-slate-500">No AIs set up yet.</p>}
+        {usage.map((u) => <div key={u.provider} className={card}><UsageBar u={u} /></div>)}
+      </div>
+      <div className={`${card} space-y-1 text-sm tabular-nums`}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Totals</h3>
+          <div className="flex items-center gap-1"><RefreshUsageButton /><InfoTip text="About: spent today on pay-per-use AIs. Est: tokens used today and their rough cost. Wk: the same for this week. Estimates, not a bill: AIs on a plan or free count as $0." /></div>
+        </div>
+        <div className="flex justify-between"><span>About</span><span>{money2(payPerUse)}</span></div>
+        {totals && <div className="flex justify-between"><span>Est: {totals.today.tokens.toLocaleString()}</span><span>{money2(totals.today.cost)}</span></div>}
+        {totals && <div className="flex justify-between"><span>Wk: {totals.week.tokens.toLocaleString()}</span><span>{money2(totals.week.cost)}</span></div>}
+      </div>
+    </div>
   );
 };

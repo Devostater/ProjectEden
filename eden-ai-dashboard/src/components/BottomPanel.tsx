@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight } from 'lucide-react';
+import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight, Copy, Check } from 'lucide-react';
 import type { Agent, Card, Project, RoadmapGoal } from '../types/index.ts';
 import { FlowTab, WorkloadTab, ProgressTab } from './ProjectVisuals.tsx';
 import { Roadmap, roadmapProgress } from './Roadmap.tsx';
@@ -10,6 +10,8 @@ import { Arrangeable, useArrangedOrder } from '../arrange.tsx';
 import { ReviewTab, type ReviewProps } from './ReviewTab.tsx';
 import { LyraPanel, LyraChibi } from './LyraPanel.tsx';
 import { OPEN_PANEL_EVENT } from '../panel.ts';
+import { UsagePanel } from './UsageBars.tsx';
+import { PauseAI } from './PauseAI.tsx';
 
 type PanelTab = 'flow' | 'workload' | 'progress' | 'trail' | 'roadmap' | 'toolbox' | 'preview' | 'review' | 'lyra' | 'activity' | 'terminal';
 const PROJECT_TABS: PanelTab[] = ['flow', 'workload', 'progress', 'trail', 'roadmap', 'toolbox', 'preview'];
@@ -31,7 +33,8 @@ interface ActivityEntry {
   id: number;
   at: string;
   kind: 'info' | 'work' | 'done' | 'error';
-  text: string;
+  text: string; // the short version
+  full?: string; // the whole message, only when it was longer than the short version (older saved lines don't have it)
   hint?: { explain: string; action: string }; // plain explanation and suggestion for common failures
   retry?: { kind: 'card' | 'update'; id: string }; // what Retry runs again
 }
@@ -76,7 +79,9 @@ export const BottomPanel: React.FC<{
   onRetryCard: (cardId: string) => Promise<boolean>; // false when the card is no longer failed
   project?: PanelProject | null;
   review: ReviewProps;
-}> = ({ onOpenPreferences, onRetryCard, project, review }) => {
+  working?: number; // AI jobs running right now, shown as a number beside Activity
+  onOpenWorkers?: () => void;
+}> = ({ onOpenPreferences, onRetryCard, project, review, working = 0, onOpenWorkers }) => {
   const [open, setOpen] = useState(() => read(OPEN_KEY, '0') === '1');
   const [savedTab, setTab] = useState<PanelTab>(() => {
     const saved = read(TAB_KEY, 'activity') as PanelTab;
@@ -85,6 +90,8 @@ export const BottomPanel: React.FC<{
   // Project tabs only exist on the Projects page; elsewhere fall back to Activity.
   const tab: PanelTab = PROJECT_TABS.includes(savedTab) && !project ? 'activity' : savedTab;
 
+  const [actSub, setActSubState] = useState<'log' | 'usage' | 'pause'>(() => { let v = ''; try { v = localStorage.getItem('eden_activity_sub') || ''; } catch {} return v === 'usage' || v === 'pause' ? v : 'log'; });
+  const setActSub = (v: 'log' | 'usage' | 'pause') => { setActSubState(v); try { localStorage.setItem('eden_activity_sub', v); } catch {} };
   const [maximized, setMaximized] = useState(false);
   // Large screen: the panel covers the whole window (for a roadmap, a graph, tool output, a preview). Esc leaves it.
   const [fullScreen, setFullScreen] = useState(false);
@@ -158,6 +165,17 @@ export const BottomPanel: React.FC<{
       clearInterval(timer);
     };
   }, []);
+
+  // Long lines: click one to open the whole message; the copy button copies it.
+  const [openLines, setOpenLines] = useState<Record<number, boolean>>({});
+  const [copiedLine, setCopiedLine] = useState<number | null>(null);
+  const copyLine = async (e: ActivityEntry) => {
+    try {
+      await navigator.clipboard.writeText(e.full ?? e.text);
+      setCopiedLine(e.id);
+      setTimeout(() => setCopiedLine((c) => (c === e.id ? null : c)), 1500);
+    } catch {}
+  };
 
   // Retry buttons on [error] lines: what happened to each press, by line.
   const [retried, setRetried] = useState<Record<number, string>>({});
@@ -339,6 +357,11 @@ export const BottomPanel: React.FC<{
         )}
         {tabButton('lyra', 'LYRA', LyraIcon)}
         {tabButton('activity', 'Activity', Activity, unread)}
+        {working > 0 && (
+          <button onClick={onOpenWorkers} title={`${working} AI ${working === 1 ? 'job' : 'jobs'} working now: see or stop them`} aria-label={`${working} AI working`} className="flex h-6 min-w-6 shrink-0 items-center justify-center self-center rounded-full bg-emerald-500 px-1.5 text-xs font-semibold tabular-nums text-white hover:bg-emerald-600">
+            {working}
+          </button>
+        )}
         {tabButton('terminal', 'Terminal', TerminalSquare)}
         </div>
         <div className="flex shrink-0 items-center gap-1 border-l border-slate-200 pl-2 dark:border-slate-800">
@@ -430,6 +453,18 @@ export const BottomPanel: React.FC<{
       )}
 
       {open && tab === 'activity' && (
+        <div role="tablist" aria-label="Activity views" className="flex shrink-0 gap-1 border-b border-slate-200 px-3 pt-1.5 dark:border-slate-800">
+          {([['log', 'Log'], ['usage', 'AI usage'], ['pause', 'Pause AI']] as const).map(([id, label]) => (
+            <button key={id} role="tab" aria-selected={actSub === id} onClick={() => setActSub(id)}
+              className={`-mb-px border-b-2 px-3 py-1.5 text-xs ${actSub === id ? 'border-indigo-500 font-medium text-indigo-600 dark:text-indigo-300' : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {open && tab === 'activity' && actSub === 'usage' && <div className="flex-1 overflow-y-auto p-3"><UsagePanel /></div>}
+      {open && tab === 'activity' && actSub === 'pause' && <div className="flex-1 overflow-y-auto p-3"><div className="max-w-md"><PauseAI /></div></div>}
+      {open && tab === 'activity' && actSub === 'log' && (
         <div className="flex-1 overflow-y-auto px-3 py-2 font-mono text-xs leading-relaxed">
           {entries.length === 0 && <p className="font-sans text-sm text-slate-500">Nothing yet. Card work, plans and chat replies show up here as they happen.</p>}
           {entries.map((e, i) => (
@@ -444,7 +479,39 @@ export const BottomPanel: React.FC<{
             <div className="flex gap-3">
               <span className="shrink-0 text-slate-400">{new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
               <span className="min-w-0">
-                <span className={KIND_STYLE[e.kind]}>{e.text}</span>
+                {e.full ? (
+                  <>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={!!openLines[e.id]}
+                      title={openLines[e.id] ? 'Click to show less' : 'Click to show the whole message'}
+                      onClick={() => {
+                        if (!window.getSelection()?.toString()) setOpenLines((o) => ({ ...o, [e.id]: !o[e.id] }));
+                      }}
+                      onKeyDown={(ev) => {
+                        if (ev.key === 'Enter' || ev.key === ' ') {
+                          ev.preventDefault();
+                          setOpenLines((o) => ({ ...o, [e.id]: !o[e.id] }));
+                        }
+                      }}
+                      className={`cursor-pointer break-words ${KIND_STYLE[e.kind]}`}
+                    >
+                      {openLines[e.id] ? e.full : `${e.text}…`}
+                    </span>
+                    {openLines[e.id] && (
+                      <button
+                        onClick={() => copyLine(e)}
+                        title="Copy the whole message"
+                        className="ml-2 inline-flex items-center gap-1 rounded border border-slate-300 px-1.5 py-0.5 align-middle font-sans text-xs font-medium text-slate-700 hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-600 dark:text-slate-200"
+                      >
+                        {copiedLine === e.id ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />} {copiedLine === e.id ? 'Copied' : 'Copy'}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <span className={KIND_STYLE[e.kind]}>{e.text}</span>
+                )}
                 {e.kind === 'error' && (e.hint || e.retry) && (
                   <span className="mb-1 mt-0.5 block font-sans text-xs text-slate-600 dark:text-slate-300">
                     {e.hint && (
