@@ -45,7 +45,8 @@ export function registerRestartRoutes(app: Express) {
     logActivity('work', 'Hub server stopping (asked for from Settings).');
     res.json({ ok: true });
     res.on('finish', () => {
-      setTimeout(() => process.exit(0), 300);
+      // 64 tells scripts/hub-supervisor.mjs to stop for real; exit code 0 means "restart me".
+      setTimeout(() => process.exit(64), 300);
     });
   });
 
