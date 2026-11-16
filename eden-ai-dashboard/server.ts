@@ -48,6 +48,34 @@ import type {
 dotenv.config({ path: path.join(path.dirname(fileURLToPath(import.meta.url)), '.env.local') });
 dotenv.config();
 
+// Windows: the AI programs (claude, codex, gemini) are installed by npm into %APPDATA%\npm. Two things can
+// hide them and make every code update fail with "'claude' is not recognized":
+//   - Eden started from somewhere with an older search path: add %APPDATA%\npm ourselves.
+//   - A program installed from inside a Store-style app (such as the Claude desktop app) goes into that app's
+//     private copy of AppData, which only that app can see. Eden started from Windows then can't find it, so we
+//     also look in those private copies, but only for programs missing from the normal folder.
+if (process.platform === 'win32' && process.env.APPDATA) {
+  const key = Object.keys(process.env).find((k) => k.toLowerCase() === 'path') || 'Path';
+  const parts = (process.env[key] || '').split(';').filter(Boolean);
+  const has = (dir: string) => parts.some((p) => p.replace(/\\+$/, '').toLowerCase() === dir.toLowerCase());
+  const npmBin = path.join(process.env.APPDATA, 'npm');
+  if (fs.existsSync(npmBin) && !has(npmBin)) parts.push(npmBin);
+  if (!fs.existsSync(path.join(npmBin, 'claude.cmd')) && process.env.LOCALAPPDATA) {
+    try {
+      const pkgs = path.join(process.env.LOCALAPPDATA, 'Packages');
+      for (const name of fs.readdirSync(pkgs)) {
+        const dir = path.join(pkgs, name, 'LocalCache', 'Roaming', 'npm');
+        if (fs.existsSync(path.join(dir, 'claude.cmd')) && !has(dir)) {
+          parts.push(dir);
+          console.log(`Claude Code found only inside ${name}; using it from there. Install it normally with: npm install -g @anthropic-ai/claude-code`);
+          break;
+        }
+      }
+    } catch {}
+  }
+  process.env[key] = parts.join(';');
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
