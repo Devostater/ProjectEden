@@ -14,6 +14,7 @@ coverage/
 .eden-control.json
 .eden-updates.json
 .eden-codebases.json
+.eden-azi-sync.json
 .eden-devices.json
 .eden-ai.json
 .eden-main.json

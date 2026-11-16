@@ -5,6 +5,7 @@
 import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
 import type { Project } from './src/types/index';
 import { githubToken } from './github';
@@ -532,8 +533,88 @@ export async function listAziRepos(fetchFirst = false): Promise<{ repos: AziRepo
   return { repos: [...local, ...remote], github: !!githubToken() };
 }
 
+// ---- Auto-sync: "Sync all" by itself when Eden starts and/or once a day -----------------------------
+// Pull (fast-forward only) and push for every AZI repo. It never commits for you and never forces.
+type AutoMode = 'off' | 'start' | 'daily' | 'both';
+interface AutoSync {
+  mode: AutoMode;
+  lastRun?: string;
+  lastResult?: string;
+}
+const AUTO_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-azi-sync.json'); // next to the hub, like its other .eden-* files
+const MIN_GAP = 30 * 60 * 1000; // Eden restarts often (code updates): don't sync again within 30 minutes
+const DAY = 24 * 60 * 60 * 1000;
+function loadAuto(): AutoSync {
+  try {
+    const a = JSON.parse(fs.readFileSync(AUTO_FILE, 'utf-8'));
+    return { mode: ['off', 'start', 'daily', 'both'].includes(a.mode) ? a.mode : 'off', lastRun: a.lastRun, lastResult: a.lastResult };
+  } catch {
+    return { mode: 'off' };
+  }
+}
+function saveAuto(a: AutoSync) {
+  try {
+    fs.writeFileSync(AUTO_FILE, JSON.stringify(a, null, 2), 'utf-8');
+  } catch {
+    /* the setting just isn't remembered */
+  }
+}
+
+let syncBusy = false;
+export async function runSyncAll(reason: 'manual' | 'start' | 'daily'): Promise<{ ok: boolean; results: { name: string; ok: boolean; steps: Step[] }[] } | null> {
+  if (syncBusy) return null;
+  syncBusy = true;
+  try {
+    const results: { name: string; ok: boolean; steps: Step[] }[] = [];
+    for (const dir of aziRepoDirs()) {
+      // Repos without a GitHub remote have nothing to sync: skip them quietly when it runs by itself.
+      if (reason !== 'manual' && !git(['remote', 'get-url', 'origin'], dir).ok) continue;
+      const r = await syncProject(dir);
+      results.push({ name: path.basename(dir), ok: r.ok, steps: r.steps });
+    }
+    const bad = results.filter((r) => !r.ok);
+    const label = reason === 'manual' ? 'Sync all' : reason === 'start' ? 'Auto-sync (Eden started)' : 'Auto-sync (daily)';
+    const summary = bad.length ? `${results.length - bad.length} of ${results.length} up to date; check ${bad.map((b) => b.name).join(', ')}.` : `${results.length} projects match GitHub.`;
+    logActivity(bad.length ? 'info' : 'done', `${label}: ${summary}`);
+    const a = loadAuto();
+    saveAuto({ ...a, lastRun: now(), lastResult: `${label}: ${summary}` });
+    return { ok: !bad.length, results };
+  } finally {
+    syncBusy = false;
+  }
+}
+
+function startAutoSync() {
+  const due = (gap: number) => {
+    const last = loadAuto().lastRun;
+    return !last || Date.now() - Date.parse(last) >= gap;
+  };
+  // On start: wait 2 minutes so Eden is fully up, and skip it if a sync ran in the last 30 minutes.
+  setTimeout(() => {
+    const m = loadAuto().mode;
+    if ((m === 'start' || m === 'both') && due(MIN_GAP)) runSyncAll('start');
+  }, 2 * 60 * 1000).unref?.();
+  // Daily: checked every hour.
+  setInterval(() => {
+    const m = loadAuto().mode;
+    if ((m === 'daily' || m === 'both') && due(DAY)) runSyncAll('daily');
+  }, 60 * 60 * 1000).unref?.();
+}
+
 export function registerNewProjectRoutes(app: Express, getStore: () => Store, save: () => void) {
   let busy = false;
+  startAutoSync();
+
+  app.get('/api/azi/autosync', (_req, res) => res.json(loadAuto()));
+  app.post('/api/azi/autosync', (req, res) => {
+    if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
+    const mode = req.body?.mode;
+    if (!['off', 'start', 'daily', 'both'].includes(mode)) return res.status(400).json({ error: 'Choose off, start, daily or both.' });
+    const a = { ...loadAuto(), mode };
+    saveAuto(a);
+    logActivity('info', `Auto-sync set to: ${{ off: 'off', start: 'when Eden starts', daily: 'once a day', both: 'when Eden starts and once a day' }[mode as AutoMode]}.`);
+    res.json(a);
+  });
 
   // Every git folder in C:\AZI with its sync state, plus GitHub repos that aren't on this PC.
   app.get('/api/azi/repos', async (req, res) => {
@@ -543,20 +624,10 @@ export function registerNewProjectRoutes(app: Express, getStore: () => Store, sa
   // Sync every AZI repo: secrets out, pull (fast-forward only), push. Never commits for you, never forces.
   app.post('/api/azi/sync-all', async (req, res) => {
     if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
-    if (busy) return res.status(409).json({ error: 'A sync or setup is already running.' });
-    busy = true;
-    try {
-      const results: { name: string; ok: boolean; steps: Step[] }[] = [];
-      for (const dir of aziRepoDirs()) {
-        const r = await syncProject(dir);
-        results.push({ name: path.basename(dir), ok: r.ok, steps: r.steps });
-      }
-      const bad = results.filter((r) => !r.ok);
-      logActivity(bad.length ? 'info' : 'done', bad.length ? `Sync all: ${results.length - bad.length} of ${results.length} up to date; check ${bad.map((b) => b.name).join(', ')}.` : `Sync all: ${results.length} projects match GitHub.`);
-      res.json({ ok: !bad.length, results });
-    } finally {
-      busy = false;
-    }
+    if (busy) return res.status(409).json({ error: 'A project is being set up. Try again in a moment.' });
+    const r = await runSyncAll('manual');
+    if (!r) return res.status(409).json({ error: 'A sync is already running.' });
+    res.json(r);
   });
 
   // Copy a GitHub repo into C:\AZI\<name>.

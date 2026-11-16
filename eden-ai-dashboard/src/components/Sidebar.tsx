@@ -139,7 +139,25 @@ function useAziRepos() {
       setTimeout(() => setMessage(''), 8000);
     }
   };
-  return { repos, syncing, message, syncAll, clone };
+  // Auto-sync: off / when Eden starts / once a day / both (saved on the hub).
+  const [auto, setAuto] = useState<{ mode: string; lastRun?: string; lastResult?: string }>({ mode: 'off' });
+  useEffect(() => {
+    fetch('/api/azi/autosync')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((a) => a && setAuto(a))
+      .catch(() => {});
+  }, [syncing]);
+  const setAutoMode = async (mode: string) => {
+    try {
+      const r = await fetch('/api/azi/autosync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) setAuto(d);
+      else setMessage(d.error || 'Could not change auto-sync.');
+    } catch {
+      setMessage('The hub did not answer.');
+    }
+  };
+  return { repos, syncing, message, syncAll, clone, auto, setAutoMode };
 }
 const COLLAPSED_KEY = 'eden_sidebar_collapsed';
 const GROUPS_KEY = 'eden_sidebar_groups';
@@ -499,6 +517,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
             azi.syncing ? 'Syncing…' : 'Sync all',
             azi.syncAll,
             <>
+              <label
+                className="flex items-center gap-1.5 px-2 py-1 text-xs text-slate-500 dark:text-slate-400"
+                title={`Pull and push every AZI repo by itself (never commits, never forces).${azi.auto.lastResult ? ` Last: ${azi.auto.lastResult}` : ''}${azi.auto.lastRun ? ` (${new Date(azi.auto.lastRun).toLocaleString()})` : ''}`}
+              >
+                Auto
+                <select
+                  value={azi.auto.mode}
+                  onChange={(e) => azi.setAutoMode(e.target.value)}
+                  className="min-w-0 flex-1 rounded border border-slate-200 bg-transparent px-1 py-0.5 text-xs dark:border-slate-700"
+                >
+                  <option value="off">Off</option>
+                  <option value="start">When Eden starts</option>
+                  <option value="daily">Once a day</option>
+                  <option value="both">Start + daily</option>
+                </select>
+              </label>
               {azi.message && <p className="px-2 py-1 text-xs text-slate-500 dark:text-slate-400">{azi.message}</p>}
               {azi.repos.map((r) => {
                 const key = r.folder || r.repo || r.name;
