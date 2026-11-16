@@ -1,6 +1,7 @@
 @echo off
 setlocal EnableExtensions
-title SWRMsync - sync AZI and start the AI swarm
+title Devostater - SWRMsync - sync AZI and start the AI swarm
+echo [Devostater] SWRMsync - syncs every AZI repo, then starts Claude, Codex and Gemini on their GitHub tasks.
 REM One button: sync every AZI repo, give each AI a fresh copy of ProjectEden, and start Claude, Codex (ChatGPT)
 REM and Gemini/Antigravity on their GitHub tasks. Tasks = open issues in Devostater/ProjectEden tagged [claude],
 REM [codex], [gemini] or [all]. Instructions every AI reads: swarm\AGENT_PROMPT.md. Source of this file:
@@ -50,11 +51,11 @@ set "START_CODEX=Read %PROMPT_FILE% and follow it. You are agent: codex."
 set "START_GEMINI=Read %PROMPT_FILE% and follow it. You are agent: gemini."
 where wt >nul 2>nul
 if errorlevel 1 (
-  start "Claude"  /D "%SWARM%\claude" cmd /k claude "%START_CLAUDE%"
-  start "Codex"   /D "%SWARM%\codex"  cmd /k codex "%START_CODEX%"
-  start "Gemini"  /D "%SWARM%\gemini" cmd /k gemini -i "%START_GEMINI%"
+  start "Devostater - Swarm - Claude"  /D "%SWARM%\claude" cmd /k claude "%START_CLAUDE%"
+  start "Devostater - Swarm - Codex"   /D "%SWARM%\codex"  cmd /k codex "%START_CODEX%"
+  start "Devostater - Swarm - Gemini"  /D "%SWARM%\gemini" cmd /k gemini -i "%START_GEMINI%"
 ) else (
-  wt -w swarm new-tab --title Claude -d "%SWARM%\claude" cmd /k claude "%START_CLAUDE%" ; new-tab --title Codex -d "%SWARM%\codex" cmd /k codex "%START_CODEX%" ; new-tab --title Gemini -d "%SWARM%\gemini" cmd /k gemini -i "%START_GEMINI%"
+  wt -w swarm new-tab --title "Devostater - Swarm - Claude" --suppressApplicationTitle -d "%SWARM%\claude" cmd /k claude "%START_CLAUDE%" ; new-tab --title "Devostater - Swarm - Codex" --suppressApplicationTitle -d "%SWARM%\codex" cmd /k codex "%START_CODEX%" ; new-tab --title "Devostater - Swarm - Gemini" --suppressApplicationTitle -d "%SWARM%\gemini" cmd /k gemini -i "%START_GEMINI%"
 )
 if exist "%LOCALAPPDATA%\Programs\antigravity\Antigravity.exe" start "" "%LOCALAPPDATA%\Programs\antigravity\Antigravity.exe" "%SWARM%\gemini"
 
