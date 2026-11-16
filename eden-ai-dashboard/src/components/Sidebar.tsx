@@ -37,7 +37,7 @@ import type { ProjectsApi } from '../projectsStore.ts';
 import { RoomList } from './NexusRooms.tsx';
 import type { Agent, DAGPipeline } from '../types/index.ts';
 
-export type AppTab = 'home' | 'projects' | 'nexus' | 'chat' | 'my-ai' | 'pipelines' | 'files' | 'updates' | 'repos' | 'devices' | 'remote' | 'settings';
+export type AppTab = 'home' | 'projects' | 'nexus' | 'chat' | 'my-ai' | 'pipelines' | 'files' | 'updates' | 'website' | 'repos' | 'devices' | 'remote' | 'settings';
 
 // What the sidebar asks a page to open, e.g. "the new-project form" or "this teammate".
 export type SidebarRequest =
@@ -697,6 +697,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           <Arrangeable id="files" label="Files" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('files')} onToggleHidden={() => toggleSideHidden('files')}>
           {navButton('files', 'Files', FolderGit2)}
+          {navButton('website', 'Website', Globe)}
           </Arrangeable>
           <Arrangeable id="updates" label="Code updates" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('updates')} onToggleHidden={() => toggleSideHidden('updates')}>
           {navButton('updates', 'Code updates', Wand2, 0, runningUpdates)}

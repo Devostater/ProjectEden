@@ -24,6 +24,9 @@ export const SETTING_KEYS = [
   { key: 'OWNER_NAME', label: 'Your name', secret: false, help: 'Shown in the hub' },
   { key: 'STUDIO_NAME', label: 'Studio name', secret: false, help: 'Shown in the hub' },
   { key: 'TERMINAL_ENABLED', label: 'Terminal', secret: false, help: '1 turns the terminal on' },
+  { key: 'WIX_API_KEY', label: 'Wix API key (Website page)', secret: true, help: 'Wix dashboard → Settings → API Keys, with Blog permissions' },
+  { key: 'WIX_SITE_ID', label: 'Wix site id', secret: false, help: 'The id in your Wix site dashboard address' },
+  { key: 'WIX_MEMBER_ID', label: 'Wix author member id (optional)', secret: false, help: 'Shown as the post author; Wix may require it' },
   { key: 'BACKUP_COPY_DIR', label: 'Also copy backups to this folder', secret: false, help: 'A private folder, e.g. a USB drive' },
 ] as const;
 

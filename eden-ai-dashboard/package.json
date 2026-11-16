@@ -11,7 +11,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test:smoke": "node scripts/smoke-test.mjs",
-    "test:updates": "node --import tsx --test test/updateOverlap.test.ts"
+    "test:updates": "node --import tsx --test test/updateOverlap.test.ts test/wix.test.ts"
   },
   "dependencies": {
     "@google/genai": "^3.0.0",

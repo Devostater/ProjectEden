@@ -26,6 +26,7 @@ import { registerBackupRoutes } from './backup';
 import { registerDeviceRoutes } from './devices';
 import { registerPerfRoutes } from './perf';
 import { registerProfileRoutes } from './profile';
+import { registerWixRoutes } from './wix';
 import { registerTeamDeviceRoutes } from './teamDevices';
 import { registerTeamReformRoutes } from './teamReform';
 import { registerDeviceHubRoutes, ON_DEVICE } from './deviceHub';
@@ -528,6 +529,7 @@ async function startServer() {
   registerLyraRoutes(app);
   registerChatRoutes(app); // chats shared by every device
   if (!ON_DEVICE) registerRepoRoutes(app); // GitHub repos in the workspace folder (only on the PC)
+  registerWixRoutes(app); // Website page: Wix blog posts
   registerProfileRoutes(app); // your picture, frame, bio, links and quick commands
   registerPerfRoutes(app); // live CPU, memory, GPU and what Eden uses (Devices > Performance)
   if (!ON_DEVICE) registerDeviceRoutes(app); // a hub running on a phone or tablet has no USB devices to manage
