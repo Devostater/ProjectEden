@@ -114,7 +114,7 @@ export function registerTeamReformRoutes(app: Express, getAgents: () => Agent[],
       // Only a card that was actually interrupted goes back in the queue: it belongs to a teammate who just moved,
       // it is marked as running, but the runner is no longer working on it. Cards still being worked on, or
       // already in Review, are left alone.
-      const requeued = getCards().filter((c) => moved.has(c.assigneeId) && c.column === 'doing' && c.runState === 'running' && !isCardRunning(c.id));
+      const requeued = getCards().filter((c) => !!c.assigneeId && moved.has(c.assigneeId) && c.column === 'doing' && c.runState === 'running' && !isCardRunning(c.id));
       for (const c of requeued) {
         c.column = 'ready';
         c.runState = undefined;
