@@ -16,6 +16,7 @@ import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
 import { logActivity, recentActivity, fileProblem } from './activity';
 import { holdForApply } from './control';
+import { recheckWaiting } from './updateOverlap';
 import { cliSignedIn, providerUnavailable, recordFailure } from './providers';
 import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
@@ -149,6 +150,9 @@ interface UpdateJob {
   needsRestart?: boolean;
   error?: string;
   interruptions?: number; // how many times the hub closed while this was running
+  olderBase?: string; // id of an update applied/undone after this one was checked: it still fits, but its checks ran on older code
+  baseApplied?: string[]; // this codebase's applied updates when the copy was made (see updateOverlap.ts)
+  olderBaseSameFiles?: boolean; // that update changed a file this one changes too
   interrupted?: boolean; // stopped for that reason (after starting again once by itself)
   uncommitted?: number; // files in the codebase not yet saved to git (GitHub) when the update was asked for / started
   stale?: boolean; // Apply found the code had changed since this update was made, so it no longer fits
@@ -578,6 +582,7 @@ async function process_(job: UpdateJob) {
     job.log.push(`Making a separate copy of ${cb.name} to work on`);
     save();
     const copy = makeCopy(cb, job.id);
+    job.baseApplied = jobs.filter((x) => x.codebaseId === cb.id && x.status === 'applied').map((x) => x.id);
     if (copy.uncommitted !== undefined) job.uncommitted = copy.uncommitted; // the count at the moment the copy was made
     if (copy.skippedLarge) job.log.push(`Left out ${copy.skippedLarge} large file${copy.skippedLarge === 1 ? '' : 's'} (over 5 MB) from the working copy`);
     try {
@@ -825,6 +830,54 @@ export function requestCodeUpdate(codebaseId: string, request: string, cardId?: 
   return job.id;
 }
 
+// Right after an update is applied or undone: every other finished update waiting to be applied was checked on
+// code that has now changed. Ones that no longer fit are marked stale ("Try again" re-makes them now instead of
+// failing later at Apply). Ones that fit (including stale ones an Undo made fit again) get olderBase: their checks
+// need running again, since a change in any file (a shared type, an export) can break them. See updateOverlap.ts.
+function recheckAfter(changed: UpdateJob, cb: Codebase) {
+  const fits = (diff: string) => {
+    try {
+      git(['apply', '--whitespace=nowarn', '--check', '-'], repoRoot(cb), diff);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const appliedNow = jobs.filter((x) => x.codebaseId === cb.id && x.status === 'applied').map((x) => x.id);
+  const r = recheckWaiting(jobs, changed, fits, appliedNow);
+  for (const id of r.current) {
+    const j = jobs.find((x) => x.id === id);
+    if (!j || !j.olderBase) continue;
+    delete j.olderBase;
+    delete j.olderBaseSameFiles;
+    j.log.push(`The code is back to what this was checked on, so its checks count again`);
+  }
+  for (const id of r.stale) {
+    const j = jobs.find((x) => x.id === id);
+    if (!j) continue;
+    j.stale = true;
+    delete j.olderBase;
+    j.log.push(`No longer fits: "${changed.request.slice(0, 60)}" changed the same code first`);
+  }
+  for (const id of r.refit) {
+    const j = jobs.find((x) => x.id === id);
+    if (!j) continue;
+    delete j.stale;
+    j.log.push(`Fits the code again after "${changed.request.slice(0, 60)}" was ${changed.status === 'undone' ? 'undone' : 'applied'}`);
+  }
+  for (const { id, sameFiles } of r.recheck) {
+    const j = jobs.find((x) => x.id === id);
+    if (!j) continue;
+    j.olderBase = changed.id;
+    j.olderBaseSameFiles = sameFiles;
+    j.log.push(`Its checks ran before "${changed.request.slice(0, 60)}" was ${changed.status === 'undone' ? 'undone' : 'applied'}${sameFiles ? ', which changed the same files' : ''}`);
+  }
+  if (r.stale.length || r.recheck.length) {
+    const parts = [r.stale.length && `${r.stale.length} no longer ${r.stale.length === 1 ? 'fits' : 'fit'}`, r.recheck.length && `${r.recheck.length} should be checked again`].filter(Boolean);
+    logActivity('info', `The code changed under other finished updates for ${cb.name}: ${parts.join(', ')}. Press "Try again" on them to re-make them on the current code.`);
+  }
+}
+
 export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: { cardId?: string; request: string; codebase: string; files: number; needsRestart: boolean; restartHint: string }) => void } = {}) {
   onApplied = (job, cb) =>
     hooks.onApplied?.({ cardId: job.cardId, request: job.request, codebase: cb.name, files: job.files?.length || 0, needsRestart: !!job.needsRestart, restartHint: cb.restartHint });
@@ -968,6 +1021,9 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     job.restore = restore;
     job.status = 'applied';
     delete job.stale;
+    delete job.olderBase;
+    delete job.olderBaseSameFiles;
+    recheckAfter(job, cb);
     if (cb.id === 'hub' && job.needsRestart) restartPending = true;
     save();
     logActivity('done', `Code update applied (${cb.name}): ${job.request.slice(0, 80)}${job.needsRestart ? ` (${cb.restartHint} to finish)` : ''}`);
@@ -999,6 +1055,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
       }
     }
     job.status = 'undone';
+    recheckAfter(job, cb);
     if (cb.id === 'hub' && job.needsRestart) restartPending = true;
     save();
     logActivity('done', `Code update undone (${cb.name}): ${job.request.slice(0, 80)}`);
@@ -1017,7 +1074,8 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     if (denied) return res.status(403).json({ error: denied });
     const job = jobs.find((j) => j.id === req.params.id);
     if (!job) return res.status(404).json({ error: 'Update not found.' });
-    const noLongerFits = !!job.stale && (job.status === 'ready' || job.status === 'undone');
+    // Stale (no longer fits) or made on older code (fits, but another update changed the same files after its checks).
+    const noLongerFits = (!!job.stale || !!job.olderBase) && (job.status === 'ready' || job.status === 'undone');
     // A finished update whose checks failed can be redone in one step ("Ask the AI to fix it"): like every retry,
     // the old one is only cleared once the new one has started, so a refused retry never loses the finished change.
     const checksFailed = job.status === 'ready' && !!job.check && !job.check.ok;
@@ -1042,6 +1100,8 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
       job.retriedAs = id;
       job.status = 'discarded'; // only after the new one has started, so a refused retry keeps the old one
       delete job.stale;
+      delete job.olderBase;
+      delete job.olderBaseSameFiles;
       save();
       res.json({ job: { id }, uncommitted: jobs.find((j) => j.id === id)?.uncommitted });
     } catch (err: any) {

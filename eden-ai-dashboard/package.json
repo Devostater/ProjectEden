@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test:smoke": "node scripts/smoke-test.mjs"
+    "test:smoke": "node scripts/smoke-test.mjs",
+    "test:updates": "node --import tsx --test test/updateOverlap.test.ts"
   },
   "dependencies": {
     "@google/genai": "^3.0.0",
