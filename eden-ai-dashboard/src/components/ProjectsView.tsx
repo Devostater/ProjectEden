@@ -778,10 +778,258 @@ const WaveText: React.FC<{ text: string }> = ({ text }) => (
   </span>
 );
 
+// ---------------------------------------------------------------- new AZI project (folder + git + private GitHub repo)
+type StepState = 'ok' | 'warn' | 'fail' | 'skip';
+interface SetupStep {
+  step: string;
+  state: StepState;
+  detail: string;
+}
+interface SetupReport {
+  ok: boolean;
+  status: 'ready' | 'partial' | 'failed';
+  name: string;
+  folder: string;
+  repo?: string;
+  url?: string;
+  commit?: string;
+  projectId?: string;
+  secretsMoved: string[];
+  steps: SetupStep[];
+  next?: string;
+  error?: string;
+}
+const STEP_ICON: Record<StepState, string> = { ok: '✅', warn: '⚠️', fail: '❌', skip: '⏭️' };
+
+const StepList: React.FC<{ steps: SetupStep[] }> = ({ steps }) => (
+  <ul className="space-y-1 text-sm">
+    {steps.map((s, i) => (
+      <li key={i} className="flex gap-2">
+        <span aria-hidden>{STEP_ICON[s.state]}</span>
+        <span>
+          <b className="text-slate-800 dark:text-slate-100">{s.step}:</b> <span className="text-slate-600 dark:text-slate-300">{s.detail}</span>
+        </span>
+      </li>
+    ))}
+  </ul>
+);
+
+const NewAziProjectDialog: React.FC<{ api: ProjectsApi; onClose: () => void }> = ({ api, onClose }) => {
+  const [name, setName] = useState('');
+  const [purpose, setPurpose] = useState('');
+  const [template, setTemplate] = useState<'blank' | 'node' | 'python' | 'unity'>('blank');
+  const [adopt, setAdopt] = useState(false);
+  const [check, setCheck] = useState<{ name: string; folder: string; exists: boolean; github: boolean } | null>(null);
+  const [running, setRunning] = useState(false);
+  const [report, setReport] = useState<SetupReport | null>(null);
+
+  useEffect(() => {
+    if (!name.trim()) return setCheck(null);
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/projects/new/check?name=${encodeURIComponent(name)}`);
+        if (r.ok) {
+          const c = await r.json();
+          setCheck(c);
+          if (c.exists) setAdopt(true);
+        }
+      } catch {}
+    }, 300);
+    return () => clearTimeout(t);
+  }, [name]);
+
+  const submit = async () => {
+    if (!name.trim() || running) return;
+    setRunning(true);
+    setReport(null);
+    try {
+      const r = await fetch('/api/projects/new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, purpose, template, adopt }) });
+      const d = await r.json().catch(() => ({ error: `The hub answered ${r.status}.` }));
+      setReport(d.steps ? d : { ok: false, status: 'failed', name, folder: '', secretsMoved: [], steps: [], error: d.error || 'Something went wrong.' });
+      await api.refresh();
+      if (d.projectId) api.setActiveId(d.projectId);
+    } catch (err: any) {
+      setReport({ ok: false, status: 'failed', name, folder: '', secretsMoved: [], steps: [], error: err?.message || 'The hub did not answer.' });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const title = report ? (report.ok ? '✅ Project ready' : report.status === 'partial' ? '⚠️ Project partly ready' : '❌ Project not created') : 'New project in AZI';
+  return (
+    <Dialog
+      title={title}
+      onClose={onClose}
+      onSubmit={(e) => {
+        e.preventDefault();
+        report ? onClose() : submit();
+      }}
+      footer={
+        report ? (
+          <button type="submit" className="ml-auto rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
+            Done
+          </button>
+        ) : (
+          <>
+            <button type="button" onClick={onClose} className="ml-auto rounded-lg px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+              Cancel
+            </button>
+            <button type="submit" disabled={!name.trim() || running || (!!check?.exists && !adopt)} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40">
+              {running && <Loader2 className="h-4 w-4 animate-spin" />} {running ? 'Setting up…' : adopt ? 'Set up this folder' : 'Create project'}
+            </button>
+          </>
+        )
+      }
+    >
+      {report ? (
+        <div className="space-y-3">
+          {report.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">{report.error}</p>}
+          {report.folder && (
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              Folder: <code>{report.folder}</code>
+              {report.url && (
+                <>
+                  <br />
+                  GitHub:{' '}
+                  <a href={report.url} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline dark:text-indigo-400">
+                    {report.repo}
+                  </a>{' '}
+                  (private)
+                </>
+              )}
+              {report.commit && (
+                <>
+                  <br />
+                  Commit: <code>{report.commit}</code>
+                </>
+              )}
+            </p>
+          )}
+          <StepList steps={report.steps} />
+          {report.secretsMoved.length > 0 && (
+            <details className="text-xs text-slate-500">
+              <summary>Secret files moved to Security\Keys ({report.secretsMoved.length})</summary>
+              <ul className="mt-1 list-disc pl-5">
+                {report.secretsMoved.map((s) => (
+                  <li key={s}>{s}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {report.next && <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Next: {report.next}</p>}
+        </div>
+      ) : (
+        <>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Creates the folder in AZI, sets up git (secret files go to Security\Keys), makes a <b>private</b> GitHub repo, pushes it, adds it here, and tells you when it's ready.
+          </p>
+          <div>
+            <label htmlFor="np-name" className={labelClass}>Name</label>
+            <input id="np-name" autoFocus required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Star Courier" className={inputClass} />
+            {check && (
+              <p className={`mt-1 text-xs ${check.exists ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                {check.exists ? `${check.folder} already exists.` : `Folder: ${check.folder}`}
+                {!check.github && ' · GitHub not linked yet: the project is made on this PC and the report says how to publish it.'}
+              </p>
+            )}
+          </div>
+          <div>
+            <label htmlFor="np-purpose" className={labelClass}>What is it? (one line)</label>
+            <input id="np-purpose" value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. A small space delivery game for Quest" className={inputClass} />
+          </div>
+          <div className="flex flex-wrap items-end gap-6">
+            <div>
+              <label htmlFor="np-template" className={labelClass}>Starter files</label>
+              <select id="np-template" value={template} onChange={(e) => setTemplate(e.target.value as typeof template)} disabled={adopt} className={inputClass}>
+                <option value="blank">Blank (README + notes)</option>
+                <option value="node">Node.js</option>
+                <option value="python">Python</option>
+                <option value="unity">Unity (ignore rules only)</option>
+              </select>
+            </div>
+            <label className="flex items-center gap-2 pb-2 text-sm text-slate-600 dark:text-slate-300">
+              <input type="checkbox" checked={adopt} onChange={(e) => setAdopt(e.target.checked)} /> Use the existing folder
+            </label>
+          </div>
+        </>
+      )}
+    </Dialog>
+  );
+};
+
+// Sync one project with GitHub: secret check, optional commit, pull, push.
+const SyncButton: React.FC<{ project: Project }> = ({ project }) => {
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState('');
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; steps: SetupStep[]; folder?: string; error?: string } | null>(null);
+  const sync = async () => {
+    setRunning(true);
+    setResult(null);
+    try {
+      const r = await fetch(`/api/projects/${project.id}/sync`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ commitMessage: message.trim() || undefined }) });
+      const d = await r.json().catch(() => ({}));
+      setResult(r.ok ? d : { ok: false, steps: [], error: d.error || `The hub answered ${r.status}.` });
+    } catch (err: any) {
+      setResult({ ok: false, steps: [], error: err?.message || 'The hub did not answer.' });
+    } finally {
+      setRunning(false);
+    }
+  };
+  return (
+    <>
+      <button
+        onClick={() => {
+          setOpen(true);
+          setResult(null);
+        }}
+        title="Send this project's changes to GitHub and get the latest"
+        className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900"
+      >
+        <FolderGit2 className="h-4 w-4" /> Sync
+      </button>
+      {open && (
+        <Dialog
+          title={result ? (result.ok ? '✅ In sync with GitHub' : '⚠️ Not fully synced') : `Sync ${project.name}`}
+          onClose={() => setOpen(false)}
+          onSubmit={(e) => {
+            e.preventDefault();
+            result ? setOpen(false) : sync();
+          }}
+          footer={
+            <button type="submit" disabled={running} className="ml-auto flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40">
+              {running && <Loader2 className="h-4 w-4 animate-spin" />} {result ? 'Done' : running ? 'Syncing…' : 'Sync now'}
+            </button>
+          }
+        >
+          {result ? (
+            <div className="space-y-2">
+              {result.error && <p className="text-sm text-red-600 dark:text-red-400">{result.error}</p>}
+              {result.folder && (
+                <p className="text-xs text-slate-500">
+                  <code>{result.folder}</code>
+                </p>
+              )}
+              <StepList steps={result.steps} />
+            </div>
+          ) : (
+            <div>
+              <label htmlFor="sync-msg" className={labelClass}>Save my changes as (optional)</label>
+              <input id="sync-msg" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Leave empty to only pull and push what is already committed" className={inputClass} />
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Secret files that aren't ignored are moved to Security\Keys first. Nothing is ever force-pushed.</p>
+            </div>
+          )}
+        </Dialog>
+      )}
+    </>
+  );
+};
+
 // ---------------------------------------------------------------- page
 export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, newProjectRequest, onOpenSource, onOpenBudgets }) => {
   const { projects, active } = api;
   const [projectDialog, setProjectDialog] = useState<'new' | 'edit' | null>(null);
+  const [aziDialog, setAziDialog] = useState(false);
   useEffect(() => {
     if (newProjectRequest) setProjectDialog('new');
   }, [newProjectRequest]);
@@ -846,7 +1094,11 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
         <button onClick={() => setProjectDialog('new')} className="mt-6 inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500">
           <Plus className="h-4 w-4" /> Create your first project
         </button>
+        <button onClick={() => setAziDialog(true)} className="ml-2 mt-6 inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300">
+          <FolderGit2 className="h-4 w-4" /> New project in AZI + GitHub
+        </button>
         {projectDialog && <ProjectDialog project={null} api={api} onClose={() => setProjectDialog(null)} />}
+        {aziDialog && <NewAziProjectDialog api={api} onClose={() => setAziDialog(false)} />}
       </div>
     );
   }
@@ -908,6 +1160,15 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
             <button onClick={() => setProjectDialog('edit')} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">
               <Settings2 className="h-4 w-4" /> Settings
             </button>
+            {active.repo && <SyncButton project={active} />}
+            <button
+              onClick={() => setAziDialog(true)}
+              title="Create a project folder in C:\AZI with git and a private GitHub repo"
+              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900"
+            >
+              <Plus className="h-4 w-4" /> New AZI project
+            </button>
+            {aziDialog && <NewAziProjectDialog api={api} onClose={() => setAziDialog(false)} />}
           </div>
 
           <WhyWaiting

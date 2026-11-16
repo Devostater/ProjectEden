@@ -4,11 +4,13 @@ import { canUseWeb, generate, models, defaultModel, providerStatus, providerFor,
 import { registerSettingsRoutes } from './settings';
 import { registerPairing } from './pairing';
 import { registerProjectRoutes, ensureProjects, noteOnCard } from './projects';
+import { registerNewProjectRoutes } from './newproject';
 import { startCardRunner, askTeammate, runningCards } from './cardRunner';
 import { registerPlannerRoutes } from './planner';
 import { registerActivityRoutes, logActivity } from './activity';
 import { registerTerminalRoutes } from './terminal';
 import { registerLyraRoutes } from './lyra';
+import { registerChatRoutes } from './chats';
 import { registerNexusRoutes, runningRooms, type NexusData } from './nexus';
 import { registerControlRoutes } from './control';
 import { registerUsageGuard } from './usageGuard';
@@ -474,11 +476,13 @@ async function startServer() {
   });
 
   registerSettingsRoutes(app);
+  registerNewProjectRoutes(app, () => store, () => saveStore(store)); // before the /api/projects/:id routes
   registerProjectRoutes(app, () => store, () => saveStore(store));
   registerPlannerRoutes(app, () => store);
   registerActivityRoutes(app);
   registerTerminalRoutes(app);
   registerLyraRoutes(app);
+  registerChatRoutes(app); // chats shared by every device
   if (!ON_DEVICE) registerDeviceRoutes(app); // a hub running on a phone or tablet has no USB devices to manage
   if (!ON_DEVICE) registerTeamDeviceRoutes(app); // alerts and screens on connected devices for the AI team
   registerDeviceHubRoutes(app);

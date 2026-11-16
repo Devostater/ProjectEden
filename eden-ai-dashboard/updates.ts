@@ -55,7 +55,10 @@ const HUB: Codebase = {
 };
 
 // LYRA is added automatically when its folder is found; more codebases can be added from the page.
-const LYRA_DIR = path.join(os.homedir(), 'OneDrive', 'Documents', 'Forge');
+// LYRA moved to C:\AZI\Forge; the old OneDrive folder is still checked for older setups.
+const LYRA_DIR =
+  [path.join('C:', path.sep, 'AZI', 'Forge'), path.join(os.homedir(), 'OneDrive', 'Documents', 'Forge')].find((d) => fs.existsSync(path.join(d, 'server.js'))) ||
+  path.join('C:', path.sep, 'AZI', 'Forge');
 const lyraPreset = (): Codebase => ({
   id: 'lyra',
   name: 'LYRA',
@@ -88,6 +91,38 @@ const saveCodebases = () => {
   }
 };
 export const findCodebase = (id?: string) => codebases.find((c) => c.id === (id || 'hub'));
+
+// Adds a codebase (a folder inside a git repository) and returns its id. Throws a message a person can act on.
+export function addCodebase(rawName: string, rawDir: string): string {
+  const name = rawName.trim().slice(0, 40);
+  const dir = rawDir ? path.resolve(rawDir.trim()) : '';
+  if (!name || !dir) throw new Error('Give it a name and a folder.');
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw new Error("That folder doesn't exist.");
+  try {
+    git(['rev-parse', '--show-toplevel'], dir);
+  } catch {
+    throw new Error('That folder is not in a git repository. Code updates need git so every change can be reviewed and undone.');
+  }
+  const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `code-${Date.now().toString(36)}`;
+  const same = codebases.find((c) => c.id === id);
+  if (same) {
+    if (path.resolve(same.dir) === dir) return id; // already registered
+    throw new Error('A codebase with that name already exists.');
+  }
+  const isTs = fs.existsSync(path.join(dir, 'tsconfig.json'));
+  codebases.push({
+    id,
+    name,
+    dir,
+    check: isTs ? 'tsc' : 'node',
+    liveDirs: ['public/', 'src/'],
+    restartHint: `restart ${name}`,
+    about: `"${name}", a codebase in ${dir}.`,
+    protect: ['.env files', 'node_modules', 'data and settings files'],
+  });
+  saveCodebases();
+  return id;
+}
 
 // ---- Jobs ---------------------------------------------------------------------------------------
 
@@ -745,30 +780,16 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
   app.post('/api/codebases', (req, res) => {
     // Choosing a folder on this PC for the AI to change: only from the PC itself.
     if (!isLocal(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'A codebase can only be added from the hub on this computer.' });
-    const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 40) : '';
-    const dir = typeof req.body?.dir === 'string' ? path.resolve(req.body.dir.trim()) : '';
-    if (!name || !dir) return res.status(400).json({ error: 'Give it a name and a folder.' });
-    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return res.status(400).json({ error: "That folder doesn't exist." });
-    try {
-      git(['rev-parse', '--show-toplevel'], dir);
-    } catch {
-      return res.status(400).json({ error: 'That folder is not in a git repository. Code updates need git so every change can be reviewed and undone.' });
+    const name = typeof req.body?.name === 'string' ? req.body.name : '';
+    const dir = typeof req.body?.dir === 'string' ? req.body.dir : '';
+    if (name && codebases.some((c) => c.id === name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''))) {
+      return res.status(400).json({ error: 'A codebase with that name already exists.' });
     }
-    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `code-${Date.now().toString(36)}`;
-    if (codebases.some((c) => c.id === id)) return res.status(400).json({ error: 'A codebase with that name already exists.' });
-    const isTs = fs.existsSync(path.join(dir, 'tsconfig.json'));
-    codebases.push({
-      id,
-      name,
-      dir,
-      check: isTs ? 'tsc' : 'node',
-      liveDirs: ['public/', 'src/'],
-      restartHint: `restart ${name}`,
-      about: `"${name}", a codebase in ${dir}.`,
-      protect: ['.env files', 'node_modules', 'data and settings files'],
-    });
-    saveCodebases();
-    res.json({ ok: true, id });
+    try {
+      res.json({ ok: true, id: addCodebase(name, dir) });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   app.post('/api/updates/:id/apply', (req, res) => {
