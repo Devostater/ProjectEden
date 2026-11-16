@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TextSizePicker } from './TextSizePicker.tsx';
-import { Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Inbox, Columns2, Square } from 'lucide-react';
+import { Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Inbox, Columns2, Square, Search } from 'lucide-react';
 import type { AppTab } from './Sidebar.tsx';
 import { VoiceCommands, type CommandActions } from './VoiceCommands.tsx';
 import { openPanel } from '../panel.ts';
+import { TITLES } from './Header.tsx';
 
 interface Status {
   offline?: { offline: boolean; mode: string; localFirst: boolean; week: { localPercent: number; local: number; cloud: number } };
@@ -90,6 +91,7 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           </span>
         )}
       </div>
+      <GoBox setActiveTab={setActiveTab} />
       {pauseSlot}
       {onToggleSplit && (
         <button
@@ -119,5 +121,29 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
         )}
       </div>
     </div>
+  );
+};
+
+// Search/go: pick or type a page, Enter goes there.
+const GoBox: React.FC<{ setActiveTab: (t: AppTab) => void }> = ({ setActiveTab }) => {
+  const [q, setQ] = useState('');
+  const [miss, setMiss] = useState(false);
+  const pages = Object.entries(TITLES) as [AppTab, string][];
+  const go = () => {
+    const t = q.trim().toLowerCase();
+    if (!t) return;
+    const hit = pages.find(([, n]) => n.toLowerCase() === t) || pages.find(([, n]) => n.toLowerCase().startsWith(t)) || pages.find(([id, n]) => n.toLowerCase().includes(t) || id.includes(t));
+    if (!hit) return setMiss(true);
+    setActiveTab(hit[0]);
+    setQ('');
+  };
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); go(); }} role="search" className="hidden shrink-0 items-center md:flex">
+      <label className={`flex h-8 items-center gap-1.5 rounded-lg border px-2 text-sm ${miss ? 'border-amber-400' : 'border-slate-300 dark:border-slate-600'}`}>
+        <Search className="h-4 w-4 text-slate-400" />
+        <input value={q} onChange={(e) => { setQ(e.target.value); setMiss(false); }} list="eden-go-pages" placeholder="Search / go to…" aria-label="Go to a page" title={miss ? 'No page with that name' : 'Type a page name, then Enter'} className="w-36 bg-transparent text-slate-800 placeholder-slate-400 focus:outline-none lg:w-48 dark:text-slate-100" />
+      </label>
+      <datalist id="eden-go-pages">{[...new Set(pages.map(([, n]) => n).filter(Boolean))].map((n) => <option key={n} value={n} />)}</datalist>
+    </form>
   );
 };

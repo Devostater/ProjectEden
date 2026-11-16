@@ -1198,7 +1198,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                 <WaveText text={active.name} />
                 {active.status !== 'active' && <span className="ml-2 text-sm font-normal text-slate-400">({STATUS_LABEL[active.status]})</span>}
               </h1>
-              <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+              <p title={active.goal || undefined} className="mt-0.5 line-clamp-1 text-sm text-slate-500 dark:text-slate-400">
                 {active.goal || (
                   <button onClick={() => setProjectDialog('edit')} className="text-indigo-600 hover:underline dark:text-indigo-400">
                     Add a goal so your team knows what this project is
@@ -1263,7 +1263,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
             const rm = roadmapProgress(active.roadmap);
             const chip = 'flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:border-indigo-400 dark:border-slate-800 dark:text-slate-300 dark:hover:border-indigo-500';
             return (
-              <div className="mt-3 hidden flex-wrap items-center gap-2 md:flex">
+              <div className={`mt-3 hidden flex-wrap items-center gap-2 ${sideActions ? '' : 'md:flex'}`}>
                 <button onClick={() => openPanel('roadmap')} title="Open the roadmap in the bottom bar" className={`${chip} min-w-0 flex-1 sm:flex-none`}>
                   🏗️ <span className="font-medium text-slate-900 dark:text-white">Roadmap</span>
                   {rm ? (
@@ -1314,7 +1314,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
             </p>
           )}
 
-          <div className="flex flex-wrap items-center gap-x-3">
+          <div className="flex flex-wrap items-center gap-x-3 [&_*]:[scrollbar-width:none]">
             <div className="min-w-0 flex-1">
               <WorkstreamTabs project={active} cards={cards} agents={agents} selected={branchFilter} onSelect={setBranchFilter} onEdit={(branch) => setBranchDialog({ branch })} />
             </div>
