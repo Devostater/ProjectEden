@@ -47,42 +47,43 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
     };
   }, [aaOpen]);
 
-  const chip = 'flex min-h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-sm font-medium transition-colors';
+  // Attention chips always show; calm ones ('Online', 'n devices'…) only on bigger screens so a phone bar isn't crowded.
+  const chip = 'min-h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-sm font-medium transition-colors';
   const calm = 'border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800';
   const o = s.offline;
   const b = s.busy;
   return (
     <div className="relative z-20 flex items-center gap-2 border-b border-slate-200 bg-white/90 px-4 py-2 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
-      <span className="mr-1 hidden truncate text-sm font-bold text-slate-900 sm:block dark:text-white">{title}</span>
+      {title && <span className="mr-1 max-w-[40vw] shrink-0 truncate text-base font-bold text-slate-900 dark:text-white">{title}</span>}
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
         {reviewCount > 0 && (
-          <button onClick={() => openPanel('review')} title="Finished work waiting for you: open Review" className={`${chip} border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200`}>
+          <button onClick={() => openPanel('review')} title="Finished work waiting for you: open Review" className={`${chip} flex border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200`}>
             <Inbox className="h-4 w-4" /> {reviewCount} to review
           </button>
         )}
         {o && (
-          <button onClick={() => setActiveTab('settings')} title="Offline mode (Account → Connections)" className={`${chip} ${o.offline ? 'border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200' : calm}`}>
+          <button onClick={() => setActiveTab('settings')} title="Offline mode (Account → Connections)" className={`${chip} ${o.offline ? 'flex border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200' : `hidden md:flex ${calm}`}`}>
             {o.offline ? <WifiOff className="h-4 w-4" /> : <Wifi className="h-4 w-4 text-emerald-500" />}
             {o.offline ? 'Offline: local AI' : 'Online'}
           </button>
         )}
         {o?.localFirst && !o.offline && (
-          <button onClick={() => setActiveTab('settings')} title="Local first: share of AI work done on this PC this week" className={`${chip} border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-950/40`}>
+          <button onClick={() => setActiveTab('settings')} title="Local first: share of AI work done on this PC this week" className={`${chip} hidden md:flex border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-950/40`}>
             <Leaf className="h-4 w-4" /> {o.week.local + o.week.cloud ? `${o.week.localPercent}% local` : 'Local first'}
           </button>
         )}
         {b && (
-          <button onClick={() => setActiveTab('devices')} title={b.active ? `PC busy: ${b.reason}` : 'This PC (Devices)'} className={`${chip} ${b.active ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200' : calm}`}>
+          <button onClick={() => setActiveTab('devices')} title={b.active ? `PC busy: ${b.reason}` : 'This PC (Devices)'} className={`${chip} ${b.active ? 'flex border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200' : `hidden md:flex ${calm}`}`}>
             <Gauge className="h-4 w-4" /> {b.active ? 'PC busy' : `PC ${b.cpuPercent}% · ${b.freeGb} GB free`}
           </button>
         )}
         {s.devices !== undefined && (
-          <button onClick={() => setActiveTab('devices')} title="Connected phones and tablets (Devices)" className={`${chip} ${calm}`}>
+          <button onClick={() => setActiveTab('devices')} title="Connected phones and tablets (Devices)" className={`${chip} hidden md:flex ${calm}`}>
             <Tablet className="h-4 w-4" /> {s.devices} {s.devices === 1 ? 'device' : 'devices'} <Plus className="h-3 w-3 text-indigo-500" />
           </button>
         )}
         {s.paused && (
-          <span className={`${chip} border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200`}>
+          <span className={`${chip} flex border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200`}>
             <PauseCircle className="h-4 w-4" /> AI paused
           </span>
         )}

@@ -21,6 +21,8 @@ import { UsageWarningBanner } from './components/UsageWarning.tsx';
 import { RemoteView } from './components/RemoteView.tsx';
 import { MobileNav } from './components/MobileNav.tsx';
 import { MobilePanel } from './components/MobilePanel.tsx';
+import { MobileMenu } from './components/MobileMenu.tsx';
+import { PAGE_IDS } from './pages.tsx';
 import type { ReviewProps } from './components/ReviewTab.tsx';
 import { useNexusRooms } from './nexusRooms.ts';
 import { OUTDATED_EVENT } from './api.ts';
@@ -44,7 +46,7 @@ export default function App() {
   const [darkMode, setDarkMode] = useState<boolean>(() => localStorage.getItem('nexus_theme') !== 'light');
   const [activeTab, setActiveTab] = useState<AppTab>(() => {
     const wanted = new URLSearchParams(window.location.search).get('tab');
-    return (['home', 'projects', 'nexus', 'chat', 'my-ai', 'pipelines', 'files', 'updates', 'repos', 'devices', 'remote', 'settings'] as AppTab[]).includes(wanted as AppTab) ? (wanted as AppTab) : 'home';
+    return PAGE_IDS.includes(wanted as AppTab) ? (wanted as AppTab) : 'home';
   });
 
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -53,6 +55,7 @@ export default function App() {
 
   const chat = useChatThreads();
   const [drawer, setDrawer] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false); // phone: the full-screen "All pages" menu
   // Shown when the page is newer than the running server (see api.ts).
   const [outdated, setOutdated] = useState(false);
   useEffect(() => {
@@ -356,8 +359,24 @@ export default function App() {
           )}
         </main>
 
-        <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} onMore={() => setDrawer(true)} reviewCount={reviewCount} />
+        <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} onMore={() => setMenuOpen(true)} moreOpen={menuOpen} reviewCount={reviewCount} />
         <MobilePanel review={review} />
+        <MobileMenu
+          open={menuOpen}
+          onClose={() => setMenuOpen(false)}
+          activeTab={activeTab}
+          go={setActiveTab}
+          reviewCount={reviewCount}
+          projects={projectsApi.projects.map((p) => ({ id: p.id, name: p.name }))}
+          activeProjectId={projectsApi.activeId}
+          onPickProject={(id) => {
+            projectsApi.setActiveId(id);
+            setActiveTab('projects');
+          }}
+          darkMode={darkMode}
+          setDarkMode={setDarkMode}
+          onOpenDrawer={() => setDrawer(true)}
+        />
 
         <div className="eden-dock contents">
         <BottomPanel
