@@ -1,5 +1,9 @@
 // Activity log: a short running record of what the hub and the AI team are doing, shown in the
-// bottom panel. Kept in memory only (the last few hundred lines), so it starts empty on each launch.
+// bottom panel. The last 500 lines are saved to activity-log.json in your user folder (.eden-hub, next to
+// the backups) and read back at launch, so the log survives a restart.
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import type { Express } from 'express';
 
 export type ActivityKind = 'info' | 'work' | 'done' | 'error';
@@ -51,9 +55,32 @@ const FAILURES: { test: RegExp; hint: ActivityHint }[] = [
 
 export const explainFailure = (text: string): ActivityHint | undefined => FAILURES.find((f) => f.test.test(text))?.hint;
 
-const MAX = 300;
+const MAX = 500;
+const LOG_FILE = path.join(os.homedir(), '.eden-hub', 'activity-log.json');
 const entries: Entry[] = [];
 let nextId = 1;
+let sessionStart = 1; // the first line id written in this launch; anything before it is from an earlier session
+let saveTimer: NodeJS.Timeout | null = null;
+
+// Write the log now (also used when the hub stops, so the last second of lines isn't lost).
+function saveNow() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = null;
+  try {
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+    const tmp = `${LOG_FILE}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(entries.slice(-MAX)), 'utf-8');
+    fs.renameSync(tmp, LOG_FILE);
+  } catch (err: any) {
+    fileProblem('save the activity log', err);
+  }
+}
+const scheduleSave = () => {
+  if (!saveTimer) saveTimer = setTimeout(saveNow, 1000);
+};
+process.on('exit', () => {
+  if (saveTimer) saveNow();
+});
 
 // `reason` is just the failure message (so a card title can't be mistaken for one); `retry` says what a
 // Retry button should run again.
@@ -66,6 +93,7 @@ export function logActivity(kind: ActivityKind, text: string, extra?: { reason?:
   }
   entries.push(entry);
   if (entries.length > MAX) entries.splice(0, entries.length - MAX);
+  scheduleSave();
   for (const fn of listeners) {
     try {
       fn(kind, entry.text);
@@ -87,6 +115,23 @@ export function fileProblem(what: string, err: any) {
 const listeners: ((kind: ActivityKind, text: string) => void)[] = [];
 export const onActivity = (fn: (kind: ActivityKind, text: string) => void) => void listeners.push(fn);
 
+// Load the saved lines from the last launch. Ids carry on after the saved ones, so `since` keeps working.
+// (This sits below `listeners` and `reported` because a load problem is itself written to the log.)
+try {
+  const saved = JSON.parse(fs.readFileSync(LOG_FILE, 'utf-8'));
+  const kinds = ['info', 'work', 'done', 'error'];
+  if (Array.isArray(saved)) {
+    for (const e of saved) {
+      if (e && Number.isInteger(e.id) && e.id > 0 && typeof e.at === 'string' && kinds.includes(e.kind) && typeof e.text === 'string') entries.push(e as Entry);
+    }
+    entries.splice(0, Math.max(0, entries.length - MAX));
+    nextId = entries.reduce((m, e) => Math.max(m, e.id), 0) + 1;
+    sessionStart = nextId;
+  }
+} catch (err: any) {
+  if (err?.code !== 'ENOENT') fileProblem('load the activity log', err);
+}
+
 // The latest lines (for the AI suggesting app updates: what went wrong recently).
 export const recentActivity = (n = 60) => entries.slice(-n).map((e) => `${e.at.slice(0, 16)} [${e.kind}] ${e.text}`);
 
@@ -94,6 +139,6 @@ export function registerActivityRoutes(app: Express) {
   // `since` is the last id the page already has; only newer lines come back.
   app.get('/api/activity', (req, res) => {
     const since = Number(req.query.since) || 0;
-    res.json({ entries: entries.filter((e) => e.id > since), latest: nextId - 1 });
+    res.json({ entries: entries.filter((e) => e.id > since), latest: nextId - 1, sessionStart });
   });
 }

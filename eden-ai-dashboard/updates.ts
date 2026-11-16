@@ -147,6 +147,7 @@ interface UpdateJob {
   error?: string;
   interruptions?: number; // how many times the hub closed while this was running
   interrupted?: boolean; // stopped for that reason (after starting again once by itself)
+  uncommitted?: number; // files in the codebase not yet saved to git (GitHub) when the update was asked for / started
   // Saved just before Apply, so Undo can put the files back exactly as they were.
   restore?: { ref: string; commit: string; files: string[]; backup?: string; at: string };
 }
@@ -215,9 +216,31 @@ function fromOwnPage(req: Request) {
 
 // ---- The copy of the code -----------------------------------------------------------------------
 
-function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skippedLarge: number } {
+// How many files in this codebase have changes that are not saved (committed) to git yet: changed, new or deleted.
+// Only a note for the owner, so a failure here gives undefined and never stops an update.
+function countUncommitted(cb: Codebase): number | undefined {
+  try {
+    const out = git(['status', '--porcelain', '--untracked-files=all', ...pathspec(relOf(cb))], repoRoot(cb));
+    return out.split('\n').filter((l) => l.trim()).length;
+  } catch {
+    return undefined;
+  }
+}
+
+// The page refreshes every few seconds, so its banner uses a count that is at most 20 seconds old.
+const uncommittedCache = new Map<string, { at: number; n: number | undefined }>();
+function uncommittedNow(cb: Codebase): number | undefined {
+  const hit = uncommittedCache.get(cb.id);
+  if (hit && Date.now() - hit.at < 20_000) return hit.n;
+  const n = countUncommitted(cb);
+  uncommittedCache.set(cb.id, { at: Date.now(), n });
+  return n;
+}
+
+function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skippedLarge: number; uncommitted?: number } {
   const root = repoRoot(cb);
   const rel = relOf(cb);
+  const uncommitted = countUncommitted(cb);
   const dir = path.join(WORK_ROOT, id);
   fs.mkdirSync(WORK_ROOT, { recursive: true });
   git(['worktree', 'add', '--detach', dir, 'HEAD'], root);
@@ -247,7 +270,7 @@ function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skip
   const appDir = rel ? path.join(dir, rel) : dir;
   const modules = path.join(cb.dir, 'node_modules');
   if (fs.existsSync(modules) && !fs.existsSync(path.join(appDir, 'node_modules'))) fs.symlinkSync(modules, path.join(appDir, 'node_modules'), 'junction');
-  return { dir, appDir, skippedLarge };
+  return { dir, appDir, skippedLarge, uncommitted };
 }
 
 function removeCopy(cb: Codebase, id: string) {
@@ -490,6 +513,7 @@ async function process_(job: UpdateJob) {
     job.log.push(`Making a separate copy of ${cb.name} to work on`);
     save();
     const copy = makeCopy(cb, job.id);
+    if (copy.uncommitted !== undefined) job.uncommitted = copy.uncommitted; // the count at the moment the copy was made
     if (copy.skippedLarge) job.log.push(`Left out ${copy.skippedLarge} large file${copy.skippedLarge === 1 ? '' : 's'} (over 5 MB) from the working copy`);
     try {
       let baselineFailed: string[] = [];
@@ -702,6 +726,7 @@ export function requestCodeUpdate(codebaseId: string, request: string, cardId?: 
   if (!local && !isOffline() && !cliSignedIn('anthropic')) throw new Error('Code updates use Claude Code. Sign in to Claude in Account → Connections first.');
   // If another update is running, this one waits in the queue.
   const job: UpdateJob = { id: `upd-${Date.now().toString(36)}`, codebaseId: cb.id, request, cardId, local: local || undefined, status: 'queued', createdAt: now(), log: [] };
+  job.uncommitted = countUncommitted(cb); // shown right away; refreshed when the copy is actually made
   jobs.push(job);
   if (busy) logActivity('work', `Code update queued (${cb.name}): ${request.slice(0, 100)}`);
   save();
@@ -748,7 +773,10 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     if (!mayView(req)) return res.status(403).json({ error: LOCKED });
     res.json({
       jobs: [...jobs].reverse().map(({ diff, restore, ...rest }) => ({ ...rest, hasDiff: !!diff, hasRestorePoint: !!restore, codebaseName: findCodebase(rest.codebaseId)?.name || rest.codebaseId })),
-      codebases: codebases.map((c) => ({ id: c.id, name: c.name, dir: c.dir, check: c.check, restartHint: c.restartHint, ok: fs.existsSync(c.dir) })),
+      codebases: codebases.map((c) => {
+        const ok = fs.existsSync(c.dir);
+        return { id: c.id, name: c.name, dir: c.dir, check: c.check, restartHint: c.restartHint, ok, uncommitted: ok ? uncommittedNow(c) : undefined };
+      }),
       busy,
       claudeReady: cliSignedIn('anthropic'),
       restartPending,
@@ -770,7 +798,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     if (!request) return res.status(400).json({ error: 'Describe what you want changed.' });
     try {
       const id = requestCodeUpdate(String(req.body?.codebaseId || 'hub'), request, typeof req.body?.cardId === 'string' ? req.body.cardId : undefined, req.body?.local === true);
-      res.json({ job: { id } });
+      res.json({ job: { id }, uncommitted: jobs.find((j) => j.id === id)?.uncommitted });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -880,7 +908,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
       const id = requestCodeUpdate(job.codebaseId, job.request, job.cardId);
       job.status = 'discarded'; // only after the new one has started, so a refused retry keeps the failed one
       save();
-      res.json({ job: { id } });
+      res.json({ job: { id }, uncommitted: jobs.find((j) => j.id === id)?.uncommitted });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -1061,7 +1089,7 @@ function registerIdeaRoutes(app: Express, guard: (req: Request) => string) {
       const id = requestCodeUpdate(codebaseId, idea.request);
       set.ideas = set.ideas.filter((i) => i !== idea);
       saveIdeas();
-      res.json({ job: { id } });
+      res.json({ job: { id }, uncommitted: jobs.find((j) => j.id === id)?.uncommitted });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

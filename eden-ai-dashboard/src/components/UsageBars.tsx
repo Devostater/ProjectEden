@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { RefreshCw, ChevronDown } from 'lucide-react';
+import type { UsageTotals } from '../types/index.ts';
 
 export interface ProviderUsage {
   provider: 'lyra' | 'anthropic' | 'google' | 'openai' | 'extra';
@@ -9,16 +10,20 @@ export interface ProviderUsage {
   tokens: number;
   limit: number;
   limitNote: string;
+  coveredByPlan?: boolean; // plan or free AI: counts as $0
+  cost?: number; // today's estimate for AIs billed per use
   real?: { source: 'plan' | 'none'; usedPercent?: number; window?: string; resetsAt?: number; limited?: boolean; plan?: string };
 }
 
 // Shared by every usage display, so one refresh updates them all.
 let shared: ProviderUsage[] = [];
+let sharedTotals: UsageTotals | null = null; // tokens and estimated cost for today and the last 7 days
 const subscribers = new Set<(u: ProviderUsage[]) => void>();
 export async function refreshUsage(force = false) {
   try {
     const d = await fetch(`/api/provider-usage${force ? '?refresh=1' : ''}`).then((r) => r.json());
     shared = d.usage || [];
+    sharedTotals = d.totals || null;
     subscribers.forEach((fn) => fn(shared));
   } catch {}
 }
@@ -89,6 +94,8 @@ export const RefreshUsageButton: React.FC<{ label?: boolean }> = ({ label = fals
   );
 };
 
+export const money = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`;
+
 export const UsageBar: React.FC<{ u: ProviderUsage; compact?: boolean }> = ({ u, compact }) => {
   const off = u.mode === 'off';
   const real = u.real?.source === 'plan' ? u.real : undefined;
@@ -135,7 +142,11 @@ export const UsageBar: React.FC<{ u: ProviderUsage; compact?: boolean }> = ({ u,
       >
         <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${off ? 0 : Math.max(pct, u.messages ? 3 : 0)}%` }} />
       </div>
-      <p className={`mt-1.5 hidden text-xs leading-snug group-hover:block group-focus:block ${limited ? 'text-red-500' : 'text-slate-500 dark:text-slate-400'}`}>{detail}</p>
+      <p className={`mt-1.5 hidden text-xs leading-snug group-hover:block group-focus:block ${limited ? 'text-red-500' : 'text-slate-500 dark:text-slate-400'}`}>
+        {detail}
+        {!off && u.coveredByPlan && ' Covered by plan ($0).'}
+        {!off && u.coveredByPlan === false && ` About ${money(u.cost || 0)} today (pay-per-use).`}
+      </p>
     </div>
   );
 };
@@ -174,6 +185,19 @@ export const UsageBars: React.FC = () => {
         {!minimized && <RefreshUsageButton />}
       </div>
       {!minimized && usage.map((u) => <UsageBar key={u.provider} u={u} compact />)}
+      {!minimized && (
+        <p className="text-xs text-slate-500 dark:text-slate-400" title="Today, on AIs billed per use. AIs on a plan or free count as $0 (covered by plan).">
+          About {money(usage.reduce((sum, u) => sum + (u.coveredByPlan === false ? u.cost || 0 : 0), 0))} on pay-per-use AIs today
+        </p>
+      )}
+      {!minimized && sharedTotals && (
+        <p
+          className="text-xs text-slate-500 dark:text-slate-400"
+          title="Estimates, not a bill. Rough prices per AI, only for AIs billed per use; plan and free AIs count as $0. The week total fills up over the first week after this was added."
+        >
+          Estimated: today {sharedTotals.today.tokens.toLocaleString()} tokens, about {money(sharedTotals.today.cost)} · this week {sharedTotals.week.tokens.toLocaleString()} tokens, about {money(sharedTotals.week.cost)}
+        </p>
+      )}
     </div>
   );
 };

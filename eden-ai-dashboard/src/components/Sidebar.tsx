@@ -72,7 +72,12 @@ interface AziRepo {
   state: 'synced' | 'changes' | 'no-remote' | 'not-on-pc' | 'error';
   detail?: string;
   private?: boolean;
+  reason?: string; // why it is not in step with GitHub, e.g. 'uncommitted', 'behind', 'diverged', 'auth', 'forge-main'
+  hint?: string; // one plain sentence about it
+  projectId?: string; // the Eden project for this repo (needed for "Save to GitHub")
 }
+// Reasons where saving (commit + push) from here is the right fix. Never for Forge on main, logins, or merges.
+const CAN_SAVE = ['uncommitted', 'unpushed'];
 const visibilityText = (r: AziRepo) => (r.private === true ? ' (private)' : r.private === false ? ' (public)' : '');
 const REPO_DOT: Record<AziRepo['state'], string> = {
   synced: 'bg-emerald-500',
@@ -98,6 +103,7 @@ function useAziRepos() {
   const [repos, setRepos] = useState<AziRepo[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState('');
+  const [problems, setProblems] = useState<Record<string, { reason?: string; hint?: string }>>({}); // from the last "Sync all", by folder name
   const load = useCallback(async (fetchRemote = false) => {
     try {
       const r = await fetch(`/api/azi/repos${fetchRemote ? '?fetch=1' : ''}`);
@@ -116,12 +122,39 @@ function useAziRepos() {
     try {
       const r = await fetch('/api/azi/sync-all', { method: 'POST' });
       const d = await r.json().catch(() => ({}));
-      const bad = (d.results || []).filter((x: { ok: boolean }) => !x.ok).map((x: { name: string }) => x.name);
-      setMessage(r.ok ? (bad.length ? `Check: ${bad.join(', ')}` : 'All synced ✓') : d.error || 'Sync failed.');
+      const badOnes: { name: string; reason?: string; hint?: string }[] = (d.results || []).filter((x: { ok: boolean }) => !x.ok);
+      // Keep each project's reason so the list below can say what is wrong with it.
+      setProblems(Object.fromEntries(badOnes.map((x) => [x.name, { reason: x.reason, hint: x.hint }])));
+      setMessage(r.ok ? (badOnes.length ? `Check: ${badOnes.map((x) => x.hint || x.name).join('; ')}` : 'All synced ✓') : d.error || 'Sync failed.');
     } catch {
       setMessage('The hub did not answer.');
     } finally {
       setSyncing(false);
+      load(true);
+      setTimeout(() => setMessage(''), 8000);
+    }
+  };
+  // "Save to GitHub": the project's existing sync route (commits what changed, then pulls and pushes). Forge on main is refused there.
+  const save = async (r: AziRepo) => {
+    if (!r.projectId) return;
+    setMessage(`Saving ${r.name} to GitHub…`);
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(r.projectId)}/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ commitMessage: 'Save from Eden' }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok && d.ok) {
+        setProblems((p) => Object.fromEntries(Object.entries(p).filter(([k]) => k !== r.name)));
+        setMessage(`${r.name}: saved to GitHub ✓`);
+      } else {
+        setProblems((p) => ({ ...p, [r.name]: { reason: d.reason, hint: d.hint } }));
+        setMessage(d.hint || d.error || `${r.name}: could not save to GitHub.`);
+      }
+    } catch {
+      setMessage('The hub did not answer.');
+    } finally {
       load(true);
       setTimeout(() => setMessage(''), 8000);
     }
@@ -157,7 +190,34 @@ function useAziRepos() {
       setMessage('The hub did not answer.');
     }
   };
-  return { repos, syncing, message, syncAll, clone, auto, setAutoMode };
+  return { repos, syncing, message, syncAll, clone, save, problems, auto, setAutoMode };
+}
+// Code updates that are running or waiting in the queue. Stays 0 on a device that isn't allowed to use Code updates.
+function useRunningUpdates() {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      let next = 3000;
+      try {
+        const res = await fetch('/api/updates');
+        const d = await res.json();
+        const n = res.ok && Array.isArray(d.jobs) ? d.jobs.filter((j: { status: string }) => ['queued', 'working', 'checking'].includes(j.status)).length : 0;
+        if (alive) setCount(n);
+        next = n > 0 ? 3000 : 10000;
+      } catch {
+        next = 10000;
+      }
+      if (alive) timer = setTimeout(tick, next);
+    };
+    tick();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, []);
+  return count;
 }
 const COLLAPSED_KEY = 'eden_sidebar_collapsed';
 const GROUPS_KEY = 'eden_sidebar_groups';
@@ -231,17 +291,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
     } catch {}
   };
 
+  // An icon with the number of things running in that tab on its corner (nothing when none are running).
+  const iconWithRunning = (Icon: React.ElementType, running: number) => (
+    <span className="relative shrink-0" title={running > 0 ? `${running} running` : undefined}>
+      <Icon className="h-4 w-4" />
+      {running > 0 && (
+        <span
+          aria-label={`${running} running`}
+          className="absolute -right-2 -top-2 min-w-4 rounded-full bg-emerald-500 px-1 text-center text-[10px] font-semibold leading-4 tabular-nums text-white ring-1 ring-white dark:ring-slate-900"
+        >
+          {running > 99 ? '99+' : running}
+        </span>
+      )}
+    </span>
+  );
+
   // A plain page link. Collapsed, the sidebar is a strip of icons; each keeps its name as a tooltip.
-  const navButton = (id: AppTab, label: string, Icon: React.ElementType, badgeCount = 0) => (
+  const navButton = (id: AppTab, label: string, Icon: React.ElementType, badgeCount = 0, running = 0) => (
     <button
       key={id}
       onClick={() => setActiveTab(id)}
       aria-current={activeTab === id ? 'page' : undefined}
-      aria-label={collapsed ? (badgeCount > 0 ? `${label}, ${badgeCount} waiting for your review` : label) : undefined}
-      title={collapsed ? (badgeCount > 0 ? `${label} · ${badgeCount} waiting for your review` : label) : undefined}
+      aria-label={collapsed ? [label, badgeCount > 0 && `${badgeCount} waiting for your review`, running > 0 && `${running} running`].filter(Boolean).join(', ') : undefined}
+      title={collapsed ? [label, badgeCount > 0 && `${badgeCount} waiting for your review`, running > 0 && `${running} running`].filter(Boolean).join(' · ') : undefined}
       className={`${itemClass(activeTab === id, collapsed)} ${collapsed && badgeCount > 0 ? 'relative' : ''}`}
     >
-      <Icon className="h-4 w-4 shrink-0" />
+      {iconWithRunning(Icon, running)}
       {!collapsed && <span className="truncate">{label}</span>}
       {collapsed && badgeCount > 0 && (
         <span className="absolute right-0.5 top-0.5 min-w-4 rounded-full bg-amber-500 px-1 text-center text-[10px] font-semibold leading-4 tabular-nums text-white">{badgeCount > 99 ? '99+' : badgeCount}</span>
@@ -261,15 +336,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
     body: React.ReactNode,
     badge?: React.ReactNode,
     collapsedBadgeCount = 0,
-    NewIcon: React.ElementType = Plus
+    NewIcon: React.ElementType = Plus,
+    running = 0
   ) => {
-    if (collapsed) return navButton(tab, label, Icon, collapsedBadgeCount);
+    if (collapsed) return navButton(tab, label, Icon, collapsedBadgeCount, running);
     const open = openGroups[g];
     return (
       <div key={g}>
         <div className={itemClass(activeTab === tab) + ' !p-0'}>
           <button onClick={() => setActiveTab(tab)} aria-current={activeTab === tab ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-3 text-left">
-            <Icon className="h-4 w-4 shrink-0" />
+            {iconWithRunning(Icon, running)}
             <span className="truncate">{label}</span>
             {badge}
             {!open && count > 0 && <span className={`ml-auto text-xs tabular-nums ${activeTab === tab ? 'text-white/70' : 'text-slate-400'}`}>{count}</span>}
@@ -298,6 +374,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Every card waiting for your review, across all projects. It drops as cards are approved or sent back.
   const totalReview = projects.cards.filter((c) => c.column === 'review').length;
   const busyAgents = new Set(projects.cards.filter((c) => c.runState === 'running').map((c) => c.assigneeId));
+
+  // How many things are running in each tab, shown as a number on the tab's icon.
+  const runningCards = projects.cards.filter((c) => c.runState === 'running').length;
+  const runningRooms = rooms.rooms.filter((r) => r.running).length;
+  const runningWorkflows = pipelines.filter((p) => p.lastStatus === 'running').length;
+  const runningUpdates = useRunningUpdates();
 
   const displayName = profile.name || 'Account';
   const initial = (profile.name || profile.studio || 'A').trim().charAt(0).toUpperCase();
@@ -381,7 +463,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {totalReview > 99 ? '99+' : totalReview}
               </span>
             ) : undefined,
-            totalReview
+            totalReview,
+            Plus,
+            runningCards
           )}
 
           {group(
@@ -407,7 +491,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onNew={onNewRoom}
               onChanged={rooms.refresh}
             />,
-            rooms.rooms.some((r) => r.running) ? <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-emerald-400" aria-label="A discussion is running" /> : undefined
+            rooms.rooms.some((r) => r.running) ? <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-emerald-400" aria-label="A discussion is running" /> : undefined,
+            0,
+            Plus,
+            runningRooms
           )}
 
           {group(
@@ -474,7 +561,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </span>
                 <span className="min-w-0 flex-1 truncate">{a.name}</span>
               </button>
-            ))
+            )),
+            undefined,
+            0,
+            Plus,
+            busyAgents.size
           )}
 
           {group(
@@ -503,11 +594,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {p.lastStatus === 'error' && <span className="text-[10px] text-red-500">failed</span>}
                 </button>
               );
-            })
+            }),
+            undefined,
+            0,
+            Plus,
+            runningWorkflows
           )}
 
           {navButton('files', 'Files', FolderGit2)}
-          {navButton('updates', 'Code updates', Wand2)}
+          {navButton('updates', 'Code updates', Wand2, 0, runningUpdates)}
           {group(
             'github',
             'repos',
@@ -537,9 +632,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {azi.repos.map((r) => {
                 const key = r.folder || r.repo || r.name;
                 const label = r.name || r.repo?.split('/')[1] || '?';
+                // What is wrong, in plain words: what the last "Sync all" found, else what git shows right now.
+                const problem = r.state === 'changes' ? azi.problems[r.name] : undefined;
+                const reason = problem?.reason || r.reason;
+                const hint = problem?.hint || r.hint;
                 return (
+                  <div key={key}>
                   <button
-                    key={key}
                     title={repoTitle(r)}
                     onClick={() => {
                       if (r.state === 'not-on-pc' && r.repo) return azi.clone(r.repo);
@@ -560,6 +659,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     {r.private === false && <Globe className="h-3 w-3 shrink-0 text-slate-400" aria-label="public" />}
                     {r.state === 'not-on-pc' && <Download className="h-3 w-3 shrink-0 text-sky-500" />}
                   </button>
+                  {r.state === 'changes' && hint && (
+                    <div className="px-2 pb-1.5 pl-6 text-[11px] leading-snug text-amber-700 dark:text-amber-400">
+                      <p>{hint}</p>
+                      {reason && CAN_SAVE.includes(reason) && r.projectId && (
+                        <button
+                          onClick={() => azi.save(r)}
+                          title="Saves your changes and sends them to GitHub"
+                          className="mt-1 rounded bg-amber-500 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-amber-600"
+                        >
+                          Save to GitHub
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  </div>
                 );
               })}
             </>,
@@ -569,7 +683,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
             ) : undefined,
             needsSync,
-            RefreshCw
+            RefreshCw,
+            azi.syncing ? 1 : 0
           )}
           {navButton('devices', 'Devices', Tablet)}
           {navButton('remote', 'Remote', Wifi)}

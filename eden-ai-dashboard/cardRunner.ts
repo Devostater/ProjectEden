@@ -1,6 +1,6 @@
 // The card runner: when a card sits in "Ready" with a teammate assigned, that teammate's AI does the
 // work, the result is added to the card as a note, and the card moves to "Review" for the owner.
-import { canUseWeb, generate, providerFor, providerUnavailable, fallbackModels, providerLabel, providerUsage, defaultModel, type ProviderId } from './providers';
+import { canUseWeb, generate, providerFor, providerUnavailable, fallbackModels, providerLabel, providerUsage, defaultModel, estimateCost, type ProviderId } from './providers';
 import type { Agent, Project, Card } from './src/types/index';
 import { logActivity } from './activity';
 import { aiPaused } from './control';
@@ -116,6 +116,8 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
   if (!card || !project || !agent) return;
 
   let result: { text: string; provider: ProviderId; usedWeb?: boolean } | null = null;
+  let usedTokens = 0; // what this run used, added to the card's totals below
+  let usedCost = 0; // estimate; a project's own connection is billed on its own keys, so it is not priced here
   let lastError = 'No AI is available right now.';
   const wantedProvider = providerFor(agent.model || defaultModel());
   // Everything the teammate is given for this card. It also decides which links they may put on your tablet.
@@ -132,6 +134,7 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
       if (r?.text.trim()) {
         agent.totalRuns += 1;
         agent.totalTokens += r.tokens || 0;
+        usedTokens += r.tokens || 0;
         result = { text: r.text.trim(), provider: wantedProvider };
         viaProject = r.via;
       } else lastError = `${projectAiLabel(project.ai.use)} returned an empty answer.`;
@@ -147,6 +150,8 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
       if (r.text.trim()) {
         agent.totalRuns += 1;
         agent.totalTokens += r.tokens || 0;
+        usedTokens += r.tokens || 0;
+        usedCost += estimateCost(r.provider, r.tokens || 0);
         result = { text: r.text.trim(), provider: r.provider, usedWeb: r.usedWeb };
         break;
       }
@@ -160,6 +165,11 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
   const current = find();
   if (!current) return;
   const stillOurs = current.column === 'doing' && current.runState === 'running';
+  // Running totals for the card, across every run (a card sent back for changes adds to them).
+  if (usedTokens) {
+    current.tokens = (current.tokens || 0) + usedTokens;
+    current.estimatedCost = Number(((current.estimatedCost || 0) + usedCost).toFixed(4));
+  }
   if (result) {
     current.notes.push({
       id: noteId(),
@@ -199,6 +209,16 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
 const lastBranch = new Map<string, string>(); // teammate id -> workstream they last worked in
 
 export const runningCards = () => running.size;
+// Is the runner working on this card right now?
+export const isCardRunning = (cardId: string) => running.has(cardId);
+
+// Cards already skipped (and logged), so the same line is not written every few seconds.
+const skipped = new Set<string>();
+function skipOnce(cardId: string, message: string) {
+  if (skipped.has(cardId)) return;
+  skipped.add(cardId);
+  logActivity('info', message);
+}
 
 function tick(getStore: () => RunnerStore, save: () => void) {
   if (aiPaused()) return; // Pause AI: start nothing new
@@ -245,6 +265,11 @@ function tick(getStore: () => RunnerStore, save: () => void) {
     }
   }
   const startable = candidates.filter((c) => !blockersOf(c).length && due(c)).sort(byPriority);
+  // A card that just finished is in Review while the runner is still wrapping it up: note it, start nothing.
+  for (const c of all) {
+    if (c.column === 'review' && running.has(c.id)) skipOnce(c.id, `${store.agents.find((a) => a.id === c.assigneeId)?.name || 'The teammate'} already has this card in Review`);
+    else if (c.column !== 'review') skipped.delete(c.id);
+  }
 
   const busy = new Set(all.filter((c) => c.runState === 'running' && c.assigneeId).map((c) => c.assigneeId!));
   for (const agent of store.agents) {
@@ -265,6 +290,13 @@ function tick(getStore: () => RunnerStore, save: () => void) {
       claimed = !!card;
     }
     if (!card) continue;
+
+    // A card that is already being worked on, or has just finished and sits in Review, is never started again
+    // here. Only the owner sending it back (the "redo" action) puts it in Ready to run once more.
+    if (running.has(card.id) || card.column === 'review') {
+      skipOnce(card.id, `${store.agents.find((a) => a.id === card.assigneeId)?.name || agent.name} already has this card in Review`);
+      continue;
+    }
 
     // Offline: Aura runs through Claude, so its cards wait for the internet (they start by themselves after).
     if (isOffline() && agent.model?.startsWith('aura')) {

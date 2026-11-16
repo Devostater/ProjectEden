@@ -260,8 +260,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {cacheEfficiency}%
             </div>
             <div className="text-2xs font-mono text-slate-400 mt-1 tabular-nums">
-              Est. expense: ${usageSummary.estimatedCost.toFixed(4)}
+              About ${(usageSummary.payPerUseCost ?? usageSummary.estimatedCost).toFixed(4)} on pay-per-use AIs
             </div>
+            {usageSummary.byProvider && usageSummary.byProvider.length > 0 && (
+              <ul className="mt-2 space-y-0.5 text-2xs font-mono text-slate-400 tabular-nums">
+                {usageSummary.byProvider.map((p) => (
+                  <li key={p.provider} className="flex justify-between gap-2">
+                    <span className="truncate">{p.name}</span>
+                    <span className="shrink-0">{p.coveredByPlan ? 'covered by plan' : `about $${p.cost.toFixed(4)}`}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
           {/* Progress Bar */}
           <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800">

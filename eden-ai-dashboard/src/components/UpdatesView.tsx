@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
-import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, ListPlus, Lightbulb, RefreshCw, X, Pencil, Lock } from 'lucide-react';
+import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, RefreshCw, Lock } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
+import { NextUpdate, type CodebaseInfo } from './NextUpdate.tsx';
 
 interface Job {
   id: string;
@@ -20,16 +21,10 @@ interface Job {
   codebaseName?: string;
   codebaseId?: string;
   interrupted?: boolean; // stopped because the hub restarted while it ran
+  uncommitted?: number; // files not yet saved to GitHub when this update was based on the code
 }
 
-interface CodebaseInfo {
-  id: string;
-  name: string;
-  dir: string;
-  check: 'tsc' | 'node';
-  restartHint: string;
-  ok: boolean;
-}
+const unsavedNote = (n: number) => `Based on your current files, including ${n} not yet saved to GitHub`;
 
 const STATUS: Record<Job['status'], { label: string; tone: string }> = {
   queued: { label: 'Waiting in the queue', tone: 'text-slate-500 dark:text-slate-400' },
@@ -42,119 +37,25 @@ const STATUS: Record<Job['status'], { label: string; tone: string }> = {
   failed: { label: 'Failed', tone: 'text-red-600 dark:text-red-400' },
 };
 
-const IDEAS = [
-  'Add a "Duplicate" button to cards on the board.',
-  'Show the number of cards waiting for review in the browser tab title.',
-  'Add a dark/light toggle to the phone tab bar.',
+// The Updates list is split into three tabs. "Active" includes updates waiting for your review.
+type UpdatesTab = 'active' | 'error' | 'finished';
+const TAB_OF: Record<Job['status'], UpdatesTab> = {
+  queued: 'active',
+  working: 'active',
+  checking: 'active',
+  ready: 'active',
+  failed: 'error',
+  applied: 'finished',
+  undone: 'finished',
+  discarded: 'finished',
+};
+const TABS: { id: UpdatesTab; label: string; empty: string }[] = [
+  { id: 'active', label: 'Active', empty: 'Nothing is running or waiting for you right now.' },
+  { id: 'error', label: 'Error', empty: 'Nothing has failed.' },
+  { id: 'finished', label: 'Finished', empty: 'Nothing finished yet.' },
 ];
 
 const post = (url: string, body?: unknown) => api('POST', url, body ?? {});
-
-interface Idea {
-  title: string;
-  why: string;
-  request: string;
-  size: 'small' | 'medium' | 'large';
-}
-
-// "Suggested for you": Claude reads the codebase (without changing it) plus recent errors and past
-// updates, and suggests a few changes. One click queues an idea; the pencil puts it in the box to edit first.
-const SuggestedIdeas: React.FC<{ codebaseId: string; codebaseName: string; claudeReady: boolean; onEdit: (request: string) => void; onStarted: (jobId: string) => void }> = ({
-  codebaseId,
-  codebaseName,
-  claudeReady,
-  onEdit,
-  onStarted,
-}) => {
-  const [data, setData] = useState<{ ideas: Idea[]; at?: string; running?: boolean; error?: string } | null>(null);
-  const [acting, setActing] = useState('');
-  const [problem, setProblem] = useState('');
-
-  const load = async (auto = false) => {
-    try {
-      setData(await api('GET', `/api/updates/ideas?codebaseId=${encodeURIComponent(codebaseId)}${auto ? '&auto=1' : ''}`));
-    } catch {}
-  };
-  useEffect(() => {
-    setData(null);
-    load(true);
-  }, [codebaseId]);
-  useEffect(() => {
-    if (!data?.running) return;
-    const t = setInterval(() => load(), 4000);
-    return () => clearInterval(t);
-  }, [data?.running, codebaseId]);
-
-  const refresh = async () => {
-    setProblem('');
-    try {
-      await post('/api/updates/ideas', { codebaseId });
-      await load();
-    } catch (err: any) {
-      setProblem(err.message);
-    }
-  };
-  const startIdea = async (idea: Idea) => {
-    setActing(idea.title);
-    setProblem('');
-    try {
-      const d = await post('/api/updates/ideas/start', { codebaseId, title: idea.title });
-      onStarted(d.job.id);
-      await load();
-    } catch (err: any) {
-      setProblem(err.message);
-    } finally {
-      setActing('');
-    }
-  };
-  const dismiss = async (idea: Idea) => {
-    setData((d) => (d ? { ...d, ideas: d.ideas.filter((i) => i !== idea) } : d));
-    await post('/api/updates/ideas/dismiss', { codebaseId, title: idea.title }).catch(() => {});
-  };
-
-  const sizeLabel = { small: 'Quick', medium: 'Medium', large: 'Bigger' };
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="flex items-center gap-2 font-semibold text-slate-900 dark:text-white"><Lightbulb className="h-5 w-5 text-amber-500" /> Suggested for {codebaseName}</h2>
-          <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-            Based on the code, recent errors and what you've already changed. {data?.at && `Updated ${new Date(data.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.`}
-          </p>
-        </div>
-        <button onClick={refresh} disabled={!claudeReady || !!data?.running} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
-          {data?.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {data?.running ? 'Thinking…' : 'New ideas'}
-        </button>
-      </div>
-      {problem && <p role="alert" className="mt-3 text-sm text-red-600 dark:text-red-400">{problem}</p>}
-      {data?.error && !data.running && <p className="mt-3 text-sm text-red-600 dark:text-red-400">Last try didn't work: {data.error}</p>}
-      {data?.running && !data.ideas.length && <p className="mt-3 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"><Loader2 className="h-4 w-4 animate-spin" /> Claude is reading the code. This takes a minute or two.</p>}
-      {data && !data.running && !data.ideas.length && !data.error && <p className="mt-3 text-sm text-slate-500">No ideas yet. Click "New ideas".</p>}
-      <div className="mt-3 space-y-2">
-        {data?.ideas.map((idea) => (
-          <div key={idea.title} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
-            <div className="flex items-start gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-slate-900 dark:text-white">{idea.title}</span>
-                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">{sizeLabel[idea.size]}</span>
-                </div>
-                <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">{idea.why}</p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <button onClick={() => startIdea(idea)} disabled={!claudeReady || !!acting} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40">
-                  {acting === idea.title ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />} Do it
-                </button>
-                <button onClick={() => onEdit(idea.request)} aria-label={`Edit "${idea.title}" before starting`} title="Edit first" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"><Pencil className="h-4 w-4" /></button>
-                <button onClick={() => dismiss(idea)} aria-label={`Not interested in "${idea.title}"`} title="Not interested" className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-red-600 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-};
 
 // The patch, shown file by file with added lines green and removed lines red.
 const DiffView: React.FC<{ id: string }> = ({ id }) => {
@@ -207,9 +108,6 @@ export const UpdatesView: React.FC = () => {
   const [claudeReady, setClaudeReady] = useState(true);
   const [codebases, setCodebases] = useState<CodebaseInfo[]>([]);
   const [target, setTarget] = useState('hub');
-  const [adding, setAdding] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newDir, setNewDir] = useState('');
   const [request, setRequest] = useState('');
   const [onThisPc, setOnThisPc] = useState(false);
   const [error, setError] = useState('');
@@ -221,8 +119,11 @@ export const UpdatesView: React.FC = () => {
   const [confirmApply, setConfirmApply] = useState<Job | null>(null); // on a phone or tablet: "Yes, apply it"
   const [locked, setLocked] = useState(''); // this device isn't allowed to use Code updates (the reason)
   const [remote, setRemote] = useState(false); // this is a paired phone or tablet, not the PC
+  const [confirmAll, setConfirmAll] = useState(false); // "Apply all": waiting for "Yes, apply them all"
+  const [applyingAll, setApplyingAll] = useState(false);
   const [restartPending, setRestartPending] = useState(false); // an applied update needs the hub restarted
   const [restarting, setRestarting] = useState(false);
+  const [tab, setTab] = useState<UpdatesTab>('active');
   const live = useRef(false);
 
   const load = async () => {
@@ -287,6 +188,7 @@ export const UpdatesView: React.FC = () => {
       const d = await post('/api/updates', { request, codebaseId: target, local: onThisPc });
       setRequest('');
       setOpenId(d.job.id);
+      setTab('active');
       live.current = true;
       await load();
     } catch (err: any) {
@@ -318,8 +220,42 @@ export const UpdatesView: React.FC = () => {
     }
   };
 
+  // Updates that "Apply all" will apply: ready, with their changes, and their checks did not fail. Oldest first.
+  const applyable = jobs.filter((j) => j.status === 'ready' && j.hasDiff && j.check?.ok !== false).reverse();
+  const skippedFailed = jobs.filter((j) => j.status === 'ready' && j.hasDiff && j.check?.ok === false).length;
+
+  // Applies them one at a time through the same safe route as the single button (each saves its own restore point).
+  const applyAll = async () => {
+    setConfirmAll(false);
+    setError('');
+    setNote('');
+    setApplyingAll(true);
+    let done = 0;
+    let needsRestart = false;
+    const problems: string[] = [];
+    for (const job of applyable) {
+      setActing(job.id);
+      try {
+        const d = await post(`/api/updates/${job.id}/apply`);
+        done++;
+        if (d.needsRestart) needsRestart = true;
+      } catch (err: any) {
+        problems.push(`"${job.request.length > 60 ? `${job.request.slice(0, 60)}…` : job.request}": ${err.message}`);
+      }
+    }
+    setActing(null);
+    setApplyingAll(false);
+    if (done > 0) {
+      setNote(
+        `Applied ${done} update${done === 1 ? '' : 's'}.${needsRestart ? ' Some change the server part, so press "Restart Eden now" above (or restart the app) to finish.' : ' The page updates by itself in a moment.'}`
+      );
+    }
+    if (problems.length) setError(`${problems.length} update${problems.length === 1 ? ' was' : 's were'} not applied, and nothing was changed for ${problems.length === 1 ? 'it' : 'them'}. ${problems.join(' ')}`);
+    await load();
+  };
+
   // Waiting updates in the order they will run (oldest first; the list above is newest first).
-  const queue = jobs.filter((j) => j.status === 'queued').map((j) => j.id).reverse();
+  const queue =jobs.filter((j) => j.status === 'queued').map((j) => j.id).reverse();
 
   const retry = async (job: Job) => {
     setError('');
@@ -328,6 +264,7 @@ export const UpdatesView: React.FC = () => {
     try {
       const d = await post(`/api/updates/${job.id}/retry`);
       setOpenId(d.job.id);
+      setTab('active');
       live.current = true;
       await load();
     } catch (err: any) {
@@ -366,91 +303,26 @@ export const UpdatesView: React.FC = () => {
         </p>
       </div>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Change:</span>
-          {codebases.filter((c) => c.ok).map((c) => (
-            <button
-              key={c.id}
-              onClick={() => setTarget(c.id)}
-              aria-pressed={target === c.id}
-              title={c.dir}
-              className={`rounded-lg border px-3 py-1.5 text-sm ${target === c.id ? 'border-indigo-500 bg-indigo-50 font-medium text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300' : 'border-slate-300 text-slate-600 hover:border-indigo-400 dark:border-slate-700 dark:text-slate-300'}`}
-            >
-              {c.name}
-            </button>
-          ))}
-          {!remote && <button onClick={() => setAdding(!adding)} className="text-sm text-slate-500 hover:underline">+ Add a codebase</button>}
-        </div>
-        {adding && (
-          <div className="mb-3 flex flex-wrap gap-2 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
-            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name, e.g. Project Nova" className="min-w-[10rem] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-            <input value={newDir} onChange={(e) => setNewDir(e.target.value)} placeholder="Folder, e.g. C:\Users\you\Documents\GITHUB\Project-Nova" className="min-w-[16rem] flex-[2] rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-            <button
-              onClick={async () => {
-                setError('');
-                try {
-                  const d = await post('/api/codebases', { name: newName, dir: newDir });
-                  setAdding(false);
-                  setNewName('');
-                  setNewDir('');
-                  setTarget(d.id);
-                  await load();
-                } catch (err: any) {
-                  setError(err.message);
-                }
-              }}
-              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
-            >
-              Add
-            </button>
-            <p className="w-full text-xs text-slate-500">The folder must be inside a git repository, so every change can be reviewed and undone.</p>
-          </div>
-        )}
-        <label htmlFor="upd-req" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">What should change in {codebases.find((c) => c.id === target)?.name || 'the hub'}?</label>
-        <textarea
-          id="upd-req"
-          rows={4}
-          value={request}
-          onChange={(e) => setRequest(e.target.value)}
-          placeholder="Describe it like you would to a developer: what you want, and where in the app."
-          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-        />
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {IDEAS.map((idea) => (
-            <button key={idea} onClick={() => setRequest(idea)} className="rounded-full border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-300">
-              {idea}
-            </button>
-          ))}
-          <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-sm text-slate-600 dark:text-slate-300" title="Claude Code runs on gpt-oss on this PC (like 'ollama launch claude'): free and works offline, but slower and less reliable than Claude.">
-            <input type="checkbox" checked={onThisPc} onChange={(e) => setOnThisPc(e.target.checked)} className="h-4 w-4 accent-emerald-600" />
-            Run on this PC (free)
-          </label>
-          <button
-            onClick={start}
-            disabled={!request.trim() || (!claudeReady && !onThisPc)}
-            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
-          >
-            {busy ? <ListPlus className="h-4 w-4" /> : <Wand2 className="h-4 w-4" />} {busy ? 'Add to the queue' : 'Make this change'}
-          </button>
-        </div>
-        {!claudeReady && <p className="mt-2 text-sm text-amber-600 dark:text-amber-400">App updates use Claude Code. Sign in to Claude in Account → Connections first.</p>}
-        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-          Uses your Claude plan. A change usually takes a few minutes and several messages' worth of usage.
-          {busy && ' One change runs at a time: anything you add now waits in the queue and starts by itself.'}
-        </p>
-      </section>
-
-      <SuggestedIdeas
-        codebaseId={target}
-        codebaseName={codebases.find((c) => c.id === target)?.name || 'the hub'}
+      <NextUpdate
+        codebases={codebases}
+        target={target}
+        onPickTarget={setTarget}
+        request={request}
+        onRequestChange={setRequest}
+        onThisPc={onThisPc}
+        onOnThisPc={setOnThisPc}
+        busy={busy}
         claudeReady={claudeReady}
-        onEdit={(r) => {
-          setRequest(r);
-          document.getElementById('upd-req')?.focus();
+        remote={remote}
+        onStart={start}
+        onAdded={async (id) => {
+          setTarget(id);
+          await load();
         }}
-        onStarted={(id) => {
+        onError={setError}
+        onIdeaStarted={(id) => {
           setOpenId(id);
+          setTab('active');
           live.current = true;
           load();
         }}
@@ -475,8 +347,41 @@ export const UpdatesView: React.FC = () => {
 
       <section className="space-y-3">
         <h2 className="font-semibold text-slate-900 dark:text-white">Updates</h2>
-        {!jobs.length && <p className="text-sm text-slate-500 dark:text-slate-400">None yet.</p>}
-        {jobs.map((job) => {
+        <div role="tablist" aria-label="Updates" className="flex gap-1 border-b border-slate-200 dark:border-slate-800">
+          {TABS.map((t) => {
+            const count = jobs.filter((j) => TAB_OF[j.status] === t.id).length;
+            const selected = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={selected}
+                onClick={() => setTab(t.id)}
+                className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm ${selected ? 'border-indigo-500 font-medium text-indigo-600 dark:text-indigo-300' : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}`}
+              >
+                {t.label}
+                <span className={`rounded-full px-1.5 text-xs tabular-nums ${t.id === 'error' && count > 0 ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
+        {tab === 'active' && applyable.length > 1 && (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+            <span className="min-w-0 flex-1">
+              {applyable.length} updates are ready to apply.
+              {skippedFailed > 0 && ` ${skippedFailed} whose checks failed will be left for you to look at.`}
+            </span>
+            <button
+              onClick={() => setConfirmAll(true)}
+              disabled={applyingAll || !!acting}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+            >
+              {applyingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {applyingAll ? 'Applying…' : 'Apply all'}
+            </button>
+          </div>
+        )}
+        {!jobs.some((j) => TAB_OF[j.status] === tab) && <p className="text-sm text-slate-500 dark:text-slate-400">{TABS.find((t) => t.id === tab)?.empty}</p>}
+        {jobs.filter((j) => TAB_OF[j.status] === tab).map((job) => {
           const open = openId === job.id || job.status === 'queued' || job.status === 'working' || job.status === 'checking' || job.status === 'ready' || (job.status === 'failed' && !!job.interrupted);
           const st = STATUS[job.status];
           return (
@@ -499,6 +404,8 @@ export const UpdatesView: React.FC = () => {
 
               {open && (
                 <div className="space-y-4 border-t border-slate-100 px-4 pb-4 pt-3 dark:border-slate-800">
+                  {typeof job.uncommitted === 'number' && job.uncommitted > 0 && <p className="text-xs text-slate-500 dark:text-slate-400">{unsavedNote(job.uncommitted)}.</p>}
+
                   {job.status === 'queued' && (
                     <p className="text-sm text-slate-600 dark:text-slate-300">
                       Number {queue.indexOf(job.id) + 1} in the queue. It starts by itself when the one before it finishes.
@@ -637,6 +544,40 @@ export const UpdatesView: React.FC = () => {
                 className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500"
               >
                 <Check className="h-4 w-4" /> Yes, apply it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmAll && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setConfirmAll(false)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="apply-all-title"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.key === 'Escape' && setConfirmAll(false)}
+            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-slate-900"
+          >
+            <h2 id="apply-all-title" className="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-white">
+              <Check className="h-5 w-5 text-emerald-500" /> Apply all {applyable.length} updates?
+            </h2>
+            <ul className="mt-2 max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-sm text-slate-700 dark:text-slate-300">
+              {applyable.map((j) => (
+                <li key={j.id}>{j.request.length > 100 ? `${j.request.slice(0, 100)}…` : j.request}</li>
+              ))}
+            </ul>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+              They are applied one after another, oldest first. Each one saves its own restore point first, so you can still Undo any of them. If one no longer fits, it is skipped and the others carry on.
+              {skippedFailed > 0 && ` ${skippedFailed} update${skippedFailed === 1 ? ' whose checks' : 's whose checks'} failed ${skippedFailed === 1 ? 'is' : 'are'} not included.`}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button autoFocus onClick={() => setConfirmAll(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+                Not yet
+              </button>
+              <button onClick={applyAll} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+                <Check className="h-4 w-4" /> Yes, apply them all
               </button>
             </div>
           </div>

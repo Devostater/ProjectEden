@@ -6,7 +6,8 @@
 //   - AIs that are off, out of today's budget or have hit their plan limit are not used.
 // The plan is shown first; nothing changes until you apply it.
 import type { Express, Request } from 'express';
-import type { Agent } from './src/types/index';
+import type { Agent, Card } from './src/types/index';
+import { isCardRunning } from './cardRunner';
 import { providerUsage, providerFor, models, type ProviderId } from './providers';
 import { freeFallbacks } from './extraAI';
 import { logActivity } from './activity';
@@ -91,7 +92,7 @@ export function planReform(agents: Agent[]): { changes: ReformChange[]; summary:
 
 const isLocal = (req: Request) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '');
 
-export function registerTeamReformRoutes(app: Express, getAgents: () => Agent[], save: () => void) {
+export function registerTeamReformRoutes(app: Express, getAgents: () => Agent[], save: () => void, getCards: () => Card[] = () => []) {
   app.get('/api/team/reform', (_req, res) => {
     res.json(planReform(getAgents()));
   });
@@ -100,16 +101,34 @@ export function registerTeamReformRoutes(app: Express, getAgents: () => Agent[],
     const wanted: { agentId: string; to: string }[] = Array.isArray(req.body?.changes) ? req.body.changes : [];
     const valid = new Set(models().map((m) => m.id));
     let n = 0;
+    const moved = new Set<string>();
     for (const c of wanted) {
       const agent = getAgents().find((a) => a.id === c.agentId);
       if (agent && typeof c.to === 'string' && valid.has(c.to)) {
         agent.model = c.to;
+        moved.add(agent.id);
         n++;
       }
     }
     if (n) {
+      // Only a card that was actually interrupted goes back in the queue: it belongs to a teammate who just moved,
+      // it is marked as running, but the runner is no longer working on it. Cards still being worked on, or
+      // already in Review, are left alone.
+      const requeued = getCards().filter((c) => moved.has(c.assigneeId) && c.column === 'doing' && c.runState === 'running' && !isCardRunning(c.id));
+      for (const c of requeued) {
+        c.column = 'ready';
+        c.runState = undefined;
+        c.runMessage = undefined;
+        c.updatedAt = new Date().toISOString();
+      }
       save();
       logActivity('done', `Team reformed: ${n} teammate${n === 1 ? '' : 's'} moved to the AIs with room today.`);
+      logActivity(
+        'info',
+        requeued.length
+          ? `Team reformed: ${requeued.length} interrupted card${requeued.length === 1 ? '' : 's'} put back in the queue: ${requeued.map((c) => `"${c.title}"`).join(', ')}.`
+          : 'Team reformed: no cards were interrupted, so nothing was put back in the queue.'
+      );
     }
     res.json({ ok: true, changed: n, local: isLocal(req) });
   });

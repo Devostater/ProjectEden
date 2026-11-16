@@ -6,7 +6,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
-import { providerDetails, providerUsage } from './providers';
+import { providerDetails, providerUsage, usageTotals } from './providers';
 import { PRESETS, scanExtraAIs, addExtraAI, setExtraEnabled, removeExtraAI, extraSummary } from './extraAI';
 
 const ENV_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '.env.local');
@@ -24,6 +24,7 @@ export const SETTING_KEYS = [
   { key: 'OWNER_NAME', label: 'Your name', secret: false, help: 'Shown in the hub' },
   { key: 'STUDIO_NAME', label: 'Studio name', secret: false, help: 'Shown in the hub' },
   { key: 'TERMINAL_ENABLED', label: 'Terminal', secret: false, help: '1 turns the terminal on' },
+  { key: 'BACKUP_COPY_DIR', label: 'Also copy backups to this folder', secret: false, help: 'A private folder, e.g. a USB drive' },
 ] as const;
 
 const ALLOWED = new Set<string>(SETTING_KEYS.map((k) => k.key));
@@ -120,7 +121,7 @@ export function registerSettingsRoutes(app: Express) {
   });
 
   app.get('/api/provider-usage', (req, res) => {
-    res.json({ usage: providerUsage(req.query.refresh === '1') });
+    res.json({ usage: providerUsage(req.query.refresh === '1'), totals: usageTotals() });
   });
 
   app.get('/api/settings', (req, res) => {
@@ -143,6 +144,8 @@ export function registerSettingsRoutes(app: Express) {
     for (const [k, v] of Object.entries(body)) {
       if (ALLOWED.has(k) && typeof v === 'string') updates[k] = v.trim();
     }
+    // Windows accepts / in folder paths, and a backslash followed by n or t would be misread when the file is loaded again.
+    if (updates.BACKUP_COPY_DIR) updates.BACKUP_COPY_DIR = updates.BACKUP_COPY_DIR.replace(/\\/g, '/');
     try {
       writeEnvLocal(updates);
     } catch (err: any) {

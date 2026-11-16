@@ -53,7 +53,7 @@ function check() {
   const wantBusy = busy ? !(freeGb > CLEAR_FREE_GB && cpuPercent < CLEAR_CPU) : freeGb < BUSY_FREE_GB || cpuPercent >= BUSY_CPU;
   if (wantBusy === busy) {
     streak = 0;
-    if (busy) reason = describe(freeGb);
+    if (busy) reason = describe(freeGb, true);
     return;
   }
   if (++streak < 3) return; // about 30 seconds
@@ -75,8 +75,16 @@ function check() {
     for (const fn of listeners) fn(busy);
   }
 }
-const describe = (freeGb: number) =>
-  freeGb < BUSY_FREE_GB || freeGb < CLEAR_FREE_GB ? `only ${freeGb.toFixed(1)} GB memory free` : `CPU ${cpuPercent}% busy`;
+// Names what is actually the problem, and both when both apply. When the PC has just turned busy that is whatever
+// crossed the busy line; while it waits to clear it is whatever is still over its (more forgiving) clear line.
+function describe(freeGb: number, waitingToClear = false) {
+  const lowMemory = waitingToClear ? freeGb <= CLEAR_FREE_GB : freeGb < BUSY_FREE_GB;
+  const highCpu = waitingToClear ? cpuPercent >= CLEAR_CPU : cpuPercent >= BUSY_CPU;
+  const causes: string[] = [];
+  if (lowMemory) causes.push(`only ${freeGb.toFixed(1)} GB memory free`);
+  if (highCpu) causes.push(`CPU ${cpuPercent}% busy`);
+  return causes.join(' and ') || `only ${freeGb.toFixed(1)} GB memory free, CPU ${cpuPercent}% busy`;
+}
 
 setInterval(check, 10000).unref?.();
 

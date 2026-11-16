@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Send, Users, Bot, Loader2, Plus, Check, X } from 'lucide-react';
 import type { Agent } from '../types/index.ts';
+import { newlineOnCtrlEnter } from '../textbox.ts';
 import { emptyThread, type ChatMsg, type ChatThreads, type Thread } from '../chatThreads.ts';
 
 interface ModelInfo {
@@ -363,6 +364,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ agents, chat, draft, onDraft
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
+                if (newlineOnCtrlEnter(e, setInput)) return;
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   send();

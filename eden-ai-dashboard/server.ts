@@ -1,6 +1,6 @@
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
-import { canUseWeb, generate, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel } from './providers';
+import { canUseWeb, generate, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel, costByProvider } from './providers';
 import { registerSettingsRoutes } from './settings';
 import { registerPairing } from './pairing';
 import { registerProjectRoutes, ensureProjects, noteOnCard } from './projects';
@@ -392,6 +392,8 @@ async function startServer() {
           )
         : 0;
 
+    const costs = costByProvider(store.agents);
+
     res.json({
       agents: store.agents,
       swarmRuns: store.swarmRuns,
@@ -403,7 +405,11 @@ async function startServer() {
         avgLatencyMs,
         activeAgentsCount: store.agents.filter((a) => a.status !== 'offline')
           .length,
-        estimatedCost: Number(((totalTokens / 1_000_000) * 0.35).toFixed(4)),
+        estimatedCost: costs.payPerUseCost, // pay-per-use AIs only; plan and free AIs count as $0
+        payPerUseCost: costs.payPerUseCost,
+        payPerUseTokens: costs.payPerUseTokens,
+        coveredTokens: costs.coveredTokens,
+        byProvider: costs.byProvider,
         recentLogs: store.usageLogs.slice(0, 40),
       },
     });
@@ -508,7 +514,7 @@ async function startServer() {
   registerControlRoutes(app, () => ({ cards: runningCards(), rooms: runningRooms() }));
   registerUsageGuard(app); // warns at 85% of a plan, can pause the team at 95%
   registerNexusRoutes(app, () => store, () => saveStore(store));
-  registerTeamReformRoutes(app, () => store.agents, () => saveStore(store));
+  registerTeamReformRoutes(app, () => store.agents, () => saveStore(store), () => store.cards || []);
   logActivity('info', 'Hub started.');
   startCardRunner(() => store, () => saveStore(store));
 
@@ -530,13 +536,18 @@ async function startServer() {
               store.agents.length
           )
         : 0;
+    const costs = costByProvider(store.agents);
 
     res.json({
       totalTokens,
       totalRuns,
       avgLatencyMs,
       activeAgentsCount: store.agents.filter((a) => a.status !== 'offline').length,
-      estimatedCost: Number(((totalTokens / 1_000_000) * 0.35).toFixed(4)),
+      estimatedCost: costs.payPerUseCost, // pay-per-use AIs only; plan and free AIs count as $0
+      payPerUseCost: costs.payPerUseCost,
+      payPerUseTokens: costs.payPerUseTokens,
+      coveredTokens: costs.coveredTokens,
+      byProvider: costs.byProvider,
       recentLogs: store.usageLogs.slice(0, 50),
     });
   });

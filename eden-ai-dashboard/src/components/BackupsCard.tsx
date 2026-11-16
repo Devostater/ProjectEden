@@ -13,14 +13,50 @@ const when = (iso: string) => new Date(iso).toLocaleString([], { weekday: 'short
 
 // Account → Settings: backups of the hub's code and data (zip files outside the hub folder).
 export const BackupsCard: React.FC = () => {
-  const [data, setData] = useState<{ backups: Backup[]; running: boolean; error: string; folder: string } | null>(null);
+  const [data, setData] = useState<{ backups: Backup[]; running: boolean; error: string; folder: string; copyFolder: string; copyError: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [copyDir, setCopyDir] = useState('');
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [copyNote, setCopyNote] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = () => api<any>('GET', '/api/backups').then(setData).catch(() => {});
   useEffect(() => {
-    load();
+    api<any>('GET', '/api/backups')
+      .then((d) => {
+        setData(d);
+        setCopyDir(d.copyFolder || '');
+      })
+      .catch(() => {});
   }, []);
+
+  const testCopyFolder = async () => {
+    setCopyBusy(true);
+    setCopyNote(null);
+    try {
+      const r = await api<{ ok: boolean; message: string }>('POST', '/api/backups/test-folder', { folder: copyDir });
+      setCopyNote({ ok: r.ok, text: r.message });
+    } catch (err: any) {
+      setCopyNote({ ok: false, text: err.message });
+    } finally {
+      setCopyBusy(false);
+    }
+  };
+
+  const saveCopyFolder = async () => {
+    setCopyBusy(true);
+    setCopyNote(null);
+    try {
+      await api('POST', '/api/settings', { BACKUP_COPY_DIR: copyDir.trim() });
+      setCopyDir(copyDir.trim().replace(/\\/g, '/')); // the hub stores it with forward slashes
+      setCopyNote({ ok: true, text: copyDir.trim() ? 'Saved. New backups will also be copied there.' : 'Saved. Backups are no longer copied anywhere else.' });
+      await load();
+    } catch (err: any) {
+      setCopyNote({ ok: false, text: err.message });
+    } finally {
+      setCopyBusy(false);
+    }
+  };
 
   const backup = async () => {
     setBusy(true);
@@ -57,6 +93,29 @@ export const BackupsCard: React.FC = () => {
         </div>
         {note && <p role="status" className={`text-sm ${note.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>{note.text}</p>}
         {data.error && !note && <p className="text-sm text-red-500">Last backup didn't finish: {data.error}</p>}
+        {data.copyError && <p className="text-sm text-red-500">Last copy to the extra folder didn't work: {data.copyError}</p>}
+        <div className="space-y-2 border-t border-slate-200 pt-3 dark:border-slate-800">
+          <label htmlFor="backup-copy-dir" className="block text-sm font-medium text-slate-700 dark:text-slate-300">Also copy backups to this folder (optional)</label>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              id="backup-copy-dir"
+              type="text"
+              autoComplete="off"
+              value={copyDir}
+              onChange={(e) => setCopyDir(e.target.value)}
+              placeholder="For example E:\Eden backups"
+              className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+            />
+            <button onClick={testCopyFolder} disabled={copyBusy || !copyDir.trim()} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+              {copyBusy && <Loader2 className="h-4 w-4 animate-spin" />} Test it
+            </button>
+            <button onClick={saveCopyFolder} disabled={copyBusy || copyDir.trim() === (data.copyFolder || '').trim()} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50">
+              Save
+            </button>
+          </div>
+          <p className="text-xs text-amber-600 dark:text-amber-400">Backups contain your keys, so pick a private folder that only you can open.</p>
+          {copyNote && <p role="status" className={`text-sm ${copyNote.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>{copyNote.text}</p>}
+        </div>
         {data.backups.length > 1 && (
           <details className="text-sm">
             <summary className="cursor-pointer text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">All backups ({data.backups.length})</summary>

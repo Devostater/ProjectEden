@@ -103,8 +103,33 @@ export interface TelemetrySummary {
   totalRuns: number;
   avgLatencyMs: number;
   activeAgentsCount: number;
-  estimatedCost: number; // calculated at standard rate
+  estimatedCost: number; // same as payPerUseCost: only AIs billed per use count; plan and free AIs are $0
+  payPerUseCost?: number;
+  payPerUseTokens?: number;
+  coveredTokens?: number; // tokens on plan or free AIs ("covered by plan")
+  byProvider?: ProviderCost[];
   recentLogs: UsageMetric[];
+}
+
+// One AI provider's share of the team's token use, with its own price (rates live in providers.ts).
+export interface ProviderCost {
+  provider: 'lyra' | 'anthropic' | 'google' | 'openai' | 'extra';
+  name: string;
+  tokens: number;
+  runs: number;
+  coveredByPlan: boolean;
+  ratePerMillion: number;
+  cost: number;
+}
+
+// Tokens and estimated cost over a period (today, or the last 7 days). Costs are estimates, not a bill.
+export interface UsageTotal {
+  tokens: number;
+  cost: number;
+}
+export interface UsageTotals {
+  today: UsageTotal;
+  week: UsageTotal;
 }
 
 // ---- Projects and boards ----
@@ -213,6 +238,8 @@ export interface Card {
   runState?: 'running' | 'waiting' | 'failed'; // set by the card runner
   runMessage?: string;
   runStartedAt?: string;
+  tokens?: number; // total AI tokens used on this card so far, across all runs
+  estimatedCost?: number; // estimate in dollars for those tokens; plan and free AIs count as $0
   createdAt: string;
   updatedAt: string;
 }

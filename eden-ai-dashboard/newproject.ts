@@ -272,16 +272,49 @@ function addToLayout(name: string, purpose: string, repo?: string) {
   }
 }
 
-function syncCheck(dir: string): { inSync: boolean; detail: string } {
+function syncCheck(dir: string): { inSync: boolean; detail: string; ahead: number; behind: number; dirty: number; noUpstream: boolean } {
   git(['fetch', '-q', 'origin'], dir, 60000);
   const st = git(['status', '--porcelain'], dir).out;
-  const ab = git(['rev-list', '--left-right', '--count', 'HEAD...@{u}'], dir);
-  if (!ab.ok) return { inSync: false, detail: 'No upstream branch on GitHub yet.' };
-  const [ahead, behind] = ab.out.split(/\s+/).map(Number);
   const dirty = st ? st.split('\n').length : 0;
+  const ab = git(['rev-list', '--left-right', '--count', 'HEAD...@{u}'], dir);
+  if (!ab.ok) return { inSync: false, detail: 'No upstream branch on GitHub yet.', ahead: 0, behind: 0, dirty, noUpstream: true };
+  const [ahead, behind] = ab.out.split(/\s+/).map(Number);
   const inSync = !ahead && !behind && !dirty;
-  return { inSync, detail: inSync ? 'This PC and GitHub match.' : `${ahead} to push, ${behind} to pull, ${dirty} uncommitted change(s).` };
+  return { inSync, detail: inSync ? 'This PC and GitHub match.' : `${ahead} to push, ${behind} to pull, ${dirty} uncommitted change(s).`, ahead, behind, dirty, noUpstream: false };
 }
+
+// Why a project is not in step with GitHub, in a form the hub can show and act on.
+export type SyncReason = 'uncommitted' | 'unpushed' | 'behind' | 'diverged' | 'auth' | 'forge-main' | 'no-github' | 'no-branch' | 'other';
+const AUTH_ERROR = /authentication|permission denied|could not read username|invalid credentials|access denied|\b40[13]\b|terminal prompts disabled/i;
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+// One plain sentence per reason, e.g. "ProjectEden: 18 files changed here and not pushed".
+export function syncHint(name: string, reason: SyncReason, n = 0): string {
+  switch (reason) {
+    case 'uncommitted':
+      return `${name}: ${plural(n, 'file', 'files')} changed here and not pushed`;
+    case 'unpushed':
+      return `${name}: ${plural(n, 'saved change', 'saved changes')} here not on GitHub yet`;
+    case 'behind':
+      return `${name}: GitHub has ${plural(n, 'newer change', 'newer changes')} this PC does not have yet`;
+    case 'diverged':
+      return `${name}: this PC and GitHub both changed, so someone needs to merge them by hand`;
+    case 'auth':
+      return `${name}: GitHub did not accept the login; link GitHub again in Settings`;
+    case 'forge-main':
+      return `${name}: Forge is on the main branch and Eden never pushes Forge to main; switch it to another branch first`;
+    case 'no-github':
+      return `${name}: not on GitHub yet`;
+    case 'no-branch':
+      return `${name}: this branch is not on GitHub yet`;
+    default:
+      return `${name}: could not sync; open it to see why`;
+  }
+}
+
+// The Forge branch rule: Forge (LYRA) is never pushed to main/master.
+const isForge = (dir: string) => path.basename(dir).toLowerCase() === 'forge';
+const isMainBranch = (b: string) => b === 'main' || b === 'master';
 
 export async function createProject(opts: { name: string; purpose?: string; template?: Template; adopt?: boolean; color?: string }, store: Store, save: () => void): Promise<ProjectReport> {
   const display = String(opts.name || '').trim().slice(0, 80);
@@ -440,10 +473,29 @@ export async function createProject(opts: { name: string; purpose?: string; temp
 }
 
 // Sync a project: secrets out, optional commit, pull (fast-forward only), push.
-export async function syncProject(dir: string, commitMessage?: string): Promise<{ ok: boolean; steps: Step[]; secretsMoved: string[] }> {
+export interface SyncResult {
+  ok: boolean;
+  steps: Step[];
+  secretsMoved: string[];
+  reason?: SyncReason; // why it is not in step with GitHub (when ok is false)
+  hint?: string; // one plain sentence about it
+  files?: number; // changed files here, for the "uncommitted" reason
+}
+export async function syncProject(dir: string, commitMessage?: string): Promise<SyncResult> {
   const steps: Step[] = [];
   const add = (step: string, state: StepState, detail: string) => steps.push({ step, state, detail });
-  if (!fs.existsSync(path.join(dir, '.git'))) return { ok: false, steps: [{ step: 'Git', state: 'fail', detail: `${dir} is not a git repository.` }], secretsMoved: [] };
+  const name = path.basename(dir);
+  const fail = (reason: SyncReason, n = 0, secretsMoved: string[] = []): SyncResult => ({ ok: false, steps, secretsMoved, reason, hint: syncHint(name, reason, n), files: reason === 'uncommitted' ? n : undefined });
+  if (!fs.existsSync(path.join(dir, '.git'))) {
+    add('Git', 'fail', `${dir} is not a git repository.`);
+    return fail('other');
+  }
+  const branch = git(['branch', '--show-current'], dir).out || 'main';
+  // Forge never goes to main: stop before anything is committed or pushed.
+  if (isForge(dir) && isMainBranch(branch)) {
+    add('Branch', 'fail', `Forge is on ${branch}. Eden never pushes Forge to ${branch}; switch to another branch first.`);
+    return fail('forge-main');
+  }
   const { secrets, big } = scanFolder(dir);
   const loose = secrets.filter((f) => !git(['check-ignore', '-q', f], dir).ok);
   const secretsMoved = moveSecrets(dir, loose);
@@ -452,31 +504,40 @@ export async function syncProject(dir: string, commitMessage?: string): Promise<
     const bigOnes = bigTracked(dir, big);
     if (bigOnes.length) {
       add('Commit', 'fail', `Not committing: files over 50 MB (${bigOnes.slice(0, 3).join(', ')}).`);
-      return { ok: false, steps, secretsMoved };
+      return fail('other', 0, secretsMoved);
     }
     git(['add', '-A'], dir);
     if (git(['diff', '--cached', '--name-only'], dir).out) {
       const c = git(['commit', '-q', '-m', commitMessage.slice(0, 200)], dir);
       add('Commit', c.ok ? 'ok' : 'fail', c.ok ? 'Committed your changes.' : lastLine(c.err || c.out));
-      if (!c.ok) return { ok: false, steps, secretsMoved };
+      if (!c.ok) return fail('other', 0, secretsMoved);
     } else add('Commit', 'skip', 'Nothing to commit.');
   }
   if (!git(['remote', 'get-url', 'origin'], dir).ok) {
     add('GitHub', 'warn', 'No GitHub repo linked yet.');
-    return { ok: false, steps, secretsMoved };
+    return fail('no-github', 0, secretsMoved);
   }
-  const branch = git(['branch', '--show-current'], dir).out || 'main';
   const hasUpstream = git(['rev-parse', '--abbrev-ref', '@{u}'], dir).ok;
   if (hasUpstream) {
     const pull = git(['pull', '--ff-only', '-q'], dir, 300000);
-    add('Pull', pull.ok ? 'ok' : 'warn', pull.ok ? 'Up to date with GitHub.' : `Could not fast-forward (GitHub and this PC both changed): ${lastLine(pull.err)}`);
-    if (!pull.ok) return { ok: false, steps, secretsMoved };
+    const authFailed = !pull.ok && AUTH_ERROR.test(pull.err);
+    add('Pull', pull.ok ? 'ok' : 'warn', pull.ok ? 'Up to date with GitHub.' : authFailed ? `GitHub did not accept the login: ${lastLine(pull.err)}` : `Could not fast-forward (GitHub and this PC both changed): ${lastLine(pull.err)}`);
+    if (!pull.ok) return fail(authFailed ? 'auth' : 'diverged', 0, secretsMoved);
   }
   const push = git(['push', '-u', 'origin', branch], dir, 300000);
   add('Push', push.ok ? 'ok' : 'warn', push.ok ? `Pushed ${branch}.` : lastLine(push.err));
   const s = syncCheck(dir);
   add('Check', s.inSync ? 'ok' : 'warn', s.detail);
-  return { ok: steps.every((x) => x.state === 'ok' || x.state === 'skip'), steps, secretsMoved };
+  const ok = steps.every((x) => x.state === 'ok' || x.state === 'skip');
+  if (ok) return { ok, steps, secretsMoved };
+  // Work out the main reason it is still not in step, most urgent first.
+  if (!push.ok) return fail(AUTH_ERROR.test(push.err) ? 'auth' : s.behind ? 'diverged' : 'other', 0, secretsMoved);
+  if (s.noUpstream) return fail('no-branch', 0, secretsMoved);
+  if (s.ahead && s.behind) return fail('diverged', 0, secretsMoved);
+  if (s.behind) return fail('behind', s.behind, secretsMoved);
+  if (s.dirty) return fail('uncommitted', s.dirty, secretsMoved);
+  if (s.ahead) return fail('unpushed', s.ahead, secretsMoved);
+  return fail('other', 0, secretsMoved);
 }
 
 // ---- All AZI repos (for the sidebar's GitHub list and "Sync all") ----------------------------------
@@ -493,6 +554,20 @@ export interface AziRepo {
   state: 'synced' | 'changes' | 'no-remote' | 'not-on-pc' | 'error';
   detail?: string;
   private?: boolean; // visibility on GitHub (unknown without a token)
+  reason?: SyncReason; // why it is not in step with GitHub (when state is 'changes')
+  hint?: string; // one plain sentence about it
+  projectId?: string; // the Eden project for this repo, so the push route can be used on it
+}
+
+// The reason a repo is out of step, from what git can see right now (a sync run can find more, e.g. a failed login).
+function repoReason(dir: string, branch: string, ahead: number, behind: number, dirty: number, hasUpstream: boolean): SyncReason | undefined {
+  if (isForge(dir) && isMainBranch(branch)) return 'forge-main';
+  if (!hasUpstream) return dirty ? 'uncommitted' : 'no-branch';
+  if (ahead && behind) return 'diverged';
+  if (behind) return 'behind';
+  if (dirty) return 'uncommitted';
+  if (ahead) return 'unpushed';
+  return undefined;
 }
 
 function repoStatus(dir: string, fetchFirst: boolean): AziRepo {
@@ -505,8 +580,11 @@ function repoStatus(dir: string, fetchFirst: boolean): AziRepo {
   if (fetchFirst) git(['fetch', '-q', 'origin'], dir, 60000);
   const ab = git(['rev-list', '--left-right', '--count', 'HEAD...@{u}'], dir);
   const [ahead, behind] = ab.ok ? ab.out.split(/\s+/).map(Number) : [0, 0];
-  const state = !ab.ok ? 'changes' : ahead || behind || dirty ? 'changes' : 'synced';
-  return { name, folder: dir, repo, url: `https://github.com/${repo}`, branch, ahead, behind, dirty, state, detail: ab.ok ? undefined : 'No upstream branch yet.' };
+  const forgeOnMain = isForge(dir) && isMainBranch(branch);
+  const state = !ab.ok || ahead || behind || dirty || forgeOnMain ? 'changes' : 'synced';
+  const reason = state === 'changes' ? repoReason(dir, branch, ahead, behind, dirty, ab.ok) : undefined;
+  const n = reason === 'uncommitted' ? dirty : reason === 'behind' ? behind : ahead;
+  return { name, folder: dir, repo, url: `https://github.com/${repo}`, branch, ahead, behind, dirty, state, detail: ab.ok ? undefined : 'No upstream branch yet.', reason, hint: reason ? syncHint(name, reason, n) : undefined };
 }
 
 export function aziRepoDirs(): string[] {
@@ -588,20 +666,30 @@ function saveAuto(a: AutoSync) {
 }
 
 let syncBusy = false;
-export async function runSyncAll(reason: 'manual' | 'start' | 'daily'): Promise<{ ok: boolean; results: { name: string; ok: boolean; steps: Step[] }[] } | null> {
+export interface SyncAllResult {
+  name: string;
+  ok: boolean;
+  steps: Step[];
+  reason?: SyncReason; // why this project is not in step with GitHub
+  hint?: string; // one plain sentence about it
+  files?: number;
+}
+export async function runSyncAll(reason: 'manual' | 'start' | 'daily'): Promise<{ ok: boolean; results: SyncAllResult[] } | null> {
   if (syncBusy) return null;
   syncBusy = true;
   try {
-    const results: { name: string; ok: boolean; steps: Step[] }[] = [];
+    const results: SyncAllResult[] = [];
     for (const dir of aziRepoDirs()) {
       // Repos without a GitHub remote have nothing to sync: skip them quietly when it runs by itself.
       if (reason !== 'manual' && !git(['remote', 'get-url', 'origin'], dir).ok) continue;
       const r = await syncProject(dir);
-      results.push({ name: path.basename(dir), ok: r.ok, steps: r.steps });
+      results.push({ name: path.basename(dir), ok: r.ok, steps: r.steps, reason: r.reason, hint: r.hint, files: r.files });
     }
     const bad = results.filter((r) => !r.ok);
     const label = reason === 'manual' ? 'Sync all' : reason === 'start' ? 'Auto-sync (Eden started)' : 'Auto-sync (daily)';
-    const summary = bad.length ? `${results.length - bad.length} of ${results.length} up to date; check ${bad.map((b) => b.name).join(', ')}.` : `${results.length} projects match GitHub.`;
+    const summary = bad.length
+      ? `${results.length - bad.length} of ${results.length} up to date; check ${bad.map((b) => b.hint || b.name).join('; ')}.`
+      : `${results.length} projects match GitHub.`;
     logActivity(bad.length ? 'info' : 'done', `${label}: ${summary}`);
     const a = loadAuto();
     saveAuto({ ...a, lastRun: now(), lastResult: `${label}: ${summary}` });
@@ -645,7 +733,14 @@ export function registerNewProjectRoutes(app: Express, getStore: () => Store, sa
 
   // Every git folder in C:\AZI with its sync state, plus GitHub repos that aren't on this PC.
   app.get('/api/azi/repos', async (req, res) => {
-    res.json(await listAziRepos(req.query.fetch === '1'));
+    const out = await listAziRepos(req.query.fetch === '1');
+    // Tell each repo which Eden project it is, so "Save to GitHub" can use that project's sync route.
+    const projects = getStore().projects || [];
+    for (const r of out.repos) {
+      const p = projects.find((x) => x.repo && r.repo && x.repo.toLowerCase() === r.repo.toLowerCase());
+      if (p) r.projectId = p.id;
+    }
+    res.json(out);
   });
 
   // Sync every AZI repo: secrets out, pull (fast-forward only), push. Never commits for you, never forces.
@@ -701,7 +796,7 @@ export function registerNewProjectRoutes(app: Express, getStore: () => Store, sa
     const dir = dirForProject(p);
     if (!dir || !fs.existsSync(path.join(dir, '.git'))) return res.status(404).json({ error: `No git folder for ${p.name} in ${AZI_ROOT}.` });
     const result = await syncProject(dir, typeof req.body?.commitMessage === 'string' && req.body.commitMessage.trim() ? req.body.commitMessage.trim() : undefined);
-    logActivity(result.ok ? 'done' : 'info', `Sync ${p.name}: ${result.ok ? 'GitHub is up to date.' : result.steps.map((s) => s.detail).slice(-1)[0]}`);
+    logActivity(result.ok ? 'done' : 'info', `Sync ${p.name}: ${result.ok ? 'GitHub is up to date.' : result.hint || result.steps.map((s) => s.detail).slice(-1)[0]}`);
     res.json({ ...result, folder: dir });
   });
 }

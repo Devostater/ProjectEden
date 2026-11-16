@@ -121,6 +121,8 @@ export const BottomPanel: React.FC<{
   // ---- Activity
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
   const [unread, setUnread] = useState(false);
+  // Lines with an id below this were saved from an earlier session of the hub.
+  const [sessionStart, setSessionStart] = useState(0);
   const latest = useRef(0);
   const watching = open && tab === 'activity';
   const watchingRef = useRef(watching);
@@ -134,7 +136,8 @@ export const BottomPanel: React.FC<{
       try {
         const d = await fetch(`/api/activity?since=${latest.current}`).then((r) => r.json());
         if (!alive) return;
-        // A restarted server counts from 1 again: start over rather than miss its lines.
+        if (typeof d.sessionStart === 'number') setSessionStart(d.sessionStart);
+        // If the saved log was lost, the server counts from 1 again: start over rather than miss its lines.
         if (d.latest < latest.current) {
           latest.current = 0;
           setEntries([]);
@@ -142,7 +145,7 @@ export const BottomPanel: React.FC<{
         }
         if (d.entries.length) {
           latest.current = d.latest;
-          setEntries((e) => [...e, ...d.entries].slice(-300));
+          setEntries((e) => [...e, ...d.entries].slice(-500));
           if (!watchingRef.current) setUnread(true);
         }
       } catch {}
@@ -410,8 +413,16 @@ export const BottomPanel: React.FC<{
       {open && tab === 'activity' && (
         <div className="flex-1 overflow-y-auto px-3 py-2 font-mono text-xs leading-relaxed">
           {entries.length === 0 && <p className="font-sans text-sm text-slate-500">Nothing yet. Card work, plans and chat replies show up here as they happen.</p>}
-          {entries.map((e) => (
-            <div key={e.id} className="flex gap-3">
+          {entries.map((e, i) => (
+            <React.Fragment key={e.id}>
+            {i > 0 && e.id >= sessionStart && entries[i - 1].id < sessionStart && (
+              <div className="my-1.5 flex items-center gap-2 font-sans text-xs text-slate-400 dark:text-slate-500" role="separator">
+                <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+                Earlier session
+                <span className="h-px flex-1 bg-slate-200 dark:bg-slate-700" />
+              </div>
+            )}
+            <div className="flex gap-3">
               <span className="shrink-0 text-slate-400">{new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
               <span className="min-w-0">
                 <span className={KIND_STYLE[e.kind]}>{e.text}</span>
@@ -439,6 +450,7 @@ export const BottomPanel: React.FC<{
                 )}
               </span>
             </div>
+            </React.Fragment>
           ))}
           <div ref={activityEnd} />
         </div>

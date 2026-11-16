@@ -450,7 +450,7 @@ export const SettingsView: React.FC<{ onSaved?: () => void }> = ({ onSaved }) =>
         {showAdvanced && (
           <div className="mt-3 space-y-3">
             <div className="divide-y divide-slate-200 rounded-xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
-              {settings.filter((s) => !['GITHUB_TOKEN', 'OWNER_NAME', 'STUDIO_NAME', 'TERMINAL_ENABLED'].includes(s.key)).map((s) => (
+              {settings.filter((s) => !['GITHUB_TOKEN', 'OWNER_NAME', 'STUDIO_NAME', 'TERMINAL_ENABLED', 'BACKUP_COPY_DIR'].includes(s.key)).map((s) => (
                 <div key={s.key} className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center">
                   <div className="text-sm text-slate-700 dark:text-slate-300 sm:w-48">{s.label}</div>
                   <input

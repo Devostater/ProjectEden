@@ -2,6 +2,7 @@
 // to the teammate best suited to it. Nothing is added to the board until the owner approves the plan.
 import type { Express } from 'express';
 import { askTeammate } from './cardRunner';
+import { defaultModel, providerFor, ratePerMillion } from './providers';
 import { logActivity } from './activity';
 import type { Agent, Project, Card } from './src/types/index';
 
@@ -13,6 +14,7 @@ interface PlannerStore {
 
 const LEAD_ID = 'agent-synthesizer';
 const MAX_CARDS = 8;
+const TYPICAL_CARD_TOKENS = 4000; // used for the cost guess until the team has finished some cards
 
 // Models often wrap JSON in a code fence or add a sentence around it; take the outermost object.
 function extractJson(text: string): any {
@@ -88,9 +90,17 @@ Rules:
         .filter((c: any) => c.title);
       if (!cards.length) throw new Error('Chief did not propose any cards. Try describing the goal in more detail.');
       logActivity('done', `${lead.name} proposed ${cards.length} cards for ${project.name}. Waiting for your approval.`);
+      // A rough guess of what each card will use: the average of cards the team has already finished
+      // (or a typical amount when there are none yet). Priced at each teammate's own AI, so the screen
+      // can re-add it up when the owner unticks a card or picks someone else.
+      const past = (store.cards || []).map((c) => c.tokens || 0).filter((t) => t > 0);
+      const estimatedTokens = past.length ? Math.round(past.reduce((s, t) => s + t, 0) / past.length) : TYPICAL_CARD_TOKENS;
+      const ratesPerMillion: Record<string, number> = {};
+      for (const a of team) ratesPerMillion[a.id] = ratePerMillion(providerFor(a.model || defaultModel()));
       res.json({
         summary: typeof plan.summary === 'string' ? plan.summary.trim().slice(0, 600) : '',
-        cards,
+        cards: cards.map((c: any) => ({ ...c, estimatedTokens })),
+        ratesPerMillion,
         plannedBy: lead.name,
         via: answer.via || '',
       });

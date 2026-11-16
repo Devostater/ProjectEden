@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, GitBranch, FileText, GripVertical, Plus, Send } from 'lucide-react';
 import type { Agent, Card, DAGPipeline, HostedFile, Project } from '../types/index.ts';
+import { newlineOnCtrlEnter } from '../textbox.ts';
 import { UsageBar, useProviderUsage, RefreshUsageButton } from './UsageBars.tsx';
 import { openPanel } from '../panel.ts';
 import { roadmapProgress, progressOf } from './Roadmap.tsx';
@@ -461,6 +462,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
+              if (newlineOnCtrlEnter(e, setText)) return;
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 submit();

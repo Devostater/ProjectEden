@@ -608,6 +608,7 @@ interface PlannedCard {
   assigneeId: string;
   priority: Card['priority'];
   waitsFor: number[]; // positions of earlier cards in the plan
+  estimatedTokens?: number; // a rough guess of what the card will use
   include: boolean;
 }
 
@@ -618,6 +619,7 @@ const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi
   const [summary, setSummary] = useState('');
   const [via, setVia] = useState('');
   const [plan, setPlan] = useState<PlannedCard[] | null>(null);
+  const [rates, setRates] = useState<Record<string, number>>({}); // dollars per 1M tokens for each teammate's AI (0 = plan or free)
 
   const ask = async () => {
     if (!goal.trim() || busy) return;
@@ -629,6 +631,7 @@ const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi
       if (!res.ok) throw new Error(data.error || 'Planning failed.');
       setSummary(data.summary);
       setVia(data.via);
+      setRates(data.ratesPerMillion || {});
       setPlan(data.cards.map((c: Omit<PlannedCard, 'include'>) => ({ ...c, include: true })));
     } catch (err: any) {
       setError(err.message);
@@ -658,6 +661,9 @@ const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi
   };
 
   const startable = chosen.filter((c) => c.assigneeId).length;
+  // Adds up the guess for the cards that are ticked, using each card's teammate. It follows ticks and teammate changes.
+  const guessTokens = chosen.reduce((s, c) => s + (c.estimatedTokens || 0), 0);
+  const guessCost = chosen.reduce((s, c) => s + ((c.estimatedTokens || 0) / 1_000_000) * (rates[c.assigneeId] || 0), 0);
 
   return (
     <Dialog
@@ -727,6 +733,16 @@ const PlanDialog: React.FC<{ project: Project; agents: Agent[]; api: ProjectsApi
             <StartPicker value={queueAt} onChange={setQueueAt} />
           </div>
           {via && <p className="text-xs text-slate-500">Planned with {via} because Chief's own AI isn't available right now.</p>}
+          <p className="text-sm text-slate-700 dark:text-slate-300" title="A rough guess from the cards the team has finished before. The real amount depends on the work, and AIs on a plan or free count as $0.">
+            {chosen.length ? (
+              <>
+                <b>About {guessCost > 0 ? `$${guessCost.toFixed(guessCost < 1 ? 4 : 2)}` : '$0'}</b> to run {chosen.length === 1 ? 'this card' : `all ${chosen.length} cards`}
+                <span className="text-slate-500 dark:text-slate-400"> (estimate, about {guessTokens.toLocaleString()} tokens{guessCost > 0 ? '' : '; these AIs are on a plan or free'})</span>
+              </>
+            ) : (
+              <span className="text-slate-500 dark:text-slate-400">No cards ticked.</span>
+            )}
+          </p>
           <ul className="space-y-2">
             {plan.map((c, i) => (
               <li key={i} className={`rounded-lg border p-3 ${c.include ? 'border-slate-200 dark:border-slate-700' : 'border-dashed border-slate-200 opacity-50 dark:border-slate-800'}`}>

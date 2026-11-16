@@ -3,7 +3,9 @@ import { Send, Square, Trash2, Loader2, KanbanSquare, Settings2, ChevronLeft, Le
 import { RoomList, RoomDialog } from './NexusRooms.tsx';
 import type { NexusRoomsApi } from '../nexusRooms.ts';
 import type { Agent, Card, Project } from '../types/index.ts';
+import { newlineOnCtrlEnter } from '../textbox.ts';
 import { Formatted } from './ChatView.tsx';
+import { money } from './UsageBars.tsx';
 
 interface NexusMessage {
   seq: number;
@@ -321,14 +323,20 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
                           {made.map((c) => {
                             const p = projects.find((x) => x.id === c.projectId);
                             return (
-                              <button key={c.id} onClick={() => onOpenCard(c)} title={`${p?.name || ''} · ${c.column}`} className="flex max-w-full items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:border-indigo-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200">
+                              <button key={c.id} onClick={() => onOpenCard(c)} title={`${p?.name || ''} · ${c.column}${c.tokens ? ` · about ${c.tokens.toLocaleString()} tokens, estimated ${money(c.estimatedCost || 0)}` : ''}`} className="flex max-w-full items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2 py-0.5 text-xs text-slate-700 hover:border-indigo-500 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200">
                                 <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: p?.color }} />
                                 <span className="truncate">{c.title}</span>
                                 <span className="shrink-0 text-slate-400">{c.column === 'done' ? '✓' : c.column === 'review' ? 'review' : ''}</span>
+                                {!!c.tokens && <span className="shrink-0 tabular-nums text-slate-400">~{c.tokens.toLocaleString()} tokens · est. {money(c.estimatedCost || 0)}</span>}
                               </button>
                             );
                           })}
                         </div>
+                        {made.some((c) => c.tokens) && (
+                          <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400" title="Estimates only. AIs on a plan or free count as $0.">
+                            So far: about {made.reduce((s, c) => s + (c.tokens || 0), 0).toLocaleString()} tokens, estimated {money(made.reduce((s, c) => s + (c.estimatedCost || 0), 0))}
+                          </p>
+                        )}
                       </div>
                     );
                   })()}
@@ -379,6 +387,7 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
+                if (newlineOnCtrlEnter(e, setInput)) return;
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   send();

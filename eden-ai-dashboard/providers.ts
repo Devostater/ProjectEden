@@ -402,10 +402,37 @@ function saveUsage() {
   }
 }
 
+// A short history of tokens per day and AI, kept so the sidebar can show "this week". Only the last 14 days are kept.
+// It starts counting from the day this was added, so "this week" fills up over the first week.
+const HISTORY_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-usage-days.json');
+let history: Record<string, Partial<Record<ProviderId, number>>> = {};
+try {
+  history = JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf-8'));
+} catch {
+  // No history yet; it starts now.
+}
+
+function recordHistory(p: ProviderId, tokens: number) {
+  const day = today();
+  if (!history[day]) {
+    history[day] = {};
+    // Start today's count from what was already counted before the history existed.
+    for (const id of Object.keys(usage) as ProviderId[]) if (usage[id]?.day === day) history[day][id] = Math.max(0, (usage[id]!.tokens || 0) - (id === p ? tokens : 0));
+  }
+  history[day][p] = (history[day][p] || 0) + tokens;
+  for (const d of Object.keys(history).sort().slice(0, -14)) delete history[d];
+  try {
+    fs.writeFileSync(HISTORY_PATH, JSON.stringify(history, null, 2), 'utf-8');
+  } catch (err: any) {
+    fileProblem("save the AI usage history", err);
+  }
+}
+
 function recordUsage(p: ProviderId, tokens: number) {
   const u = dayUsage(p);
   u.messages += 1;
   u.tokens += tokens;
+  recordHistory(p, tokens);
   delete u.limitNote;
   delete u.limitAt;
   delete downUntil[p];
@@ -500,18 +527,105 @@ export function providerUsage(refresh = false) {
   return (['lyra', 'anthropic', 'google', 'openai', 'extra'] as ProviderId[]).map((p) => {
     const u = dayUsage(p);
     const limit = Math.max(1, parseInt(process.env[LIMIT_ENV[p]] || '', 10) || (p === 'lyra' || p === 'extra' ? 1000 : DEFAULT_DAILY_LIMIT));
+    const mode = providerMode(p);
+    const rate = PRICE_PER_MILLION_TOKENS[p] || 0;
+    const coveredByPlan = rate === 0 || mode === 'subscription';
     return {
       provider: p,
       name: names[p],
-      mode: providerMode(p),
+      mode,
       messages: u.messages,
       tokens: u.tokens,
+      coveredByPlan, // $0: a plan or a free/local AI
+      cost: coveredByPlan ? 0 : Number(((u.tokens / 1_000_000) * rate).toFixed(4)), // today's estimate
       limit,
       limitNote: u.limitNote || '',
       // What the plan itself reports, when the tool records it (ChatGPT: percent used; Claude: limit hits).
       real: p === 'google' || p === 'lyra' || p === 'extra' ? ({ source: 'none', checkedAt: Date.now() } as RealLimit) : real[p],
     };
   });
+}
+
+// ---- Cost estimate --------------------------------------------------------------------------
+// EASY TO EDIT: dollars per 1 million tokens for AIs you pay for per use (an API key).
+// These are rough blended rates (reading and writing mixed), so the totals are estimates, not a bill.
+// Change a number here when a price changes. 0 means the AI is free or only costs you your plan.
+export const PRICE_PER_MILLION_TOKENS: Record<ProviderId, number> = {
+  anthropic: 6, // Claude
+  google: 0.5, // Gemini
+  openai: 4, // ChatGPT / OpenAI
+  lyra: 0, // runs on this PC
+  extra: 0, // Ollama, LM Studio and free AIs you added
+};
+
+export interface CostLine {
+  provider: ProviderId;
+  name: string;
+  tokens: number;
+  runs: number;
+  coveredByPlan: boolean; // true = counts as $0 ("covered by plan")
+  ratePerMillion: number; // dollars per 1M tokens that apply (0 when covered)
+  cost: number;
+}
+
+// Groups the team's token use by AI provider and prices each group with its own rate.
+// An AI used through a subscription (Claude Code, Gemini CLI, Codex) or a free/local AI costs $0.
+export function costByProvider(agents: { model?: string; totalTokens: number; totalRuns: number }[]) {
+  const groups = new Map<ProviderId, { tokens: number; runs: number }>();
+  for (const a of agents) {
+    const p = providerFor(a.model || defaultModel());
+    const g = groups.get(p) || { tokens: 0, runs: 0 };
+    g.tokens += a.totalTokens || 0;
+    g.runs += a.totalRuns || 0;
+    groups.set(p, g);
+  }
+  const lines: CostLine[] = [...groups.entries()].map(([p, g]) => {
+    const rate = PRICE_PER_MILLION_TOKENS[p] || 0;
+    const coveredByPlan = rate === 0 || providerMode(p) === 'subscription';
+    const cost = coveredByPlan ? 0 : (g.tokens / 1_000_000) * rate;
+    return {
+      provider: p,
+      name: PROVIDER_LABEL[p],
+      tokens: g.tokens,
+      runs: g.runs,
+      coveredByPlan,
+      ratePerMillion: coveredByPlan ? 0 : rate,
+      cost: Number(cost.toFixed(4)),
+    };
+  });
+  const payPerUse = lines.filter((l) => !l.coveredByPlan);
+  return {
+    byProvider: lines,
+    payPerUseCost: Number(payPerUse.reduce((s, l) => s + l.cost, 0).toFixed(4)),
+    payPerUseTokens: payPerUse.reduce((s, l) => s + l.tokens, 0),
+    coveredTokens: lines.filter((l) => l.coveredByPlan).reduce((s, l) => s + l.tokens, 0),
+  };
+}
+
+// Dollars per 1 million tokens that apply to an AI right now (0 when it is free or on a plan).
+export function ratePerMillion(p: ProviderId): number {
+  const rate = PRICE_PER_MILLION_TOKENS[p] || 0;
+  return rate === 0 || providerMode(p) === 'subscription' ? 0 : rate;
+}
+
+// Estimated cost of some tokens on one AI. Same rule as everywhere else: plan and free AIs are $0.
+export const estimateCost = (p: ProviderId, tokens: number): number => Number((((tokens || 0) / 1_000_000) * ratePerMillion(p)).toFixed(4));
+
+// Tokens and estimated cost for today and for the last 7 days (today included), across all AIs.
+export function usageTotals() {
+  const sum = (days: string[]) => {
+    let tokens = 0;
+    let cost = 0;
+    for (const d of days) {
+      for (const [p, t] of Object.entries(history[d] || {}) as [ProviderId, number][]) {
+        tokens += t || 0;
+        cost += estimateCost(p, t || 0);
+      }
+    }
+    return { tokens, cost: Number(cost.toFixed(4)) };
+  };
+  const days = Array.from({ length: 7 }, (_, i) => new Date(Date.now() - i * 86_400_000).toLocaleDateString('en-CA'));
+  return { today: sum([days[0]]), week: sum(days) };
 }
 
 // LYRA's chat API streams one JSON event per line; the reply is the last "answer" event.
