@@ -1,16 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye } from 'lucide-react';
+import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints } from 'lucide-react';
 import type { Agent, Card, Project, RoadmapGoal } from '../types/index.ts';
 import { FlowTab, WorkloadTab, ProgressTab } from './ProjectVisuals.tsx';
 import { Roadmap, roadmapProgress } from './Roadmap.tsx';
 import { Toolbox } from './Toolbox.tsx';
 import { PreviewTab } from './PreviewTab.tsx';
+import { WorkTrail } from './WorkTrail.tsx';
 import { ReviewTab, type ReviewProps } from './ReviewTab.tsx';
 import { LyraPanel, LyraChibi } from './LyraPanel.tsx';
 import { OPEN_PANEL_EVENT } from '../panel.ts';
 
-type PanelTab = 'flow' | 'workload' | 'progress' | 'roadmap' | 'toolbox' | 'preview' | 'review' | 'lyra' | 'activity' | 'terminal';
-const PROJECT_TABS: PanelTab[] = ['flow', 'workload', 'progress', 'roadmap', 'toolbox', 'preview'];
+type PanelTab = 'flow' | 'workload' | 'progress' | 'trail' | 'roadmap' | 'toolbox' | 'preview' | 'review' | 'lyra' | 'activity' | 'terminal';
+const PROJECT_TABS: PanelTab[] = ['flow', 'workload', 'progress', 'trail', 'roadmap', 'toolbox', 'preview'];
 const ALL_TABS: PanelTab[] = [...PROJECT_TABS, 'review', 'lyra', 'activity', 'terminal'];
 
 // The little LYRA face used as the tab's icon.
@@ -249,7 +250,7 @@ export const BottomPanel: React.FC<{
     const show = (e: Event) => {
       const want = (e as CustomEvent).detail as PanelTab;
       if (want === 'review' || want === 'lyra' || want === 'activity' || want === 'terminal') pick(want);
-      if ((want === 'roadmap' || want === 'toolbox' || want === 'preview') && project) pick(want);
+      if ((want === 'trail' || want === 'roadmap' || want === 'toolbox' || want === 'preview') && project) pick(want);
     };
     window.addEventListener(OPEN_PANEL_EVENT, show);
     return () => window.removeEventListener(OPEN_PANEL_EVENT, show);
@@ -305,6 +306,7 @@ export const BottomPanel: React.FC<{
         {project && tabButton('flow', 'Flow', Workflow)}
         {project && tabButton('workload', 'Workload', Users)}
         {project && tabButton('progress', 'Progress', TrendingUp)}
+        {project && tabButton('trail', 'Trail', Footprints)}
         {project &&
           tabButton(
             'roadmap',
@@ -395,6 +397,7 @@ export const BottomPanel: React.FC<{
             </div>
           )}
           {tab === 'preview' && <PreviewTab key={project.project.id} project={project.project} />}
+          {tab === 'trail' && <WorkTrail key={project.project.id} project={project.project} cards={project.cards} agents={project.agents} onOpenCard={project.onOpenCard} />}
         </div>
       )}
 
