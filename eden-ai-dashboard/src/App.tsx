@@ -13,6 +13,7 @@ import { ProjectSidePanel } from './components/ProjectSidePanel.tsx';
 import { NexusView } from './components/NexusView.tsx';
 import { UpdatesView } from './components/UpdatesView.tsx';
 import { DevicesView } from './components/DevicesView.tsx';
+import { WebsiteView } from './components/WebsiteView.tsx';
 import { ReposView } from './components/ReposView.tsx';
 import { StatusBar } from './components/StatusBar.tsx';
 import type { CommandActions } from './components/VoiceCommands.tsx';
@@ -356,6 +357,7 @@ export default function App() {
             {activeTab === 'updates' && <UpdatesView />}
   
             {activeTab === 'repos' && <ReposView />}
+            {activeTab === 'website' && <WebsiteView />}
             {activeTab === 'devices' && <DevicesView />}
   
             {activeTab === 'remote' && <RemoteView />}
