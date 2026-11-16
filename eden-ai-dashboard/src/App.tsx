@@ -25,6 +25,8 @@ import { MobileMenu } from './components/MobileMenu.tsx';
 import { PageTiles } from './pages.tsx';
 import { usePanes } from './panes.ts';
 import { PaneFrame, PaneSwitch, SplitHandle } from './components/PaneFrame.tsx';
+import { ActiveWorkers, PauseAndWorkers } from './components/ActiveWorkers.tsx';
+import { openPanel } from './panel.ts';
 import type { ReviewProps } from './components/ReviewTab.tsx';
 import { useNexusRooms } from './nexusRooms.ts';
 import { OUTDATED_EVENT } from './api.ts';
@@ -79,6 +81,7 @@ export default function App() {
   const chat = useChatThreads();
   const [drawer, setDrawer] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false); // phone: the full-screen "All pages" menu
+  const [workersOpen, setWorkersOpen] = useState(false); // "Active workers": every AI working right now
   // Shown when the page is newer than the running server (see api.ts).
   const [outdated, setOutdated] = useState(false);
   useEffect(() => {
@@ -366,7 +369,7 @@ export default function App() {
           </div>
         )}
 
-        <StatusBar title={split && wide ? '' : TITLES[activeTab] || ''} split={split || picking} onToggleSplit={() => (split ? close((1 - focus) as 0 | 1) : picking ? cancelPicking() : startPicking())} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} actions={commandActions} />
+        <StatusBar pauseSlot={<PauseAndWorkers workingNow={projectsApi.cards.filter((c) => c.runState === 'running').length + nexusRooms.rooms.filter((r) => r.running).length} onOpenWorkers={() => setWorkersOpen(true)} />} title={split && wide ? '' : TITLES[activeTab] || ''} split={split || picking} onToggleSplit={() => (split ? close((1 - focus) as 0 | 1) : picking ? cancelPicking() : startPicking())} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} actions={commandActions} />
 
         <main ref={mainRef} className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="shrink-0">
@@ -416,6 +419,25 @@ export default function App() {
 
         <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} onMore={() => setMenuOpen(true)} moreOpen={menuOpen} reviewCount={reviewCount} />
         <MobilePanel review={review} />
+        <ActiveWorkers
+          open={workersOpen}
+          onClose={() => setWorkersOpen(false)}
+          cards={projectsApi.cards}
+          projects={projectsApi.projects}
+          agents={agents}
+          rooms={nexusRooms.rooms}
+          onOpenCard={(card) => {
+            projectsApi.setActiveId(card.projectId);
+            projectsApi.setOpenCardId(card.id);
+            setActiveTab('projects');
+          }}
+          onOpenRoom={(id) => {
+            nexusRooms.setActiveId(id);
+            setActiveTab('nexus');
+          }}
+          onOpenUpdates={() => setActiveTab('updates')}
+          onOpenLyra={() => openPanel('lyra')}
+        />
         <MobileMenu
           open={menuOpen}
           onClose={() => setMenuOpen(false)}

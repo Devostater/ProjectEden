@@ -15,7 +15,7 @@ interface Status {
 const get = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null)).catch(() => null);
 
 // Slim bar across the top: where things stand at a glance, each part a shortcut to where it's set.
-export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => void; darkMode: boolean; setDarkMode: (v: boolean) => void; reviewCount?: number; actions: CommandActions; split?: boolean; onToggleSplit?: () => void }> = ({ split = false, onToggleSplit, title, setActiveTab, darkMode, setDarkMode, reviewCount = 0, actions }) => {
+export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => void; darkMode: boolean; setDarkMode: (v: boolean) => void; reviewCount?: number; actions: CommandActions; split?: boolean; onToggleSplit?: () => void; pauseSlot?: React.ReactNode }> = ({ split = false, onToggleSplit, pauseSlot, title, setActiveTab, darkMode, setDarkMode, reviewCount = 0, actions }) => {
   const [s, setS] = useState<Status>({});
   useEffect(() => {
     const load = async () => {
@@ -88,6 +88,7 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           </span>
         )}
       </div>
+      {pauseSlot}
       {onToggleSplit && (
         <button
           onClick={onToggleSplit}
