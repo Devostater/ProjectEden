@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   LayoutDashboard,
   KanbanSquare,
@@ -18,6 +18,8 @@ import {
   Wand2,
   Tablet,
   Wifi,
+  RefreshCw,
+  Download,
 } from 'lucide-react';
 import { UsageBars } from './UsageBars.tsx';
 import { PauseAI } from './PauseAI.tsx';
@@ -52,8 +54,86 @@ interface SidebarProps {
   onCloseMobile?: () => void;
 }
 
-type GroupId = 'projects' | 'nexus' | 'chat' | 'team' | 'workflows';
-const GROUPS: GroupId[] = ['projects', 'nexus', 'chat', 'team', 'workflows'];
+type GroupId = 'projects' | 'nexus' | 'chat' | 'team' | 'workflows' | 'github';
+const GROUPS: GroupId[] = ['projects', 'nexus', 'chat', 'team', 'workflows', 'github'];
+
+// The repos in C:\AZI (and GitHub repos not on this PC), refreshed every minute and after a sync.
+interface AziRepo {
+  name: string;
+  folder?: string;
+  repo?: string;
+  url?: string;
+  ahead: number;
+  behind: number;
+  dirty: number;
+  state: 'synced' | 'changes' | 'no-remote' | 'not-on-pc' | 'error';
+  detail?: string;
+}
+const REPO_DOT: Record<AziRepo['state'], string> = {
+  synced: 'bg-emerald-500',
+  changes: 'bg-amber-500',
+  'no-remote': 'bg-slate-400',
+  'not-on-pc': 'bg-sky-400',
+  error: 'bg-red-500',
+};
+const repoTitle = (r: AziRepo) =>
+  r.state === 'synced'
+    ? `${r.repo}: matches GitHub`
+    : r.state === 'changes'
+      ? `${r.repo}: ${[r.ahead && `${r.ahead} to push`, r.behind && `${r.behind} to pull`, r.dirty && `${r.dirty} uncommitted`].filter(Boolean).join(', ') || r.detail || 'needs a sync'}`
+      : r.state === 'no-remote'
+        ? `${r.folder}: not on GitHub yet (Projects → New AZI project → use the existing folder)`
+        : r.state === 'not-on-pc'
+          ? `${r.repo}: on GitHub only. Click to copy it into C:\\AZI.`
+          : r.detail || '';
+
+function useAziRepos() {
+  const [repos, setRepos] = useState<AziRepo[]>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [message, setMessage] = useState('');
+  const load = useCallback(async (fetchRemote = false) => {
+    try {
+      const r = await fetch(`/api/azi/repos${fetchRemote ? '?fetch=1' : ''}`);
+      if (r.ok) setRepos((await r.json()).repos || []);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    load(true);
+    const t = setInterval(() => load(false), 60000);
+    return () => clearInterval(t);
+  }, [load]);
+  const syncAll = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    setMessage('Syncing…');
+    try {
+      const r = await fetch('/api/azi/sync-all', { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      const bad = (d.results || []).filter((x: { ok: boolean }) => !x.ok).map((x: { name: string }) => x.name);
+      setMessage(r.ok ? (bad.length ? `Check: ${bad.join(', ')}` : 'All synced ✓') : d.error || 'Sync failed.');
+    } catch {
+      setMessage('The hub did not answer.');
+    } finally {
+      setSyncing(false);
+      load(true);
+      setTimeout(() => setMessage(''), 8000);
+    }
+  };
+  const clone = async (repo: string) => {
+    setMessage(`Copying ${repo}…`);
+    try {
+      const r = await fetch('/api/azi/clone', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repo }) });
+      const d = await r.json().catch(() => ({}));
+      setMessage(r.ok ? `Copied to ${d.folder}` : d.error || 'Copy failed.');
+    } catch {
+      setMessage('The hub did not answer.');
+    } finally {
+      load(false);
+      setTimeout(() => setMessage(''), 8000);
+    }
+  };
+  return { repos, syncing, message, syncAll, clone };
+}
 const COLLAPSED_KEY = 'eden_sidebar_collapsed';
 const GROUPS_KEY = 'eden_sidebar_groups';
 
@@ -155,7 +235,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     onNew: () => void,
     body: React.ReactNode,
     badge?: React.ReactNode,
-    collapsedBadgeCount = 0
+    collapsedBadgeCount = 0,
+    NewIcon: React.ElementType = Plus
   ) => {
     if (collapsed) return navButton(tab, label, Icon, collapsedBadgeCount);
     const open = openGroups[g];
@@ -175,7 +256,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {open && (
           <div className="mb-1 ml-5 mt-0.5 space-y-0.5 border-l border-slate-200 pl-1 dark:border-slate-800">
             <button onClick={onNew} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-indigo-600 hover:bg-slate-100 dark:text-indigo-400 dark:hover:bg-slate-800">
-              <Plus className="h-3.5 w-3.5" /> {newLabel}
+              <NewIcon className="h-3.5 w-3.5" /> {newLabel}
             </button>
             <div className="max-h-64 space-y-0.5 overflow-y-auto">{body}</div>
           </div>
@@ -183,6 +264,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
     );
   };
+
+  const azi = useAziRepos();
+  const needsSync = azi.repos.filter((r) => r.state === 'changes').length;
 
   const runningIn = (projectId: string) => projects.cards.some((c) => c.projectId === projectId && c.runState === 'running');
   const reviewIn = (projectId: string) => projects.cards.filter((c) => c.projectId === projectId && c.column === 'review').length;
@@ -399,7 +483,51 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {navButton('files', 'Files', FolderGit2)}
           {navButton('updates', 'Code updates', Wand2)}
-          {navButton('repos', 'GitHub', GitBranch)}
+          {group(
+            'github',
+            'repos',
+            'GitHub',
+            GitBranch,
+            azi.repos.length,
+            azi.syncing ? 'Syncing…' : 'Sync all',
+            azi.syncAll,
+            <>
+              {azi.message && <p className="px-2 py-1 text-xs text-slate-500 dark:text-slate-400">{azi.message}</p>}
+              {azi.repos.map((r) => {
+                const key = r.folder || r.repo || r.name;
+                const label = r.name || r.repo?.split('/')[1] || '?';
+                return (
+                  <button
+                    key={key}
+                    title={repoTitle(r)}
+                    onClick={() => {
+                      if (r.state === 'not-on-pc' && r.repo) return azi.clone(r.repo);
+                      if (r.url) window.open(r.url, '_blank', 'noopener');
+                      else setActiveTab('repos');
+                    }}
+                    className={`${subItemClass(false)} w-full gap-2 px-2 py-1.5 text-left`}
+                  >
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${REPO_DOT[r.state]}`} />
+                    <span className={`min-w-0 flex-1 truncate ${r.state === 'not-on-pc' ? 'italic' : ''}`}>{label}</span>
+                    {r.state === 'changes' && (r.ahead > 0 || r.behind > 0) && (
+                      <span className="text-[10px] tabular-nums text-amber-600 dark:text-amber-400">
+                        {r.ahead > 0 && `↑${r.ahead}`}
+                        {r.behind > 0 && `↓${r.behind}`}
+                      </span>
+                    )}
+                    {r.state === 'not-on-pc' && <Download className="h-3 w-3 shrink-0 text-sky-500" />}
+                  </button>
+                );
+              })}
+            </>,
+            needsSync > 0 ? (
+              <span className="rounded-full bg-amber-500 px-1.5 text-[10px] font-semibold tabular-nums text-white" title={`${needsSync} repo(s) not in sync with GitHub`}>
+                {needsSync}
+              </span>
+            ) : undefined,
+            needsSync,
+            RefreshCw
+          )}
           {navButton('devices', 'Devices', Tablet)}
           {navButton('remote', 'Remote', Wifi)}
         </nav>

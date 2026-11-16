@@ -465,8 +465,109 @@ export async function syncProject(dir: string, commitMessage?: string): Promise<
   return { ok: steps.every((x) => x.state === 'ok' || x.state === 'skip'), steps, secretsMoved };
 }
 
+// ---- All AZI repos (for the sidebar's GitHub list and "Sync all") ----------------------------------
+
+export interface AziRepo {
+  name: string; // folder name in C:\AZI ('' for GitHub-only)
+  folder?: string;
+  repo?: string; // owner/name on GitHub
+  url?: string;
+  branch?: string;
+  ahead: number;
+  behind: number;
+  dirty: number;
+  state: 'synced' | 'changes' | 'no-remote' | 'not-on-pc' | 'error';
+  detail?: string;
+}
+
+function repoStatus(dir: string, fetchFirst: boolean): AziRepo {
+  const name = path.basename(dir);
+  const remote = git(['remote', 'get-url', 'origin'], dir);
+  const branch = git(['branch', '--show-current'], dir).out;
+  const dirty = git(['status', '--porcelain'], dir).out.split('\n').filter(Boolean).length;
+  if (!remote.ok) return { name, folder: dir, branch, ahead: 0, behind: 0, dirty, state: 'no-remote', detail: 'Not on GitHub yet.' };
+  const repo = remote.out.replace(/^.*github\.com[:/]/, '').replace(/\.git$/, '');
+  if (fetchFirst) git(['fetch', '-q', 'origin'], dir, 60000);
+  const ab = git(['rev-list', '--left-right', '--count', 'HEAD...@{u}'], dir);
+  const [ahead, behind] = ab.ok ? ab.out.split(/\s+/).map(Number) : [0, 0];
+  const state = !ab.ok ? 'changes' : ahead || behind || dirty ? 'changes' : 'synced';
+  return { name, folder: dir, repo, url: `https://github.com/${repo}`, branch, ahead, behind, dirty, state, detail: ab.ok ? undefined : 'No upstream branch yet.' };
+}
+
+export function aziRepoDirs(): string[] {
+  try {
+    return fs
+      .readdirSync(AZI_ROOT, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !OFF_LIMITS.includes(e.name.toLowerCase()) && fs.existsSync(path.join(AZI_ROOT, e.name, '.git')))
+      .map((e) => path.join(AZI_ROOT, e.name));
+  } catch {
+    return [];
+  }
+}
+
+// The owner's GitHub repos (needs a token); empty when GitHub isn't linked.
+async function githubRepos(): Promise<{ full_name: string; html_url: string; private: boolean; clone_url: string }[]> {
+  const token = githubToken()?.token;
+  if (!token) return [];
+  try {
+    const res = await fetch('https://api.github.com/user/repos?per_page=100&affiliation=owner&sort=pushed', {
+      headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'Eden-AI-Hub', Accept: 'application/vnd.github+json' },
+    });
+    return res.ok ? await res.json() : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function listAziRepos(fetchFirst = false): Promise<{ repos: AziRepo[]; github: boolean }> {
+  const local = aziRepoDirs().map((d) => repoStatus(d, fetchFirst));
+  const onPc = new Set(local.map((r) => r.repo?.toLowerCase()).filter(Boolean));
+  const remote = (await githubRepos())
+    .filter((g) => !onPc.has(g.full_name.toLowerCase()))
+    .map<AziRepo>((g) => ({ name: '', repo: g.full_name, url: g.html_url, ahead: 0, behind: 0, dirty: 0, state: 'not-on-pc', detail: g.private ? 'Private, not on this PC.' : 'Not on this PC.' }));
+  return { repos: [...local, ...remote], github: !!githubToken() };
+}
+
 export function registerNewProjectRoutes(app: Express, getStore: () => Store, save: () => void) {
   let busy = false;
+
+  // Every git folder in C:\AZI with its sync state, plus GitHub repos that aren't on this PC.
+  app.get('/api/azi/repos', async (req, res) => {
+    res.json(await listAziRepos(req.query.fetch === '1'));
+  });
+
+  // Sync every AZI repo: secrets out, pull (fast-forward only), push. Never commits for you, never forces.
+  app.post('/api/azi/sync-all', async (req, res) => {
+    if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
+    if (busy) return res.status(409).json({ error: 'A sync or setup is already running.' });
+    busy = true;
+    try {
+      const results: { name: string; ok: boolean; steps: Step[] }[] = [];
+      for (const dir of aziRepoDirs()) {
+        const r = await syncProject(dir);
+        results.push({ name: path.basename(dir), ok: r.ok, steps: r.steps });
+      }
+      const bad = results.filter((r) => !r.ok);
+      logActivity(bad.length ? 'info' : 'done', bad.length ? `Sync all: ${results.length - bad.length} of ${results.length} up to date; check ${bad.map((b) => b.name).join(', ')}.` : `Sync all: ${results.length} projects match GitHub.`);
+      res.json({ ok: !bad.length, results });
+    } finally {
+      busy = false;
+    }
+  });
+
+  // Copy a GitHub repo into C:\AZI\<name>.
+  app.post('/api/azi/clone', async (req, res) => {
+    if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
+    const repo = String(req.body?.repo || '');
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return res.status(400).json({ error: 'Give the repo as owner/name.' });
+    const name = folderName(repo.split('/')[1]);
+    const dir = path.join(AZI_ROOT, name);
+    if (fs.existsSync(dir)) return res.status(409).json({ error: `${dir} already exists.` });
+    const r = git(['clone', `https://github.com/${repo}.git`, dir], AZI_ROOT, 600000);
+    if (!r.ok) return res.status(500).json({ error: `Clone failed: ${lastLine(r.err)}` });
+    logActivity('done', `Copied ${repo} to ${dir}.`);
+    res.json({ ok: true, folder: dir });
+  });
 
   // Creating folders and GitHub repos happens only from this computer.
   app.post('/api/projects/new', async (req, res) => {
