@@ -3,3 +3,14 @@ node_modules/
 *.forge-bak
 .DS_Store
 Thumbs.db
+
+# Build caches and generated output
+*.tsbuildinfo
+dev-dist/
+
+# Zipped copies of project folders (the folders themselves are tracked)
+eden-ai-dashboard.zip
+holofleet-command.zip
+
+# AI Studio scratch media
+.aistudio/
