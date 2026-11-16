@@ -963,6 +963,29 @@ const SyncButton: React.FC<{ project: Project }> = ({ project }) => {
   const [message, setMessage] = useState('');
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; steps: SetupStep[]; folder?: string; error?: string } | null>(null);
+  // This project's state against GitHub (from the same list as the sidebar), refreshed every minute and after a sync.
+  const [status, setStatus] = useState<{ state: string; ahead: number; behind: number; dirty: number; private?: boolean } | null>(null);
+  const loadStatus = React.useCallback(async () => {
+    try {
+      const r = await fetch('/api/azi/repos');
+      if (!r.ok) return;
+      const repos: { repo?: string; state: string; ahead: number; behind: number; dirty: number; private?: boolean }[] = (await r.json()).repos || [];
+      setStatus(repos.find((x) => x.repo && project.repo && x.repo.toLowerCase() === project.repo.toLowerCase()) || null);
+    } catch {}
+  }, [project.repo]);
+  useEffect(() => {
+    loadStatus();
+    const t = setInterval(loadStatus, 60000);
+    return () => clearInterval(t);
+  }, [loadStatus]);
+  const statusText = !status
+    ? ''
+    : status.state === 'synced'
+      ? 'Up to date'
+      : status.state === 'not-on-pc'
+        ? 'Not on this PC'
+        : [status.ahead > 0 && `↑${status.ahead}`, status.behind > 0 && `↓${status.behind}`, status.dirty > 0 && `${status.dirty} uncommitted`].filter(Boolean).join(' · ') || 'Needs a sync';
+  const statusDot = !status ? 'bg-slate-300' : status.state === 'synced' ? 'bg-emerald-500' : status.state === 'not-on-pc' ? 'bg-sky-400' : 'bg-amber-500';
   const sync = async () => {
     setRunning(true);
     setResult(null);
@@ -974,6 +997,7 @@ const SyncButton: React.FC<{ project: Project }> = ({ project }) => {
       setResult({ ok: false, steps: [], error: err?.message || 'The hub did not answer.' });
     } finally {
       setRunning(false);
+      loadStatus();
     }
   };
   return (
@@ -983,10 +1007,12 @@ const SyncButton: React.FC<{ project: Project }> = ({ project }) => {
           setOpen(true);
           setResult(null);
         }}
-        title="Send this project's changes to GitHub and get the latest"
+        title={`${project.repo}${status?.private === true ? ' (private)' : status?.private === false ? ' (public)' : ''}: ${statusText || 'checking…'}. Click to sync with GitHub.`}
         className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900"
       >
         <FolderGit2 className="h-4 w-4" /> Sync
+        <span className={`h-2 w-2 shrink-0 rounded-full ${statusDot}`} aria-hidden />
+        {statusText && <span className={`text-xs ${status?.state === 'synced' ? 'text-slate-400' : 'text-amber-600 dark:text-amber-400'}`}>{statusText}</span>}
       </button>
       {open && (
         <Dialog
