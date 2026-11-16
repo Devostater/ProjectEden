@@ -22,9 +22,6 @@ export interface CodebaseInfo {
   uncommitted?: number; // files changed here that are not saved to GitHub yet
 }
 
-// From this many unsaved files, a gentle note appears by the new-update box (it never blocks an update).
-const MANY_UNSAVED = 15;
-
 const IDEAS = [
   'Add a "Duplicate" button to cards on the board.',
   'Show the number of cards waiting for review in the browser tab title.',
@@ -116,13 +113,15 @@ export const IdeaChips: React.FC<{ onPick: (text: string) => void }> = ({ onPick
   </>
 );
 
-// Piece: a gentle note when many files aren't saved to GitHub yet. Shows nothing for a small number.
+// Piece: a gentle note when any files aren't saved to GitHub yet. Shows nothing at zero. It never blocks an update.
 export const UnsavedWarning: React.FC<{ count?: number }> = ({ count }) => {
-  if (count === undefined || count < MANY_UNSAVED) return null;
+  if (count === undefined || count < 1) return null;
   return (
     <p role="status" className="mt-2 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-      <span>{count} files here aren't saved to GitHub yet. The AI will start from them as they are, so it's a good idea to save your work to GitHub soon. You can still make this change now.</span>
+      <span>
+        {count} {count === 1 ? 'file' : 'files'} changed here {count === 1 ? "isn't" : "aren't"} saved to GitHub yet. The AI's copy is made from your last saved version (HEAD), then your unsaved changes are added on top, so it starts from them as they are. Very large new files are left out. You can still make this change now.
+      </span>
     </p>
   );
 };

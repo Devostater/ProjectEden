@@ -140,6 +140,7 @@ interface UpdateJob {
   finishedAt?: string;
   log: string[];
   summary?: string;
+  lastAiMessage?: string; // the last thing the AI said in words (about 400 characters), to explain a run that changed nothing
   diff?: string; // the change, as a patch against the codebase's git repository
   files?: { path: string; added: number; removed: number }[];
   check?: { ok: boolean; output: string };
@@ -148,6 +149,9 @@ interface UpdateJob {
   interruptions?: number; // how many times the hub closed while this was running
   interrupted?: boolean; // stopped for that reason (after starting again once by itself)
   uncommitted?: number; // files in the codebase not yet saved to git (GitHub) when the update was asked for / started
+  stale?: boolean; // Apply found the code had changed since this update was made, so it no longer fits
+  retryOf?: string; // set on an update that was started by "Try again": the id of the earlier one
+  retriedAs?: string; // set on the earlier one: the id of the fresh update started from it
   // Saved just before Apply, so Undo can put the files back exactly as they were.
   restore?: { ref: string; commit: string; files: string[]; backup?: string; at: string };
 }
@@ -243,6 +247,14 @@ function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skip
   const uncommitted = countUncommitted(cb);
   const dir = path.join(WORK_ROOT, id);
   fs.mkdirSync(WORK_ROOT, { recursive: true });
+  // A copy left half-made by a restart (the update is retried under the same id, and the startup sweep skips copies
+  // of updates still marked as working) would stop git with "already exists". Clear it first, the safe way
+  // (removeCopy never deletes while the shared-packages link is inside), and forget git's stale entry.
+  if (fs.existsSync(dir)) removeCopy(cb, id);
+  try {
+    git(['worktree', 'prune'], root);
+  } catch {}
+  if (fs.existsSync(dir)) throw new Error(`An old working copy of this update is still at ${dir} and could not be removed. Close anything using that folder (an editor, a terminal), then press Try again.`);
   git(['worktree', 'add', '--detach', dir, 'HEAD'], root);
   // Bring over uncommitted work, so the AI starts from what you actually have.
   const pending = git(['diff', 'HEAD', '--binary', ...pathspec(rel)], root);
@@ -356,6 +368,7 @@ async function runAI(cb: Codebase, job: UpdateJob, appDir: string) {
     job.localModel = local;
     job.log.push(`Running on this PC (${local})`);
   }
+  job.lastAiMessage = undefined; // a fresh run (for example "Try again") starts without the old message
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--tools', 'Read,Edit,Write,Glob,Grep', '--model', local || 'claude-sonnet-5-5'];
   await new Promise<void>((resolve, reject) => {
     const child = spawn(['claude', ...args].join(' '), { cwd: appDir, shell: true, windowsHide: true, env: local ? localClaudeEnv() : process.env });
@@ -376,6 +389,12 @@ async function runAI(cb: Codebase, job: UpdateJob, appDir: string) {
           const ev = JSON.parse(line);
           if (ev.type === 'assistant') {
             for (const part of ev.message?.content || []) if (part.type === 'tool_use') job.log.push(describeTool(part.name, part.input));
+            const said = (ev.message?.content || [])
+              .filter((part: any) => part.type === 'text' && typeof part.text === 'string')
+              .map((part: any) => part.text)
+              .join('\n')
+              .trim();
+            if (said) job.lastAiMessage = said.length > 400 ? `${said.slice(0, 400).trim()}…` : said;
             if (job.log.length > 300) job.log.splice(0, job.log.length - 300);
             save();
           } else if (ev.type === 'result') {
@@ -527,7 +546,7 @@ async function process_(job: UpdateJob) {
       save();
       await runAI(cb, job, copy.appDir);
       readChange(cb, job, copy.dir);
-      if (!job.files?.length) throw new Error('The AI finished without changing anything.');
+      if (!job.files?.length) throw new Error(`The AI finished without changing anything.${job.lastAiMessage ? ` It said: "${job.lastAiMessage}"` : ''}`);
       job.status = 'checking';
       job.log.push(cb.check === 'tsc' ? 'Running the type check' : 'Checking the code and running the tests');
       save();
@@ -695,10 +714,10 @@ function runBackup(auto: boolean): BackupInfo {
     } catch (err: any) {
       fileProblem('save the last backup details', err);
     }
-    logActivity('done', `${auto ? 'Daily backup' : 'Backup'} saved: ${files} file${files === 1 ? '' : 's'}${changed ? '' : ' (nothing had changed since the last one)'}.`);
+    logActivity('done', `Code history saved (${files} file${files === 1 ? '' : 's'}${changed ? '' : ', nothing had changed since the last one'}${auto ? ', daily' : ''}).`);
     return lastBackup;
   } catch (err: any) {
-    logActivity('error', `${auto ? 'Daily backup' : 'Backup'} failed: ${err.message}`);
+    logActivity('error', `Code history didn't save: ${err.message}`);
     throw err;
   } finally {
     backingUp = false;
@@ -709,6 +728,8 @@ function runBackup(auto: boolean): BackupInfo {
 let lastAutoTry = 0;
 function autoBackup() {
   if (backingUp) return;
+  // Wait while the PC is busy, like the zip backup does. Not counted as a try, so the next hourly check tries again.
+  if (pcBusy()) return;
   if (lastBackup && Date.now() - new Date(lastBackup.at).getTime() < BACKUP_EVERY_MS) return;
   if (Date.now() - lastAutoTry < 6 * 60 * 60 * 1000) return;
   lastAutoTry = Date.now();
@@ -827,7 +848,11 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     const cb = job && findCodebase(job.codebaseId);
     if (!job || !job.diff || !cb) return res.status(404).json({ error: 'Update not found.' });
     if (job.status !== 'ready' && job.status !== 'undone') return res.status(400).json({ error: 'This update has already been dealt with.' });
-    const doesNotFit = (err: any) => res.status(409).json({ error: `${cb.name} has changed since this update was made, so it no longer fits. Discard it and ask again. (${err.message})` });
+    const doesNotFit = (err: any) => {
+      job.stale = true; // lets "Try again" start a fresh update on the current code
+      save();
+      return res.status(409).json({ error: `${cb.name} has changed since this update was made, so it no longer fits. Press "Try again" to redo it on the current code, or discard it. (${err.message})` });
+    };
     // Make sure it fits before saving anything.
     try {
       git(['apply', '--whitespace=nowarn', '--check', '-'], repoRoot(cb), job.diff);
@@ -860,6 +885,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     }
     job.restore = restore;
     job.status = 'applied';
+    delete job.stale;
     if (cb.id === 'hub' && job.needsRestart) restartPending = true;
     save();
     logActivity('done', `Code update applied (${cb.name}): ${job.request.slice(0, 80)}${job.needsRestart ? ` (${cb.restartHint} to finish)` : ''}`);
@@ -897,16 +923,31 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     res.json({ ok: true, needsRestart: !!job.needsRestart, restartHint: cb.restartHint });
   });
 
-  // Try a failed update again: starts a fresh update with the same request, and clears the failed one away.
+  // Try an update again: starts a fresh update with the same request and codebase, linked to the old one.
+  // Allowed for failed and discarded updates, and for ones that no longer fit the code (Apply said the code
+  // has changed). The fresh update works on a new copy of the code as it is now (see makeCopy), and the old
+  // one is cleared away.
   app.post('/api/updates/:id/retry', (req, res) => {
     const denied = guard(req);
     if (denied) return res.status(403).json({ error: denied });
     const job = jobs.find((j) => j.id === req.params.id);
     if (!job) return res.status(404).json({ error: 'Update not found.' });
-    if (job.status !== 'failed') return res.status(400).json({ error: 'Only a failed update can be tried again.' });
+    const noLongerFits = !!job.stale && (job.status === 'ready' || job.status === 'undone');
+    if (job.status !== 'failed' && job.status !== 'discarded' && !noLongerFits) {
+      return res.status(400).json({ error: 'Only a failed or discarded update, or one that no longer fits the code, can be tried again.' });
+    }
+    // A second press (or a second device) must not start the same update twice.
+    const already = job.retriedAs && jobs.find((j) => j.id === job.retriedAs);
+    if (already && already.status !== 'failed' && already.status !== 'discarded') {
+      return res.status(409).json({ error: 'This update was already tried again. Look for the newer one in the list.' });
+    }
     try {
-      const id = requestCodeUpdate(job.codebaseId, job.request, job.cardId);
-      job.status = 'discarded'; // only after the new one has started, so a refused retry keeps the failed one
+      const id = requestCodeUpdate(job.codebaseId, job.request, job.cardId, job.local === true);
+      const fresh = jobs.find((j) => j.id === id);
+      if (fresh) fresh.retryOf = job.id;
+      job.retriedAs = id;
+      job.status = 'discarded'; // only after the new one has started, so a refused retry keeps the old one
+      delete job.stale;
       save();
       res.json({ job: { id }, uncommitted: jobs.find((j) => j.id === id)?.uncommitted });
     } catch (err: any) {
@@ -963,6 +1004,17 @@ const saveIdeas = () => {
 };
 const ideaSet = (id: string) => (ideaSets[id] ||= { ideas: [], dismissed: [] });
 const IDEAS_MAX_AGE = 24 * 60 * 60 * 1000;
+
+// Two requests count as the same idea when their first 80 letters and numbers match (ignoring capitals,
+// punctuation and spacing).
+const ideaKey = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 80).trim();
+const SAME_IDEA_BUSY: Status[] = ['queued', 'working', 'checking', 'ready'];
+// An existing update (any status) for this codebase that asks for the same thing, if there is one.
+const findSameUpdate = (codebaseId: string, request: string, onlyStatuses?: Status[]) => {
+  const key = ideaKey(request);
+  if (!key) return undefined;
+  return jobs.find((j) => j.codebaseId === codebaseId && (!onlyStatuses || onlyStatuses.includes(j.status)) && ideaKey(j.request) === key);
+};
 
 function ideasPrompt(cb: Codebase) {
   const set = ideaSet(cb.id);
@@ -1024,7 +1076,7 @@ async function generateIdeas(cb: Codebase) {
       child.stdin.end(ideasPrompt(cb));
     });
     const json = text.slice(text.indexOf('['), text.lastIndexOf(']') + 1);
-    const ideas = (JSON.parse(json) as any[])
+    const fresh = (JSON.parse(json) as any[])
       .filter((i) => i && i.title && i.request)
       .slice(0, 6)
       .map((i) => ({
@@ -1033,7 +1085,21 @@ async function generateIdeas(cb: Codebase) {
         request: String(i.request).slice(0, 2000),
         size: (['small', 'medium', 'large'].includes(i.size) ? i.size : 'medium') as Idea['size'],
       }));
-    if (!ideas.length) throw new Error('No ideas came back. Try again.');
+    if (!fresh.length) throw new Error('No ideas came back. Try again.');
+    // Drop ideas that repeat an update we already have (ready, applied, discarded, failed...) or that repeat another idea in this batch.
+    const seen = new Set<string>();
+    const ideas: Idea[] = [];
+    for (const idea of fresh) {
+      const key = ideaKey(idea.request);
+      const existing = findSameUpdate(cb.id, idea.request);
+      if (existing || seen.has(key)) {
+        logActivity('work', `Skipped a repeat update idea for ${cb.name}: "${idea.title}" (${existing ? `already ${existing.status}` : 'suggested twice'}).`);
+        continue;
+      }
+      seen.add(key);
+      ideas.push(idea);
+    }
+    if (!ideas.length) throw new Error('Every idea that came back was already done or tried. Try again later.');
     set.ideas = ideas;
     set.at = new Date().toISOString();
     logActivity('done', `${ideas.length} update ideas ready for ${cb.name} (Code updates).`);
@@ -1085,6 +1151,14 @@ function registerIdeaRoutes(app: Express, guard: (req: Request) => string) {
     const set = ideaSet(codebaseId);
     const idea = set.ideas.find((i) => i.title === req.body?.title);
     if (!idea) return res.status(404).json({ error: 'That idea is gone. Refresh the ideas.' });
+    // Don't queue the same idea twice while a copy is still waiting, running or ready to apply.
+    const same = findSameUpdate(codebaseId, idea.request, SAME_IDEA_BUSY);
+    if (same) {
+      set.ideas = set.ideas.filter((i) => i !== idea);
+      saveIdeas();
+      logActivity('work', `Skipped a repeat update idea: "${idea.title}" (an update for it is already ${same.status}).`);
+      return res.status(409).json({ error: `That idea is already in your updates (${same.status}), so it was not added again.` });
+    }
     try {
       const id = requestCodeUpdate(codebaseId, idea.request);
       set.ideas = set.ideas.filter((i) => i !== idea);

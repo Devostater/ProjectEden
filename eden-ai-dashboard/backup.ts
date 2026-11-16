@@ -135,13 +135,13 @@ export async function backupNow(auto = false): Promise<{ name: string; sizeMb: n
     const bytes = checkZip(out, 'The backup');
     for (const old of list().slice(KEEP)) fs.rmSync(path.join(BACKUP_DIR, old.name), { force: true });
     const sizeMb = Math.round((bytes / 1024 / 1024) * 10) / 10;
-    logActivity('done', `Backed up the hub (${sizeMb} MB${auto ? ', daily backup' : ''}).`);
+    logActivity('done', `Full backup zip saved (${sizeMb} MB${auto ? ', daily' : ''}).`);
     await copyToExtraFolder(out, name);
     return { name, sizeMb };
   } catch (err: any) {
     fs.rmSync(out, { force: true });
     lastError = err.message;
-    logActivity('error', `Backup didn't finish: ${err.message}`);
+    logActivity('error', `Full backup zip didn't finish: ${err.message}`);
     throw err;
   } finally {
     running = false;

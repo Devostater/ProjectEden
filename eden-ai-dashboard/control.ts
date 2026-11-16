@@ -31,7 +31,7 @@ export function setPaused(next: boolean, note?: string) {
   } catch (err: any) {
     fileProblem('save the Pause AI setting', err);
   }
-  logActivity(paused ? 'error' : 'done', note || (paused ? 'AI paused.' : 'AI resumed.'));
+  logActivity(paused ? 'info' : 'done', note ||(paused ? 'AI paused.' : 'AI resumed.'));
   for (const fn of listeners) fn(paused);
 }
 export const onPauseChange = (fn: (paused: boolean) => void) => listeners.push(fn);
@@ -50,7 +50,7 @@ export function registerControlRoutes(app: Express, runningCount: () => { cards:
       } catch (err: any) {
         fileProblem('save the Pause AI setting', err);
       }
-      logActivity(paused ? 'error' : 'done', paused ? 'AI paused: discussions stopped and no new card work will start.' : 'AI resumed.');
+      logActivity(paused ? 'info' : 'done', paused ? 'AI paused: discussions stopped and no new card work will start.' : 'AI resumed.');
       for (const fn of listeners) fn(paused);
     }
     res.json({ paused, running: runningCount() });

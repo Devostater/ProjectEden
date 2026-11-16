@@ -78,6 +78,13 @@ interface AziRepo {
 }
 // Reasons where saving (commit + push) from here is the right fix. Never for Forge on main, logins, or merges.
 const CAN_SAVE = ['uncommitted', 'unpushed'];
+// What a sync found wrong with one project; for changed files it also lists the first few file names.
+interface Problem {
+  reason?: string;
+  hint?: string;
+  fileNames?: string[];
+  moreFiles?: number;
+}
 const visibilityText = (r: AziRepo) => (r.private === true ? ' (private)' : r.private === false ? ' (public)' : '');
 const REPO_DOT: Record<AziRepo['state'], string> = {
   synced: 'bg-emerald-500',
@@ -103,7 +110,7 @@ function useAziRepos() {
   const [repos, setRepos] = useState<AziRepo[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState('');
-  const [problems, setProblems] = useState<Record<string, { reason?: string; hint?: string }>>({}); // from the last "Sync all", by folder name
+  const [problems, setProblems] = useState<Record<string, Problem>>({}); // from the last "Sync all", by folder name
   const load = useCallback(async (fetchRemote = false) => {
     try {
       const r = await fetch(`/api/azi/repos${fetchRemote ? '?fetch=1' : ''}`);
@@ -122,9 +129,9 @@ function useAziRepos() {
     try {
       const r = await fetch('/api/azi/sync-all', { method: 'POST' });
       const d = await r.json().catch(() => ({}));
-      const badOnes: { name: string; reason?: string; hint?: string }[] = (d.results || []).filter((x: { ok: boolean }) => !x.ok);
-      // Keep each project's reason so the list below can say what is wrong with it.
-      setProblems(Object.fromEntries(badOnes.map((x) => [x.name, { reason: x.reason, hint: x.hint }])));
+      const badOnes: (Problem & { name: string })[] = (d.results || []).filter((x: { ok: boolean }) => !x.ok);
+      // Keep each project's reason (and changed files) so the list below can say what is wrong with it.
+      setProblems(Object.fromEntries(badOnes.map((x) => [x.name, { reason: x.reason, hint: x.hint, fileNames: x.fileNames, moreFiles: x.moreFiles }])));
       setMessage(r.ok ? (badOnes.length ? `Check: ${badOnes.map((x) => x.hint || x.name).join('; ')}` : 'All synced ✓') : d.error || 'Sync failed.');
     } catch {
       setMessage('The hub did not answer.');
@@ -149,7 +156,7 @@ function useAziRepos() {
         setProblems((p) => Object.fromEntries(Object.entries(p).filter(([k]) => k !== r.name)));
         setMessage(`${r.name}: saved to GitHub ✓`);
       } else {
-        setProblems((p) => ({ ...p, [r.name]: { reason: d.reason, hint: d.hint } }));
+        setProblems((p) => ({ ...p, [r.name]: { reason: d.reason, hint: d.hint, fileNames: d.fileNames, moreFiles: d.moreFiles } }));
         setMessage(d.hint || d.error || `${r.name}: could not save to GitHub.`);
       }
     } catch {
@@ -636,6 +643,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 const problem = r.state === 'changes' ? azi.problems[r.name] : undefined;
                 const reason = problem?.reason || r.reason;
                 const hint = problem?.hint || r.hint;
+                const files = reason === 'uncommitted' ? problem?.fileNames || [] : [];
+                const more = problem?.moreFiles || 0;
                 return (
                   <div key={key}>
                   <button
@@ -662,13 +671,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {r.state === 'changes' && hint && (
                     <div className="px-2 pb-1.5 pl-6 text-[11px] leading-snug text-amber-700 dark:text-amber-400">
                       <p>{hint}</p>
+                      {files.length > 0 && (
+                        <ul className="mt-0.5 text-slate-600 dark:text-slate-400">
+                          {files.map((f) => (
+                            <li key={f} className="truncate" title={f}>
+                              {f}
+                            </li>
+                          ))}
+                          {more > 0 && <li>and {more} more</li>}
+                        </ul>
+                      )}
                       {reason && CAN_SAVE.includes(reason) && r.projectId && (
                         <button
                           onClick={() => azi.save(r)}
                           title="Saves your changes and sends them to GitHub"
                           className="mt-1 rounded bg-amber-500 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-amber-600"
                         >
-                          Save to GitHub
+                          {files.length > 0 ? 'Save and push these' : 'Save to GitHub'}
                         </button>
                       )}
                     </div>

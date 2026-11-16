@@ -12,6 +12,7 @@ interface Job {
   finishedAt?: string;
   log: string[];
   summary?: string;
+  lastAiMessage?: string; // the last thing the AI said in words (already included in the error text when nothing changed)
   files?: { path: string; added: number; removed: number }[];
   check?: { ok: boolean; output: string };
   needsRestart?: boolean;
@@ -22,6 +23,9 @@ interface Job {
   codebaseId?: string;
   interrupted?: boolean; // stopped because the hub restarted while it ran
   uncommitted?: number; // files not yet saved to GitHub when this update was based on the code
+  stale?: boolean; // the code changed since this update was made, so it no longer fits
+  retryOf?: string; // started by "Try again" from this earlier update
+  retriedAs?: string; // "Try again" was pressed: the newer update that took its place
 }
 
 const unsavedNote = (n: number) => `Based on your current files, including ${n} not yet saved to GitHub`;
@@ -422,6 +426,12 @@ export const UpdatesView: React.FC = () => {
 
                   {job.error && <p className="text-sm text-red-600 dark:text-red-400">{job.error}</p>}
 
+                  {job.stale && (job.status === 'ready' || job.status === 'undone') && (
+                    <p className="text-sm text-amber-700 dark:text-amber-300">The code has changed since this update was made, so it no longer fits. "Try again" redoes it on the current code.</p>
+                  )}
+                  {job.retryOf && <p className="text-xs text-slate-500 dark:text-slate-400">Started again from an earlier update.</p>}
+                  {job.retriedAs && jobs.some((j) => j.id === job.retriedAs) && <p className="text-xs text-slate-500 dark:text-slate-400">Tried again: see the newer update in the list.</p>}
+
                   {job.summary && (
                     <div className="rounded-lg bg-slate-50 p-3 text-slate-800 dark:bg-slate-800/60 dark:text-slate-100">
                       <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">What the AI says it did</div>
@@ -490,7 +500,7 @@ export const UpdatesView: React.FC = () => {
                         <RotateCcw className="h-4 w-4" /> Undo
                       </button>
                     )}
-                    {job.status === 'failed' && (
+                    {(job.status === 'failed' || job.status === 'discarded' || (job.stale && (job.status === 'ready' || job.status === 'undone'))) && (
                       <button
                         onClick={() => retry(job)}
                         disabled={acting === job.id || !claudeReady}

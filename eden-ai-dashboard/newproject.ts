@@ -272,6 +272,18 @@ function addToLayout(name: string, purpose: string, repo?: string) {
   }
 }
 
+// The first few changed file names from `git status --porcelain`, so the hub can show which files are waiting.
+// (git() trims its output, so the first line may have lost its leading space: the status letters are matched loosely.)
+const SHOWN_FILES = 5;
+function changedFiles(dir: string): { names: string[]; more: number } {
+  const lines = git(['status', '--porcelain'], dir).out.split('\n').filter(Boolean);
+  const names = lines.slice(0, SHOWN_FILES).map((l) => {
+    const p = l.replace(/^[ MADRCU?!]{1,2}\s+/, '').replace(/^.* -> /, '');
+    return p.replace(/^"(.*)"$/, '$1');
+  });
+  return { names, more: Math.max(0, lines.length - names.length) };
+}
+
 function syncCheck(dir: string): { inSync: boolean; detail: string; ahead: number; behind: number; dirty: number; noUpstream: boolean } {
   git(['fetch', '-q', 'origin'], dir, 60000);
   const st = git(['status', '--porcelain'], dir).out;
@@ -480,12 +492,17 @@ export interface SyncResult {
   reason?: SyncReason; // why it is not in step with GitHub (when ok is false)
   hint?: string; // one plain sentence about it
   files?: number; // changed files here, for the "uncommitted" reason
+  fileNames?: string[]; // the first few of those file names, for the "uncommitted" reason
+  moreFiles?: number; // how many more changed files there are beyond fileNames
 }
 export async function syncProject(dir: string, commitMessage?: string): Promise<SyncResult> {
   const steps: Step[] = [];
   const add = (step: string, state: StepState, detail: string) => steps.push({ step, state, detail });
   const name = path.basename(dir);
-  const fail = (reason: SyncReason, n = 0, secretsMoved: string[] = []): SyncResult => ({ ok: false, steps, secretsMoved, reason, hint: syncHint(name, reason, n), files: reason === 'uncommitted' ? n : undefined });
+  const fail = (reason: SyncReason, n = 0, secretsMoved: string[] = []): SyncResult => {
+    const list = reason === 'uncommitted' ? changedFiles(dir) : undefined;
+    return { ok: false, steps, secretsMoved, reason, hint: syncHint(name, reason, n), files: reason === 'uncommitted' ? n : undefined, fileNames: list?.names, moreFiles: list?.more };
+  };
   if (!fs.existsSync(path.join(dir, '.git'))) {
     add('Git', 'fail', `${dir} is not a git repository.`);
     return fail('other');
@@ -673,6 +690,8 @@ export interface SyncAllResult {
   reason?: SyncReason; // why this project is not in step with GitHub
   hint?: string; // one plain sentence about it
   files?: number;
+  fileNames?: string[]; // the first few changed file names ("uncommitted" reason)
+  moreFiles?: number; // how many more changed files there are
 }
 export async function runSyncAll(reason: 'manual' | 'start' | 'daily'): Promise<{ ok: boolean; results: SyncAllResult[] } | null> {
   if (syncBusy) return null;
@@ -683,7 +702,7 @@ export async function runSyncAll(reason: 'manual' | 'start' | 'daily'): Promise<
       // Repos without a GitHub remote have nothing to sync: skip them quietly when it runs by itself.
       if (reason !== 'manual' && !git(['remote', 'get-url', 'origin'], dir).ok) continue;
       const r = await syncProject(dir);
-      results.push({ name: path.basename(dir), ok: r.ok, steps: r.steps, reason: r.reason, hint: r.hint, files: r.files });
+      results.push({ name: path.basename(dir), ok: r.ok, steps: r.steps, reason: r.reason, hint: r.hint, files: r.files, fileNames: r.fileNames, moreFiles: r.moreFiles });
     }
     const bad = results.filter((r) => !r.ok);
     const label = reason === 'manual' ? 'Sync all' : reason === 'start' ? 'Auto-sync (Eden started)' : 'Auto-sync (daily)';
