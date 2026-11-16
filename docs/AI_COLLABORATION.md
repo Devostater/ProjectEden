@@ -53,3 +53,6 @@ Consult #5 and the **current source** before assigning work. The November 16 AZI
 
 ## Claude kickoff
 Pick one scoped issue in #5, create `claude/<topic>`, open a draft PR, and include tested behavior and known gaps. Use the PR as the point of handoff to ChatGPT for independent review.
+
+## SWRMsync: one button to sync and start every AI
+`swarm/SWRMsync.bat` (copy it to the Desktop) syncs the AZI repos, gives Claude, Codex (ChatGPT) and Gemini/Antigravity each their own fresh copy of this repo in `%USERPROFILE%\.eden-swarm\<name>`, and starts them. Each AI reads `swarm/AGENT_PROMPT.md`, then takes open issues whose title starts with its tag (`[claude]`, `[codex]`, `[gemini]`, `[all]`), one at a time, on its own branch with a draft PR. `SWRMsync.bat check` only syncs and prepares, without starting any AI.
