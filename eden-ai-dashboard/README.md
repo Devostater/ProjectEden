@@ -18,3 +18,25 @@ View your app in AI Studio: https://ai.studio/apps/a4d7dae2-92b7-4785-8544-a81d4
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+On this PC, use **Start Eden** (`Start Eden.bat`) instead. It checks the code first and keeps Eden running.
+
+## Projects in C:\AZI (New project + GitHub sync)
+
+Every project lives in its own folder in `C:\AZI` with a **private** GitHub repo. Eden sets that up and keeps it in sync.
+
+**Start a project** (any of these):
+- **Projects → New AZI project**, or say or type **"new project Star Courier"** in the command box. The form opens with the name filled in.
+- **LYRA → 🌿 EDEN page → 📁 AZI projects → ➕ New project** (works from the tablet too).
+
+Eden then: makes `C:\AZI\<Name>` (README, CLAUDE.md, a `.gitignore` that keeps secrets and builds out) → moves any key or `.env` files to `C:\AZI\Security\Keys\<Name>` → first commit (files over 50 MB stop it) → creates the private GitHub repo and pushes → adds it to Projects and Code updates → checks this PC and GitHub match → shows **✅ Ready / ⚠️ Partly ready** (with what to do next) and writes a note in `C:\AZI\AI handoff`.
+A folder that already exists? Tick **Use the existing folder**: it gets set up, never replaced.
+
+**Keep it in sync:**
+- A project's **Sync** button shows its state (🟢 Up to date · ↑ to push · ↓ to pull · N uncommitted). Click it to pull and push, optionally committing your changes with a message.
+- Sidebar → **GitHub**: every repo in `C:\AZI` (🟢 synced, 🟠 needs a sync, ⚪ not on GitHub, 🔵 GitHub only: click to copy it in) with 🔒 private / 🌐 public, plus **Sync all** and **Auto** (off / when Eden starts / daily / both).
+- Sync never force-pushes, and only commits when you give it a message.
+
+**Needs:** a GitHub token with the `repo` scope in Settings → Connect AI (or `gh auth login`). Without one, projects are still made on this PC, and the report says how to publish them from GitHub Desktop.
+
+Code: `newproject.ts` (server), `src/components/ProjectsView.tsx` and `Sidebar.tsx` (UI), `src/commands.ts` (voice). Spec and log: `C:\AZI\AI handoff\2026-11-16-eden-new-project-plugin.md`.
