@@ -139,7 +139,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
         />
       </section>
 
-      <section className="flex min-h-[280px] flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      <section className="flex shrink-0 flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div role="tablist" aria-label="Project tools" className="grid grid-cols-[repeat(auto-fit,minmax(5rem,1fr))] gap-2 border-b border-slate-200 p-3 dark:border-slate-800">
           {ORDER.map((id) => {
             const t = SIDE_TABS.find((x) => x.id === id)!;
@@ -155,7 +155,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
             );
           })}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-3">
+        <div className="overflow-x-hidden p-3">
           {tab === 'roadmap' && <div className="@container"><Roadmap key={project.project.id} project={project.project} onSave={project.onSaveRoadmap} embedded /></div>}
           {tab === 'progress' && <ProgressTab {...project} />}
           {tab === 'workload' && <WorkloadTab {...project} />}
