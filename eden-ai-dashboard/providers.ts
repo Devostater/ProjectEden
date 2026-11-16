@@ -9,6 +9,7 @@ import { fileURLToPath } from 'url';
 import { realLimits, type RealLimit } from './realLimits';
 import { extraModels, extraConnected, freeFallbacks, callExtra } from './extraAI';
 import { pcBusy } from './busy';
+import { streamPost, StreamPostError } from './streamPost';
 import { fileProblem } from './activity';
 import { isOffline, isLocalFirst, recordSplit, localModelFor, localModels, kindFor, fitsNow } from './offline';
 // A teammate's chosen local model, if Ollama still has it.
@@ -21,6 +22,9 @@ export type ProviderId = 'lyra' | 'anthropic' | 'google' | 'openai' | 'extra';
 // LYRA (Forge, Nova.bat) runs on this PC. EDEN sends it the conversation and LYRA's Auto mode picks
 // the model: free local/cloud models first, paid ones only if you allowed them in LYRA (with LYRA's
 // spending caps). LYRA counts as connected while it answers on LYRA_URL.
+// LYRA may think for a long time on a local model: allow 15 quiet minutes and 30 in all (LYRA_IDLE_MIN / LYRA_TOTAL_MIN to change).
+const LYRA_IDLE_MS = (Number(process.env.LYRA_IDLE_MIN) || 15) * 60 * 1000;
+const LYRA_TOTAL_MS = (Number(process.env.LYRA_TOTAL_MIN) || 30) * 60 * 1000;
 const LYRA_URL = () => (process.env.LYRA_URL || 'http://127.0.0.1:4777').replace(/\/+$/, '');
 let lyraUp = false;
 export async function pingLyra() {
@@ -633,19 +637,6 @@ async function callLyra(req: GenerateRequest): Promise<GenerateResult> {
   if (req.system && history.length) {
     history[0] = { ...history[0], content: '(Instructions from EDEN AI Hub, follow them for this conversation:\n' + req.system + ')\n\n' + history[0].content };
   }
-  let res: Response;
-  try {
-    res = await fetch(LYRA_URL() + '/api/chat', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'auto', mode: 'chat', project: null, trust: 'ask', history }),
-      signal: AbortSignal.timeout(10 * 60 * 1000),
-    });
-  } catch (e: any) {
-    lyraUp = false;
-    throw new Error("LYRA isn't running (" + (e?.cause?.code || e?.message || e) + '). Start it with Nova.bat.');
-  }
-  if (!res.ok || !res.body) throw new Error('LYRA answered ' + res.status);
   let answer = '';
   let error = '';
   let tokens = 0;
@@ -659,17 +650,20 @@ async function callLyra(req: GenerateRequest): Promise<GenerateResult> {
     else if (ev.type === 'usage') tokens = (ev.input || 0) + (ev.output || 0);
     else if (ev.type === 'route' && ev.model) used = 'lyra (' + ev.model + ')';
   };
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let k;
-    while ((k = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, k)); buf = buf.slice(k + 1); }
+  // Plain http, not fetch: fetch drops a reply that is quiet for 5 minutes, and LYRA can think longer than that
+  // on a local model (her long answers ended with "terminated"). See streamPost.ts.
+  try {
+    await streamPost(LYRA_URL() + '/api/chat', { model: 'auto', mode: 'chat', project: null, trust: 'ask', history }, handle, { idleMs: LYRA_IDLE_MS, totalMs: LYRA_TOTAL_MS });
+  } catch (e: any) {
+    if (e instanceof StreamPostError && e.kind === 'connect') {
+      lyraUp = false;
+      throw new Error("LYRA isn't running (" + e.message + '). Start it with Nova.bat.');
+    }
+    if (e instanceof StreamPostError && (e.kind === 'idle' || e.kind === 'total')) {
+      throw new Error(`LYRA took too long: ${e.message}. Try a shorter request, or close other AI work so she has more memory.`);
+    }
+    throw new Error('LYRA: ' + (e?.message || e));
   }
-  handle(buf);
   if (!answer) throw new Error('LYRA: ' + (error || 'no answer'));
   return { text: answer.trim(), tokens, model: used, provider: 'lyra' };
 }
