@@ -1,4 +1,4 @@
-import { textScale } from './textSize.ts'; // first: sets the saved text size before anything paints
+import { textScale, rootPx, useTextSize } from './textSize.ts'; // first: sets the saved text size before anything paints
 import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar, type AppTab, type SidebarRequest } from './components/Sidebar.tsx';
 import { HomeView } from './components/HomeView.tsx';
@@ -22,7 +22,9 @@ import { RemoteView } from './components/RemoteView.tsx';
 import { MobileNav } from './components/MobileNav.tsx';
 import { MobilePanel } from './components/MobilePanel.tsx';
 import { MobileMenu } from './components/MobileMenu.tsx';
-import { PAGE_IDS } from './pages.tsx';
+import { PageTiles } from './pages.tsx';
+import { usePanes } from './panes.ts';
+import { PaneFrame, PaneSwitch, SplitHandle } from './components/PaneFrame.tsx';
 import type { ReviewProps } from './components/ReviewTab.tsx';
 import { useNexusRooms } from './nexusRooms.ts';
 import { OUTDATED_EVENT } from './api.ts';
@@ -44,10 +46,31 @@ try {
 
 export default function App() {
   const [darkMode, setDarkMode] = useState<boolean>(() => localStorage.getItem('nexus_theme') !== 'light');
-  const [activeTab, setActiveTab] = useState<AppTab>(() => {
-    const wanted = new URLSearchParams(window.location.search).get('tab');
-    return PAGE_IDS.includes(wanted as AppTab) ? (wanted as AppTab) : 'home';
-  });
+  // One or two pages side by side (panes.ts). setActiveTab drives the pane you are in; reveal (links inside a page)
+  // opens in the other pane when two are open.
+  const { panes, focus, activeTab, split, picking, ratio, setRatio, navigate, reveal, openBeside, startPicking, cancelPicking, close, swap, setFocus, back } = usePanes();
+  const setActiveTab = navigate;
+  // Room for two pages side by side: two 22rem panes plus the bar between them (more room needed at larger text).
+  const mainRef = useRef<HTMLElement>(null);
+  const paneRowRef = useRef<HTMLDivElement>(null);
+  const [wide, setWide] = useState(true);
+  const [textSize] = useTextSize();
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const check = () => setWide(el.clientWidth >= 44.75 * rootPx());
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [textSize]);
+  // Esc leaves the page picker.
+  useEffect(() => {
+    if (!picking) return;
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && cancelPicking();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [picking]);
 
   const [agents, setAgents] = useState<Agent[]>([]);
   const [pipelines, setPipelines] = useState<DAGPipeline[]>([]);
@@ -86,7 +109,7 @@ export default function App() {
 
   const openAccount = (tab: AccountTab) => {
     setAccountTab(tab);
-    setActiveTab('settings');
+    reveal('settings');
   };
   const projectsApi = useProjects();
 
@@ -100,7 +123,7 @@ export default function App() {
   const [chatDraft, setChatDraft] = useState<ChatDraft | null>(null);
   const openChat = (text: string, send: boolean) => {
     setChatDraft({ text, send });
-    setActiveTab('chat');
+    reveal('chat');
   };
 
   useEffect(() => {
@@ -150,16 +173,6 @@ export default function App() {
 
   const mention = (agent: Agent) => `@${agent.name.split(' ')[0]} `;
 
-  // Pages you were on before, so "go back" (a voice or typed command) has somewhere to go.
-  const tabHistory = useRef<AppTab[]>([]);
-  const lastTab = useRef<AppTab>(activeTab);
-  const goingBack = useRef(false);
-  useEffect(() => {
-    if (lastTab.current === activeTab) return;
-    if (!goingBack.current) tabHistory.current = [...tabHistory.current.slice(-29), lastTab.current];
-    goingBack.current = false;
-    lastTab.current = activeTab;
-  }, [activeTab]);
 
   // What the mic and the command box in the top bar can do (see commands.ts for what they understand).
   const ask = (r: SidebarRequest) => setRequest({ ...r, n: (request?.n || 0) + 1 });
@@ -188,13 +201,7 @@ export default function App() {
       projectsApi.setActiveId(id);
       setActiveTab('projects');
     },
-    back: () => {
-      const previous = tabHistory.current.pop();
-      if (!previous) return false;
-      goingBack.current = true;
-      setActiveTab(previous);
-      return true;
-    },
+    back,
     projects: projectsApi.projects.map((p) => ({ id: p.id, name: p.name })),
     agents: agents.map((a) => ({ name: a.name })),
   };
@@ -212,6 +219,121 @@ export default function App() {
       setActiveTab('projects');
     },
   };
+
+
+  // Any page, by id: the same JSX as before, now drawn in whichever pane shows it. A plain function (not a
+  // component), so pages never remount when the layout changes.
+  const renderPage = (activeTab: AppTab): React.ReactNode => (
+    <>
+            {activeTab === 'home' && (
+              <HomeView
+                agents={agents}
+                pipelines={pipelines}
+                files={files}
+                projects={projectsApi.projects}
+                cards={projectsApi.cards}
+                onOpenProject={(id) => {
+                  projectsApi.setActiveId(id);
+                  reveal('projects');
+                }}
+                onAsk={(text) => openChat(text, true)}
+                onTalkTo={(agent) => openChat(mention(agent), false)}
+                ownerName={profile.name}
+                onOpen={(tab) => (tab === 'settings' ? openAccount('connections') : reveal(tab))}
+              />
+            )}
+  
+            {activeTab === 'projects' && <ProjectsView api={projectsApi} agents={agents} onAsk={(text) => openChat(text, false)} newProjectRequest={request?.kind === 'new-project' ? request.n : 0}
+                aziProjectRequest={request?.kind === 'new-azi-project' ? { name: request.name, n: request.n } : null}
+                onOpenBudgets={() => openAccount('connections')}
+                onOpenSource={(card) => {
+                  if (!card.source?.roomId) return;
+                  setNexusFocus({ roomId: card.source.roomId, seq: card.source.messageSeq || 0, n: (nexusFocus?.n || 0) + 1 });
+                  reveal('nexus');
+                }}
+              />}
+  
+            {activeTab === 'nexus' && (
+              <NexusView
+                roomsApi={nexusRooms}
+                newRoomRequest={newRoomRequest}
+                agents={agents}
+                projects={projectsApi.projects}
+                ownerName={profile.name}
+                cards={projectsApi.cards}
+                focus={nexusFocus}
+                onOpenCard={(card) => {
+                  projectsApi.setActiveId(card.projectId);
+                  projectsApi.setOpenCardId(card.id);
+                  reveal('projects');
+                }}
+                onMakeCards={(projectId, goal, source) => {
+                  projectsApi.setActiveId(projectId);
+                  projectsApi.setPlanRequest({ projectId, goal: `Turn this plan from the team discussion into cards:\n\n${goal}`, source: { kind: 'nexus', ...source } });
+                  reveal('projects');
+                }}
+              />
+            )}
+  
+            {activeTab === 'chat' && (
+              <div className="h-full p-2 md:p-4">
+                <ChatView agents={agents} chat={chat} draft={chatDraft} onDraftUsed={() => setChatDraft(null)} />
+              </div>
+            )}
+  
+            {activeTab === 'my-ai' && (
+              <MyAIView
+                onTeamChanged={refreshAllData}
+                request={request?.kind === 'new-teammate' || request?.kind === 'edit-teammate' ? request : null}
+                agents={agents}
+                onSaveAgent={handleSaveAgent}
+                onDeleteAgent={async (id) => {
+                  await remove(`/api/agents/${id}`);
+                  await projectsApi.refresh();
+                }}
+                onSelectAgentForSwarm={(id) => {
+                  const agent = agents.find((a) => a.id === id);
+                  if (agent) openChat(mention(agent), false);
+                }}
+              />
+            )}
+  
+            {activeTab === 'pipelines' && (
+              <PipelineDAGView pipelines={pipelines} agents={agents} onSavePipeline={handleSavePipeline} onRefreshData={refreshAllData} openId={request?.kind === 'open-workflow' ? request.id : ''} openNonce={request?.n || 0} onSelected={setPipelineId} />
+            )}
+  
+            {activeTab === 'files' && (
+              <FilesVaultView
+                files={files}
+                onSaveFile={handleSaveFile}
+                onDeleteFile={(id) => remove(`/api/files/${id}`)}
+                onSendFileToSwarm={(file) =>
+                  openChat(`About ${file.name}:\n\n${file.content.slice(0, 6000)}\n\nMy question: `, false)
+                }
+              />
+            )}
+  
+            {activeTab === 'updates' && <UpdatesView />}
+  
+            {activeTab === 'repos' && <ReposView />}
+            {activeTab === 'devices' && <DevicesView />}
+  
+            {activeTab === 'remote' && <RemoteView />}
+  
+            {activeTab === 'settings' && (
+              <AccountView
+                tab={accountTab}
+                setTab={setAccountTab}
+                darkMode={darkMode}
+                setDarkMode={setDarkMode}
+                onSaved={() => {
+                  refreshAllData();
+                  loadProfile();
+                }}
+              />
+            )}
+    </>
+  );
 
   return (
     <div className="flex h-[100dvh] w-full overflow-hidden bg-slate-100 font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100">
@@ -244,119 +366,52 @@ export default function App() {
           </div>
         )}
 
-        <StatusBar title={TITLES[activeTab] || ''} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} actions={commandActions} />
+        <StatusBar title={split && wide ? '' : TITLES[activeTab] || ''} split={split || picking} onToggleSplit={() => (split ? close((1 - focus) as 0 | 1) : picking ? cancelPicking() : startPicking())} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} actions={commandActions} />
 
-        <main className="relative z-10 min-h-0 flex-1 overflow-y-auto">
-          <OfflineBanner />
-          <UsageWarningBanner />
-          <BusyBanner />
-          {activeTab === 'home' && (
-            <HomeView
-              agents={agents}
-              pipelines={pipelines}
-              files={files}
-              projects={projectsApi.projects}
-              cards={projectsApi.cards}
-              onOpenProject={(id) => {
-                projectsApi.setActiveId(id);
-                setActiveTab('projects');
-              }}
-              onAsk={(text) => openChat(text, true)}
-              onTalkTo={(agent) => openChat(mention(agent), false)}
-              ownerName={profile.name}
-              onOpen={(tab) => (tab === 'settings' ? openAccount('connections') : setActiveTab(tab))}
-            />
-          )}
-
-          {activeTab === 'projects' && <ProjectsView api={projectsApi} agents={agents} onAsk={(text) => openChat(text, false)} newProjectRequest={request?.kind === 'new-project' ? request.n : 0}
-              aziProjectRequest={request?.kind === 'new-azi-project' ? { name: request.name, n: request.n } : null}
-              onOpenBudgets={() => openAccount('connections')}
-              onOpenSource={(card) => {
-                if (!card.source?.roomId) return;
-                setNexusFocus({ roomId: card.source.roomId, seq: card.source.messageSeq || 0, n: (nexusFocus?.n || 0) + 1 });
-                setActiveTab('nexus');
-              }}
-            />}
-
-          {activeTab === 'nexus' && (
-            <NexusView
-              roomsApi={nexusRooms}
-              newRoomRequest={newRoomRequest}
-              agents={agents}
-              projects={projectsApi.projects}
-              ownerName={profile.name}
-              cards={projectsApi.cards}
-              focus={nexusFocus}
-              onOpenCard={(card) => {
-                projectsApi.setActiveId(card.projectId);
-                projectsApi.setOpenCardId(card.id);
-                setActiveTab('projects');
-              }}
-              onMakeCards={(projectId, goal, source) => {
-                projectsApi.setActiveId(projectId);
-                projectsApi.setPlanRequest({ projectId, goal: `Turn this plan from the team discussion into cards:\n\n${goal}`, source: { kind: 'nexus', ...source } });
-                setActiveTab('projects');
-              }}
-            />
-          )}
-
-          {activeTab === 'chat' && (
-            <div className="h-full p-2 md:p-4">
-              <ChatView agents={agents} chat={chat} draft={chatDraft} onDraftUsed={() => setChatDraft(null)} />
-            </div>
-          )}
-
-          {activeTab === 'my-ai' && (
-            <MyAIView
-              onTeamChanged={refreshAllData}
-              request={request?.kind === 'new-teammate' || request?.kind === 'edit-teammate' ? request : null}
-              agents={agents}
-              onSaveAgent={handleSaveAgent}
-              onDeleteAgent={async (id) => {
-                await remove(`/api/agents/${id}`);
-                await projectsApi.refresh();
-              }}
-              onSelectAgentForSwarm={(id) => {
-                const agent = agents.find((a) => a.id === id);
-                if (agent) openChat(mention(agent), false);
-              }}
-            />
-          )}
-
-          {activeTab === 'pipelines' && (
-            <PipelineDAGView pipelines={pipelines} agents={agents} onSavePipeline={handleSavePipeline} onRefreshData={refreshAllData} openId={request?.kind === 'open-workflow' ? request.id : ''} openNonce={request?.n || 0} onSelected={setPipelineId} />
-          )}
-
-          {activeTab === 'files' && (
-            <FilesVaultView
-              files={files}
-              onSaveFile={handleSaveFile}
-              onDeleteFile={(id) => remove(`/api/files/${id}`)}
-              onSendFileToSwarm={(file) =>
-                openChat(`About ${file.name}:\n\n${file.content.slice(0, 6000)}\n\nMy question: `, false)
-              }
-            />
-          )}
-
-          {activeTab === 'updates' && <UpdatesView />}
-
-          {activeTab === 'repos' && <ReposView />}
-          {activeTab === 'devices' && <DevicesView />}
-
-          {activeTab === 'remote' && <RemoteView />}
-
-          {activeTab === 'settings' && (
-            <AccountView
-              tab={accountTab}
-              setTab={setAccountTab}
-              darkMode={darkMode}
-              setDarkMode={setDarkMode}
-              onSaved={() => {
-                refreshAllData();
-                loadProfile();
-              }}
-            />
-          )}
+        <main ref={mainRef} className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="shrink-0">
+            <OfflineBanner />
+            <UsageWarningBanner />
+            <BusyBanner />
+          </div>
+          {split && !wide && <PaneSwitch panes={panes} focus={focus} onFocus={setFocus} onCloseOther={() => close((1 - focus) as 0 | 1)} />}
+          <div ref={paneRowRef} className="flex min-h-0 flex-1 overflow-hidden">
+            {/* Drawn in a fixed order and placed with CSS order, so opening, swapping or closing never remounts the page that stays. */}
+            {[...panes].sort().map((tab) => {
+              const i = panes.indexOf(tab) as 0 | 1;
+              const share = split && wide ? (i === 0 ? ratio : 1 - ratio) : 1;
+              return (
+                <PaneFrame
+                  key={tab}
+                  tab={tab}
+                  order={i * 2}
+                  flex={`${share} 1 0%`}
+                  showHeader={split && wide}
+                  focused={split && i === focus}
+                  hidden={(split && !wide && i !== focus) || (picking && !wide)}
+                  onFocus={() => setFocus(i)}
+                  onSwap={swap}
+                  onClose={() => close(i)}
+                >
+                  {renderPage(tab)}
+                </PaneFrame>
+              );
+            })}
+            {split && wide && <SplitHandle ratio={ratio} setRatio={setRatio} containerRef={paneRowRef} />}
+            {picking && wide && <div style={{ order: 1 }} className="w-3 shrink-0 bg-slate-200 dark:bg-slate-800" aria-hidden />}
+            {picking && (
+              <section key="picker" aria-label="Pick a page" style={{ order: 2, flex: '1 1 0%' }} className="min-w-0 overflow-y-auto bg-white p-4 dark:bg-slate-900">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">Pick a page to open here</h2>
+                <p className="mt-1 text-base text-slate-700 dark:text-slate-200">You can also choose one from the bar on the left.</p>
+                <div className="mt-4">
+                  <PageTiles current={[panes[0]]} reviewCount={reviewCount} onPick={openBeside} />
+                </div>
+                <button onClick={cancelPicking} className="mt-4 min-h-11 rounded-lg border-2 border-slate-300 px-4 text-base font-medium text-slate-800 dark:border-slate-600 dark:text-slate-100">
+                  Cancel
+                </button>
+              </section>
+            )}
+          </div>
         </main>
 
         <MobileNav activeTab={activeTab} setActiveTab={setActiveTab} onMore={() => setMenuOpen(true)} moreOpen={menuOpen} reviewCount={reviewCount} />
@@ -389,7 +444,7 @@ export default function App() {
           }}
           review={review}
           project={
-            activeTab === 'projects' && projectsApi.active
+            panes.includes('projects') && projectsApi.active
               ? {
                   project: projectsApi.active,
                   cards: projectsApi.cards.filter((c) => c.projectId === projectsApi.active!.id && projectsApi.visible(c)),

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TextSizePicker } from './TextSizePicker.tsx';
-import { Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Inbox } from 'lucide-react';
+import { Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Inbox, Columns2, Square } from 'lucide-react';
 import type { AppTab } from './Sidebar.tsx';
 import { VoiceCommands, type CommandActions } from './VoiceCommands.tsx';
 import { openPanel } from '../panel.ts';
@@ -15,7 +15,7 @@ interface Status {
 const get = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null)).catch(() => null);
 
 // Slim bar across the top: where things stand at a glance, each part a shortcut to where it's set.
-export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => void; darkMode: boolean; setDarkMode: (v: boolean) => void; reviewCount?: number; actions: CommandActions }> = ({ title, setActiveTab, darkMode, setDarkMode, reviewCount = 0, actions }) => {
+export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => void; darkMode: boolean; setDarkMode: (v: boolean) => void; reviewCount?: number; actions: CommandActions; split?: boolean; onToggleSplit?: () => void }> = ({ split = false, onToggleSplit, title, setActiveTab, darkMode, setDarkMode, reviewCount = 0, actions }) => {
   const [s, setS] = useState<Status>({});
   useEffect(() => {
     const load = async () => {
@@ -88,6 +88,16 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           </span>
         )}
       </div>
+      {onToggleSplit && (
+        <button
+          onClick={onToggleSplit}
+          aria-pressed={split}
+          title={split ? 'Close the other page and keep the one you are on' : 'Open a second page beside this one'}
+          className={`hidden h-10 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-medium md:flex ${split ? 'border-indigo-300 bg-indigo-50 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-200' : 'border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800'}`}
+        >
+          {split ? <Square className="h-5 w-5" /> : <Columns2 className="h-5 w-5" />} {split ? 'One page' : 'Two pages'}
+        </button>
+      )}
       <VoiceCommands actions={actions} />
       <div ref={aaRef} className="shrink-0">
         <button

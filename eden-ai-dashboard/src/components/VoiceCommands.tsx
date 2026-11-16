@@ -107,7 +107,8 @@ export const VoiceCommands: React.FC<{ actions: CommandActions }> = ({ actions }
         a.newAziProject(cmd.name);
         return { ok: true, text: cmd.name ? `New project in AZI: “${cmd.name}”. Check the form and press Create.` : 'New project in AZI.' };
       case 'scroll': {
-        const main = document.querySelector('main');
+        // With two pages open, scroll the one you are in (each pane scrolls on its own).
+        const main = document.querySelector('[data-pane-focus] [data-pane-scroll]') || document.querySelector('main');
         if (!main) return { ok: false, text: 'Nothing to scroll here.' };
         const from = main.scrollTop;
         const top = cmd.to === 'top' ? 0 : cmd.to === 'bottom' ? main.scrollHeight : from + (cmd.to === 'down' ? 1 : -1) * main.clientHeight * 0.8;
