@@ -20,7 +20,7 @@ export const ProjectChat: React.FC<{ projectId: string }> = ({ projectId }) => {
     setChat({ messages: [], agenda: [] });
     fetch(`/api/projects/${projectId}/chat`).then((r) => r.json()).then((d) => d.messages && setChat(d)).catch(() => {});
   }, [projectId]);
-  useEffect(() => endRef.current?.scrollIntoView({ block: 'nearest' }), [chat.messages.length]);
+  useEffect(() => { endRef.current?.scrollIntoView({ block: 'nearest' }); }, [chat.messages.length]);
 
   const agenda = (body: object) =>
     fetch(`/api/projects/${projectId}/agenda`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
