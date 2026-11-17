@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TextSizePicker } from './TextSizePicker.tsx';
 import { Avatar, useProfile } from './Avatar.tsx';
-import { Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Inbox, Columns2, Square, Search, Pencil, User, X } from 'lucide-react';
+import { Bell, Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Inbox, Columns2, Square, Search, Pencil, User, X } from 'lucide-react';
 import { startPicking, setTrayOpen, useTrayOpen, usePicks } from '../picker.ts';
 import { PickerTray } from './PickerTray.tsx';
 import type { AppTab } from './Sidebar.tsx';
@@ -11,6 +11,8 @@ import type { KeepPage } from '../panes.ts';
 import { TITLES } from './Header.tsx';
 import { ReviewTab, type ReviewProps } from './ReviewTab.tsx';
 import { useTickerItems } from '../ticker.ts';
+import { useUpdatesFeed } from '../readyUpdates.ts';
+import { NotificationsPanel, countNotifications } from './NotificationsPanel.tsx';
 
 interface Status {
   offline?: { offline: boolean; mode: string; localFirst: boolean; week: { localPercent: number; local: number; cloud: number } };
@@ -86,12 +88,41 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
   const [more, setMore] = useState(false);
   const o = s.offline;
   const b = s.busy;
+  // Review holds finished tasks and finished code updates, so the button counts both.
+  const feed = useUpdatesFeed();
+  const readyUpdates = feed.ready.length;
+  const waiting = reviewCount + readyUpdates;
+  // Notifications: "needs you" waits for a click; "news" only needs to be seen (it clears when you open Code updates).
+  const { needs, news } = countNotifications(feed, reviewCount);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const notesBtnRef = useRef<HTMLButtonElement>(null);
+  const notesPanelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!notesOpen) return;
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && setNotesOpen(false);
+    const away = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!notesBtnRef.current?.contains(t) && !notesPanelRef.current?.contains(t)) setNotesOpen(false);
+    };
+    window.addEventListener('keydown', key);
+    document.addEventListener('pointerdown', away);
+    return () => {
+      window.removeEventListener('keydown', key);
+      document.removeEventListener('pointerdown', away);
+    };
+  }, [notesOpen]);
+  const notesTitle = needs > 0 ? `${needs} ${needs === 1 ? 'thing needs' : 'things need'} you${news > 0 ? `, ${news} more to know` : ''}: open Notifications` : news > 0 ? `${news} to know about (nothing needs you): open Notifications` : 'Notifications: all clear';
   return (
     <div className="relative z-20 flex min-h-[5.5rem] items-center gap-2 border-b border-slate-200 bg-white/90 px-3 py-1.5 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
       {title && <span className="mr-1 max-w-[40vw] shrink-0 truncate text-base font-bold text-slate-900 dark:text-white">{title}</span>}
       <div className={`flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] ${ticker ? 'max-w-[45%] shrink-0' : 'flex-1'}`}>
-        <button ref={reviewBtnRef} onClick={() => (review ? setReviewOpen((v) => !v) : openPanel('review'))} aria-expanded={review ? reviewOpen : undefined} title={reviewCount > 0 ? 'Finished work waiting for you: open Review' : 'Review: nothing waiting for you right now'} className={`${chip} flex ${reviewCount > 0 ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200' : calm}`}>
-          <Inbox className="h-3.5 w-3.5" /> {reviewCount > 0 ? `${reviewCount} to review` : 'Review'}
+        <button ref={reviewBtnRef} onClick={() => (review ? setReviewOpen((v) => !v) : openPanel('review'))} aria-expanded={review ? reviewOpen : undefined} title={waiting > 0 ? 'Finished tasks and code updates waiting for you: open Review' : 'Review: nothing waiting for you right now'} className={`${chip} flex ${waiting > 0 ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200' : calm}`}>
+          <Inbox className="h-3.5 w-3.5" /> {waiting > 0 ? `${waiting} to review` : 'Review'}
+        </button>
+        <button ref={notesBtnRef} onClick={() => { setReviewOpen(false); setNotesOpen((v) => !v); }} aria-expanded={notesOpen} title={notesTitle} aria-label={notesTitle} className={`${chip} flex ${needs > 0 ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200' : news > 0 ? 'border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200' : calm}`}>
+          <Bell className="h-3.5 w-3.5" />
+          {needs > 0 ? `${needs} need${needs === 1 ? 's' : ''} you` : news > 0 ? `${news} new` : 'Notifications'}
+          {needs > 0 && news > 0 && <span className="rounded-full bg-sky-500 px-1.5 text-[10px] font-semibold leading-4 text-white">{news}</span>}
         </button>
         {o && (
           <button onClick={() => setActiveTab('settings')} title="Offline mode (Account → Connections)" className={`${chip} ${o.offline ? 'flex border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200' : `${more ? 'hidden md:flex' : 'hidden'} ${calm}`}`}>
@@ -123,6 +154,16 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           {more ? 'Less' : 'Status'}
         </button>
       </div>
+      {notesOpen && (
+        <NotificationsPanel
+          ref={notesPanelRef}
+          feed={feed}
+          reviewCount={reviewCount}
+          onClose={() => setNotesOpen(false)}
+          onReview={() => (review ? setReviewOpen(true) : openPanel('review'))}
+          onOpenUpdates={() => { try { sessionStorage.setItem('eden_updates_open', 'active'); } catch {} setActiveTab('updates'); }}
+        />
+      )}
       {review && reviewOpen && (
         <div ref={reviewPanelRef} className="absolute left-2 top-full z-30 mt-1 flex max-h-[70vh] w-[42rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border border-slate-300 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
           <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2 dark:border-slate-800">
@@ -137,7 +178,7 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
             </div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <ReviewTab {...review} onOpen={(card) => { setReviewOpen(false); review.onOpen(card); }} />
+            <ReviewTab {...review} onOpen={(card) => { setReviewOpen(false); review.onOpen(card); }} onOpenUpdates={() => { setReviewOpen(false); review.onOpenUpdates?.(); }} />
           </div>
         </div>
       )}

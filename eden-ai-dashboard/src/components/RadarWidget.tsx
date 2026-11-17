@@ -37,6 +37,14 @@ const triangle = (ctx: CanvasRenderingContext2D, x: number, y: number, angle: nu
 export default function RadarWidget({ maxWidth = 240 }: { maxWidth?: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [kills, setKills] = useState(0);
+  // Highest score so far, remembered on this computer between visits
+  const [best, setBest] = useState(() => { let v = 0; try { v = Number(localStorage.getItem('eden_radar_best')) || 0; } catch {} return v; });
+
+  useEffect(() => {
+    if (kills <= best) return;
+    setBest(kills);
+    try { localStorage.setItem('eden_radar_best', String(kills)); } catch {}
+  }, [kills, best]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -195,7 +203,7 @@ export default function RadarWidget({ maxWidth = 240 }: { maxWidth?: number }) {
   return (
     <div>
       <canvas ref={canvasRef} role="img" aria-label="Radar game: a ship shoots missiles at red bugs" className="mx-auto aspect-square w-full" style={{ maxWidth }} />
-      <p className="mt-2 text-center text-xs text-slate-500 dark:text-slate-400">Bugs squashed: <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{kills}</span></p>
+      <p className="mt-2 text-center text-xs text-slate-500 dark:text-slate-400">Bugs squashed: <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{kills}</span> · High score: <span className="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{best}</span></p>
     </div>
   );
 }

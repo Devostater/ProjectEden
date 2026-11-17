@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Wand2, MessagesSquare, Pencil, Loader2 } from 'lucide-react';
 import { usePicks, removePick, clearPicks, picksAsText, getPickTarget } from '../picker.ts';
@@ -39,31 +39,40 @@ export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onResu
     setBusy(false);
   };
 
-  // Sit just above the bottom panel (its tab bar and whatever is open), so the tray never covers it.
-  // Without a bottom panel (phone) or when it fills the screen, keep the usual spot.
-  const [lift, setLift] = useState<number | null>(null);
+  // Where the tray sits, so it never covers what you're picking:
+  // - above the bottom panel, when the tray (its real height) fits there;
+  // - otherwise at the top of the screen, under the top bar (tall or full-screen panel, e.g. picking in the App tab);
+  // - with no bottom panel (phone), the usual spot near the bottom.
+  const trayRef = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<{ bottom: number } | { top: number } | null>(null);
   useEffect(() => {
     const panel = document.querySelector('[data-eden-bottom-panel]') as HTMLElement | null;
     const measure = () => {
       const r = panel?.getBoundingClientRect();
-      const gap = r && r.width > 0 && r.height > 0 ? window.innerHeight - r.top : 0;
-      // Only sit above the panel when there's real room (about 15rem) left above it; otherwise use the usual spot,
-      // so the tray can never be pushed off the top of the screen.
-      const room = window.innerHeight - gap - 12 - 16;
-      setLift(gap > 0 && room >= 240 ? Math.round(gap + 12) : null);
+      const gap = r && r.width > 0 && r.height > 0 ? Math.min(window.innerHeight, window.innerHeight - r.top) : 0;
+      if (gap <= 0) return setPlace(null);
+      const trayH = trayRef.current?.offsetHeight || 200;
+      const room = window.innerHeight - gap - 12 - 64; // keep clear of the top bar
+      setPlace(room >= trayH ? { bottom: Math.round(gap + 12) } : { top: 64 });
     };
     measure();
     window.addEventListener('resize', measure);
-    const watch = panel && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    const watch = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
     if (panel) watch?.observe(panel);
+    if (trayRef.current) watch?.observe(trayRef.current);
     return () => {
       window.removeEventListener('resize', measure);
       watch?.disconnect();
     };
   }, []);
+  const placeStyle: React.CSSProperties | undefined = !place
+    ? undefined
+    : 'bottom' in place
+      ? { bottom: place.bottom, maxHeight: `calc(100dvh - ${place.bottom + 64}px)` }
+      : { top: place.top, maxHeight: `calc(100dvh - ${place.top + 16}px)` };
 
   return createPortal(
-    <div data-eden-picker-ui="" style={lift !== null ? { bottom: lift, maxHeight: `calc(100dvh - ${lift + 16}px)` } : undefined} className={`fixed ${lift !== null ? '' : 'bottom-20'} left-1/2 z-[2147483646] max-h-[calc(100dvh-6rem)] w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 overflow-y-auto rounded-xl border border-indigo-400 bg-white/95 p-3 shadow-xl backdrop-blur dark:bg-slate-900/95`}>
+    <div ref={trayRef} data-eden-picker-ui="" style={placeStyle} className={`fixed ${place ? '' : 'bottom-20'} left-1/2 z-[2147483646] max-h-[calc(100dvh-6rem)] w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 overflow-y-auto rounded-xl border border-indigo-400 bg-white/95 p-3 shadow-xl backdrop-blur dark:bg-slate-900/95`}>
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Pencil className="h-4 w-4 text-indigo-500" />
         <span className="font-medium text-slate-900 dark:text-white">{picking ? 'Click parts of the screen to pick them' : picks.length ? `${picks.length} picked${getPickTarget().name ? ` in ${getPickTarget().name}` : ' in EDEN'}` : 'Picker'}</span>

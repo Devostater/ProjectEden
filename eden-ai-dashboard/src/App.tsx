@@ -241,6 +241,7 @@ export default function App() {
       projectsApi.setOpenCardId(card.id);
       setActiveTab('projects');
     },
+    onOpenUpdates: () => setActiveTab('updates'),
   };
 
 

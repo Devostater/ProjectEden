@@ -5,6 +5,7 @@ import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, Chevro
 import { Formatted } from './ChatView.tsx';
 import { NextUpdate, type CodebaseInfo } from './NextUpdate.tsx';
 import { diagnose, applyFix, canFix, planFixAll, type Fix } from '../updateFixes.ts';
+import { markUpdatesSeen, refreshUpdatesFeed } from '../readyUpdates.ts';
 
 interface Job {
   id: string;
@@ -181,6 +182,9 @@ export const UpdatesView: React.FC = () => {
       setRemote(!!d.remote);
       setRestartPending(!!d.restartPending);
       live.current = d.busy;
+      // You are looking at the page, so finished and failed updates are no longer news in the top bar.
+      markUpdatesSeen();
+      refreshUpdatesFeed();
     } catch {}
   };
 
@@ -512,7 +516,7 @@ export const UpdatesView: React.FC = () => {
                 className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm ${selected ? 'border-indigo-500 font-medium text-indigo-600 dark:text-indigo-300' : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}`}
               >
                 {t.label}
-                {count >= 0 && <span className={`rounded-full px-1.5 text-xs tabular-nums ${t.id === 'error' && count > 0 ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{count}</span>}
+                {count >= 0 && <span className={`rounded-full px-1.5 text-xs tabular-nums ${t.id === 'error' && count > 0 ? 'bg-red-500 text-white' : t.id === 'active' && jobs.some((j) => j.status === 'ready') ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{count}</span>}
               </button>
             );
           })}

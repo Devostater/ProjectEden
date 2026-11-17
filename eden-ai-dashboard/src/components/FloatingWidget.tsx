@@ -46,7 +46,7 @@ export function FloatingWidget({ title, x, y, onMove, onDock, children }: Floati
       >
         <GripHorizontal className="h-4 w-4 shrink-0 text-slate-400" />
         <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900 dark:text-white">{title}</span>
-        <button onClick={onDock} title="Dock back into the widget bar" className="flex shrink-0 items-center gap-1 rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700">
+        <button onClick={onDock} title="Dock back into the sidebar" className="flex shrink-0 items-center gap-1 rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700">
           <Minimize2 className="h-3 w-3" /> Dock
         </button>
       </div>

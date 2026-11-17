@@ -79,34 +79,7 @@ const COLLAPSED_KEY = 'eden_dashboard_collapsed';
 // Each panel is "default" (full width) or "x1" (half width, so two x1 panels sit side by side).
 const SIZE_KEY = 'eden_dashboard_sizes';
 
-// The widget bar at the top: the bug radar plus the dashboard panels, as tabs you can rearrange and pop out.
-type WidgetId = 'notes' | 'radar' | PanelId;
-const WIDGET_IDS: WidgetId[] = ['notes', 'radar', ...DEFAULT_ORDER];
-const NOTES_KEY = 'eden_dashboard_notes';
-
-// A simple notepad tab. What you type is saved on this device as you go.
-const NotesWidget: React.FC = () => {
-  const [value, setValue] = useState(() => { try { return localStorage.getItem(NOTES_KEY) || ''; } catch { return ''; } });
-  const change = (next: string) => {
-    setValue(next);
-    try { localStorage.setItem(NOTES_KEY, next); } catch {}
-  };
-  return (
-    <div className="w-full space-y-1">
-      <textarea
-        value={value}
-        onChange={(e) => change(e.target.value)}
-        placeholder="Jot down anything you want to remember…"
-        aria-label="Notes"
-        rows={6}
-        className="w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-      />
-      <p className="text-xs text-slate-500">Saved on this device as you type.</p>
-    </div>
-  );
-};
-const WIDGET_ORDER_KEY = 'eden_widget_order';
-const WIDGET_ACTIVE_KEY = 'eden_widget_active';
+// The widget sidebar holds just the bug radar. It can pop out into a floating window that stays on screen while you scroll.
 const WIDGET_POPPED_KEY = 'eden_widget_popped';
 const WIDGET_POS_KEY = 'eden_widget_pos';
 
@@ -138,52 +111,13 @@ function loadOrder(): PanelId[] {
   return result;
 }
 
-// Saved widget order, tolerant of widgets being added or removed later.
-function loadWidgetOrder(): WidgetId[] {
-  const saved = load<WidgetId[]>(WIDGET_ORDER_KEY, []).filter((id) => WIDGET_IDS.includes(id));
-  // A tab added later goes right after the tab that comes before it by default (so Notes lands on the far left).
-  const result = [...saved];
-  WIDGET_IDS.forEach((id, i) => {
-    if (result.includes(id)) return;
-    const before = WIDGET_IDS.slice(0, i).reverse().find((x) => result.includes(x));
-    result.splice(before ? result.indexOf(before) + 1 : 0, 0, id);
-  });
-  return result;
-}
-
 export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, projects, cards, onOpenProject, ownerName, onAsk, onTalkTo, onOpen, onRetryCard }) => {
   const [text, setText] = useState('');
-  // Widget bar: order, which tab is open in the middle, which are popped out, and where the popped-out ones sit.
-  const [widgetOrder, setWidgetOrder] = useState<WidgetId[]>(loadWidgetOrder);
-  const [activeWidget, setActiveWidget] = useState<WidgetId>(() => { const a = load<WidgetId>(WIDGET_ACTIVE_KEY, 'radar'); return WIDGET_IDS.includes(a) ? a : 'radar'; });
-  const [popped, setPopped] = useState<WidgetId[]>(() => load<WidgetId[]>(WIDGET_POPPED_KEY, []).filter((id) => WIDGET_IDS.includes(id)));
-  const [widgetPos, setWidgetPos] = useState<Record<string, { x: number; y: number }>>(() => load(WIDGET_POS_KEY, {}));
-  const [draggingTab, setDraggingTab] = useState<WidgetId | null>(null);
-  const chooseWidget = (id: WidgetId) => { setActiveWidget(id); save(WIDGET_ACTIVE_KEY, id); };
-  const setPoppedSaved = (next: WidgetId[]) => { setPopped(next); save(WIDGET_POPPED_KEY, next); };
-  const moveWidgetPos = (id: WidgetId, x: number, y: number) => setWidgetPos((p) => { const next = { ...p, [id]: { x, y } }; save(WIDGET_POS_KEY, next); return next; });
-  const moveTab = (id: WidgetId, target: WidgetId) => {
-    if (id === target) return;
-    setWidgetOrder((current) => {
-      const next = current.filter((w) => w !== id);
-      next.splice(current.indexOf(target), 0, id);
-      save(WIDGET_ORDER_KEY, next);
-      return next;
-    });
-  };
-  // Keyboard alternative to dragging a tab: Shift + arrow keys.
-  const nudgeTab = (id: WidgetId, delta: number) => {
-    setWidgetOrder((current) => {
-      const from = current.indexOf(id);
-      const to = Math.max(0, Math.min(current.length - 1, from + delta));
-      if (from === to) return current;
-      const next = [...current];
-      next.splice(from, 1);
-      next.splice(to, 0, id);
-      save(WIDGET_ORDER_KEY, next);
-      return next;
-    });
-  };
+  // Bug radar: whether it is popped out, and where the floating window sits.
+  const [radarOut, setRadarOut] = useState<boolean>(() => { const saved = load<unknown>(WIDGET_POPPED_KEY, false); return saved === true || (Array.isArray(saved) && saved.includes('radar')); });
+  const [radarPos, setRadarPos] = useState<{ x: number; y: number } | null>(() => { const saved = load<Record<string, { x: number; y: number }>>(WIDGET_POS_KEY, {}); return saved.radar ?? null; });
+  const setRadarOutSaved = (next: boolean) => { setRadarOut(next); save(WIDGET_POPPED_KEY, next); };
+  const moveRadar = (x: number, y: number) => { setRadarPos({ x, y }); save(WIDGET_POS_KEY, { radar: { x, y } }); };
   const [order, setOrder] = useState<PanelId[]>(loadOrder);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => load(COLLAPSED_KEY, {}));
   const [dragging, setDragging] = useState<PanelId | null>(null);
@@ -686,70 +620,39 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     },
   };
 
-  // Widgets: the bug radar (a just-for-fun game where your ship shoots bugs) and the dashboard panels.
-  const widgetTitle = (id: WidgetId) => (id === 'notes' ? '📝 Notes' : id === 'radar' ? '🎯 Bug radar' : panels[id].title);
-  const widgetBody = (id: WidgetId, big = false) => (id === 'notes' ? <NotesWidget /> : id === 'radar' ? <RadarWidget maxWidth={big ? 320 : 240} /> : panels[id].body);
-  const defaultPos = (i: number) => ({ x: Math.max(8, window.innerWidth - 368 - i * 28), y: 80 + i * 28 });
+  // Widgets: just the bug radar (a just-for-fun game where your ship shoots bugs).
+  const radarPos0 = radarPos ?? { x: Math.max(8, window.innerWidth - 368), y: 80 };
 
   return (
     <div className="flex min-h-full flex-col">
     {/* The content sits in the big stage and a status bar runs along the bottom, like a media player */}
     <div className="flex min-w-0 flex-1 flex-col">
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 p-4 sm:p-8 lg:flex-row lg:items-start">
-      {/* Widgets sidebar on the left: tabs (drag to rearrange, Shift + arrow keys works too). The open tab shows below them. Pop out floats it above the page. */}
+      {/* Widgets sidebar on the left: just the bug radar. It stays in view as you scroll. Pop out floats it above the page (also stays put while you scroll). */}
       <aside aria-label="Widgets sidebar" className="w-full shrink-0 lg:sticky lg:top-4 lg:w-72">
       <section aria-label="Widgets" className="rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/60">
-        <div role="tablist" aria-label="Widgets. Drag a tab to rearrange." className="flex flex-wrap gap-1 border-b border-slate-200 p-2 dark:border-slate-800">
-          {widgetOrder.map((id) => {
-            const isActive = id === activeWidget;
-            const isPopped = popped.includes(id);
-            return (
-              <div
-                key={id}
-                draggable
-                onDragStart={(e) => { setDraggingTab(id); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); }}
-                onDragEnd={() => setDraggingTab(null)}
-                onDragOver={(e) => { if (!draggingTab) return; e.preventDefault(); if (draggingTab !== id) moveTab(draggingTab, id); }}
-                onDrop={(e) => { e.preventDefault(); setDraggingTab(null); }}
-                className={`flex shrink-0 items-center rounded-lg border text-sm ${draggingTab === id ? 'opacity-60' : ''} ${isActive ? 'border-indigo-500 bg-white text-indigo-700 dark:bg-slate-900 dark:text-indigo-300' : 'border-transparent text-slate-600 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-900'}`}
-              >
-                <button
-                  role="tab"
-                  aria-selected={isActive}
-                  onClick={() => chooseWidget(id)}
-                  onKeyDown={(e) => {
-                    if (!e.shiftKey) return;
-                    if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeTab(id, -1); }
-                    else if (e.key === 'ArrowRight') { e.preventDefault(); nudgeTab(id, 1); }
-                  }}
-                  title="Drag to rearrange"
-                  className="cursor-grab whitespace-nowrap rounded-l-lg px-3 py-1.5 active:cursor-grabbing"
-                >
-                  {widgetTitle(id)}{isPopped && <span className="ml-1 text-xs text-slate-400">(popped out)</span>}
-                </button>
-                <button
-                  onClick={() => setPoppedSaved(isPopped ? popped.filter((w) => w !== id) : [...popped, id])}
-                  aria-pressed={isPopped}
-                  aria-label={`${isPopped ? 'Dock' : 'Pop out'} ${widgetTitle(id)}`}
-                  title={isPopped ? 'Dock back into the bar' : 'Pop out into a floating window'}
-                  className={`rounded-r-lg px-1.5 py-1.5 ${isPopped ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            );
-          })}
+        <div className="flex items-center gap-1 border-b border-slate-200 p-2 dark:border-slate-800">
+          <span className="min-w-0 flex-1 truncate px-2 py-1 text-sm font-medium text-slate-700 dark:text-slate-200">🎯 Bug radar{radarOut && <span className="ml-1 text-xs text-slate-400">(popped out)</span>}</span>
+          <button
+            onClick={() => setRadarOutSaved(!radarOut)}
+            aria-pressed={radarOut}
+            aria-label={`${radarOut ? 'Dock' : 'Pop out'} Bug radar`}
+            title={radarOut ? 'Dock back into the sidebar' : 'Pop out into a floating window'}
+            className={`rounded-lg px-1.5 py-1.5 ${radarOut ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </button>
         </div>
-        <div role="tabpanel" className="flex justify-center p-3">
-          {popped.includes(activeWidget) ? (
+        <div className="flex justify-center p-3">
+          {radarOut ? (
             <div className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
-              <p>{widgetTitle(activeWidget)} is popped out.</p>
-              <button onClick={() => setPoppedSaved(popped.filter((w) => w !== activeWidget))} className="mt-2 rounded-lg border border-slate-300 px-3 py-1.5 text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">
+              <p>Bug radar is popped out.</p>
+              <button onClick={() => setRadarOutSaved(false)} className="mt-2 rounded-lg border border-slate-300 px-3 py-1.5 text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">
                 Dock it back here
               </button>
             </div>
           ) : (
-            <div className={`w-full ${activeWidget === 'radar' ? 'mx-auto max-w-[320px]' : ''}`}>{widgetBody(activeWidget, true)}</div>
+            <div className="mx-auto w-full max-w-[320px]"><RadarWidget maxWidth={320} /></div>
           )}
         </div>
       </section>
@@ -1027,24 +930,18 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
       </span>
       <span className="ml-auto flex gap-2">
         <button onClick={() => openPanel('review')} className="rounded-lg border border-slate-300 px-3 py-1 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
-          Review{reviewCount > 0 ? ` (${reviewCount})` : ''}
-        </button>
-        <button onClick={() => onOpen('updates')} className="rounded-lg border border-slate-300 px-3 py-1 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
-          Code updates{readyUpdates > 0 ? ` (${readyUpdates})` : ''}
+          Review{reviewCount + readyUpdates > 0 ? ` (${reviewCount + readyUpdates})` : ''}
         </button>
       </span>
     </div>
     </div>
 
-    {/* Popped-out widgets float above the page */}
-    {popped.map((id, i) => {
-      const pos = widgetPos[id] ?? defaultPos(i);
-      return (
-        <FloatingWidget key={id} title={widgetTitle(id)} x={pos.x} y={pos.y} onMove={(x, y) => moveWidgetPos(id, x, y)} onDock={() => setPoppedSaved(popped.filter((w) => w !== id))}>
-          {widgetBody(id)}
-        </FloatingWidget>
-      );
-    })}
+    {/* The popped-out radar floats above the page and stays put while you scroll */}
+    {radarOut && (
+      <FloatingWidget title="🎯 Bug radar" x={radarPos0.x} y={radarPos0.y} onMove={moveRadar} onDock={() => setRadarOutSaved(false)}>
+        <RadarWidget maxWidth={240} />
+      </FloatingWidget>
+    )}
     </div>
   );
 };

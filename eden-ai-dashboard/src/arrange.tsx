@@ -130,8 +130,9 @@ export const Arrangeable: React.FC<{
       if (target) target.style.outline = '2px solid rgb(99 102 241)';
     };
     const timer = window.setTimeout(() => {
+      // Ready to drag, but nothing changes on screen until the pointer actually moves: growing the item now would
+      // shift what is under a still pointer and send a slow click to the wrong button.
       isLifted = true;
-      setLifted(true);
     }, 300);
     const move = (ev: PointerEvent) => {
       if (!isLifted) {
@@ -139,7 +140,11 @@ export const Arrangeable: React.FC<{
         if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) finish(false);
         return;
       }
-      if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) moved = true;
+      if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) {
+        moved = true;
+        setLifted(true);
+      }
+      if (!moved) return;
       const under = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(`[data-arrange-list="${holdDrag}"]`) ?? null;
       mark(under && under.dataset.arrangeId !== id ? under : null);
     };

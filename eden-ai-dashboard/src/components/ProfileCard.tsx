@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Upload, Trash2, Plus, X, Save, Loader2, Sparkles, ExternalLink, Play, Star, Briefcase, Gamepad2, Trophy, Coins, Gem, Swords, Palette, Brain, Heart, Clover } from 'lucide-react';
-import { Avatar, FRAMES, PROFILE_EVENT, useProfile, type ProfileData } from './Avatar.tsx';
+import { Avatar, FRAMES, PROFILE_EVENT, useProfile, normalizeProfile, type ProfileData } from './Avatar.tsx';
 
 // Picture, frame, bio, your links and your own quick commands (a command sends its text to Chat).
 const card = 'rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900';
@@ -49,7 +49,7 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
       const r = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'Could not save.');
-      setP(d);
+      setP(normalizeProfile(d) || p);
       setMsg({ ok: true, text: 'Profile saved.' });
       window.dispatchEvent(new Event(PROFILE_EVENT));
     } catch (e: any) {
