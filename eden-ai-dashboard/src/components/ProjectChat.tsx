@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { ui } from '../ui.ts';
 import { Send, Loader2, Plus, X, CalendarClock, ListChecks } from 'lucide-react';
 
 // The project's ongoing chat with Chief (kept on the hub) and its to-discuss list.
@@ -6,8 +7,6 @@ interface ChatLine { role: 'owner' | 'chief'; text: string; at: string }
 interface AgendaItem { id: string; text: string; done: boolean; at: string }
 interface Chat { messages: ChatLine[]; agenda: AgendaItem[]; meeting?: string }
 
-const field = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white';
-const head = 'mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 
 export const ProjectChat: React.FC<{ projectId: string }> = ({ projectId }) => {
   const [chat, setChat] = useState<Chat>({ messages: [], agenda: [] });
@@ -51,7 +50,7 @@ export const ProjectChat: React.FC<{ projectId: string }> = ({ projectId }) => {
   return (
     <div className="space-y-3">
       <section className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
-        <div className={head}><ListChecks className="h-3.5 w-3.5" /> To discuss</div>
+        <div className={ui.label}><ListChecks className="h-3.5 w-3.5" /> To discuss</div>
         <label className="mb-2 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
           <CalendarClock className="h-4 w-4 shrink-0" />
           <input defaultValue={chat.meeting || ''} key={chat.meeting || 'none'} onBlur={(e) => e.target.value !== (chat.meeting || '') && agenda({ meeting: e.target.value })} placeholder="Next meeting, e.g. Today 5pm" aria-label="Next meeting" className="min-w-0 flex-1 bg-transparent focus:outline-none" />
@@ -67,7 +66,7 @@ export const ProjectChat: React.FC<{ projectId: string }> = ({ projectId }) => {
           {!open.length && <li className="text-sm text-slate-500 dark:text-slate-400">Nothing yet. Add a point, or tell Chief "add … to the list".</li>}
         </ul>
         <form onSubmit={(e) => { e.preventDefault(); if (item.trim()) { agenda({ text: item }); setItem(''); } }} className="mt-2 flex gap-2">
-          <input value={item} onChange={(e) => setItem(e.target.value)} placeholder="Add a point" aria-label="Add a point to discuss" className={field} />
+          <input value={item} onChange={(e) => setItem(e.target.value)} placeholder="Add a point" aria-label="Add a point to discuss" className={ui.field} />
           <button disabled={!item.trim()} className="rounded-lg border border-slate-300 px-3 disabled:opacity-40 dark:border-slate-700" aria-label="Add"><Plus className="h-4 w-4" /></button>
         </form>
         {done.length > 0 && (
@@ -78,7 +77,7 @@ export const ProjectChat: React.FC<{ projectId: string }> = ({ projectId }) => {
       </section>
 
       <section className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
-        <div className={head}>Chat with Chief (kept for this project)</div>
+        <div className={ui.label}>Chat with Chief (kept for this project)</div>
         <div className="space-y-2">
           {chat.messages.map((m, i) => (
             <div key={i} className={`whitespace-pre-wrap rounded-lg px-3 py-2 text-sm ${m.role === 'owner' ? 'ml-8 bg-indigo-600 text-white' : 'mr-8 bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100'}`}>{m.text}</div>
@@ -89,7 +88,7 @@ export const ProjectChat: React.FC<{ projectId: string }> = ({ projectId }) => {
         </div>
         {error && <p role="alert" className="mt-2 text-sm text-red-600">{error}</p>}
         <form onSubmit={(e) => { e.preventDefault(); send(); }} className="mt-3 flex gap-2">
-          <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={2} placeholder="Message Chief…" aria-label="Message Chief" className={field} />
+          <textarea value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} rows={2} placeholder="Message Chief…" aria-label="Message Chief" className={ui.field} />
           <button disabled={busy || !text.trim()} aria-label="Send" className="self-end rounded-lg bg-indigo-600 px-3 py-2 text-white disabled:opacity-40"><Send className="h-4 w-4" /></button>
         </form>
       </section>
