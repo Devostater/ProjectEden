@@ -53,7 +53,7 @@ export const Avatar: React.FC<{ src?: string; initial: string; frame?: string; s
 
 // The profile, shared by the left bar and the Account tab. Changes are announced with an event.
 export const PROFILE_EVENT = 'eden-profile-changed';
-export interface ProfileData { avatar: string; frame: string; bio: string; links: { label: string; url: string }[]; commands: { label: string; text: string }[]; playerLevel: number; workTitle: string; gameTitle: string; prestige: number; credits: number; diamonds: number }
+export interface ProfileData { avatar: string; frame: string; bio: string; links: { label: string; url: string }[]; commands: { label: string; text: string }[]; playerLevel: number; workTitle: string; gameTitle: string; prestige: number; credits: number; diamonds: number; playerClass: string; xp: number; stats: { creativity: number; logic: number; charm: number; luck: number } }
 export function useProfile(): ProfileData | null {
   const [p, setP] = useState<ProfileData | null>(null);
   useEffect(() => {

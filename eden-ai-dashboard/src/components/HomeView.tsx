@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, ChevronsDownUp, ChevronsUpDown, GitBranch, FileText, GripVertical, Plus, Send, SlidersHorizontal, Eye, EyeOff } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, ChevronsDownUp, ChevronsUpDown, GitBranch, FileText, GripVertical, Plus, Send, SlidersHorizontal, Eye, EyeOff, ExternalLink } from 'lucide-react';
 import type { Agent, Card, DAGPipeline, HostedFile, Project } from '../types/index.ts';
 import { newlineOnCtrlEnter } from '../textbox.ts';
 import { UsageBar, useProviderUsage, RefreshUsageButton } from './UsageBars.tsx';
@@ -8,6 +8,8 @@ import { roadmapProgress, progressOf } from './Roadmap.tsx';
 import { diagnose, applyFix, canFix, limitStillOn, type FixableJob } from '../updateFixes.ts';
 import { useFolded, FoldHeader } from './Foldable.tsx';
 import { setTickerItems } from '../ticker.ts';
+import RadarWidget from './RadarWidget.tsx';
+import { FloatingWidget } from './FloatingWidget.tsx';
 
 // A JSON POST to the hub that throws with the hub's own message when it says no.
 const postJson = async (url: string, body?: unknown) => {
@@ -74,6 +76,39 @@ type PanelId = 'roadmaps' | 'projects' | 'health' | 'team' | 'lyra' | 'ai' | 'wo
 const DEFAULT_ORDER: PanelId[] = ['roadmaps', 'projects', 'health', 'team', 'lyra', 'ai', 'workflows', 'files'];
 const ORDER_KEY = 'eden_dashboard_order';
 const COLLAPSED_KEY = 'eden_dashboard_collapsed';
+// Each panel is "default" (full width) or "x1" (half width, so two x1 panels sit side by side).
+const SIZE_KEY = 'eden_dashboard_sizes';
+
+// The widget bar at the top: the bug radar plus the dashboard panels, as tabs you can rearrange and pop out.
+type WidgetId = 'notes' | 'radar' | PanelId;
+const WIDGET_IDS: WidgetId[] = ['notes', 'radar', ...DEFAULT_ORDER];
+const NOTES_KEY = 'eden_dashboard_notes';
+
+// A simple notepad tab. What you type is saved on this device as you go.
+const NotesWidget: React.FC = () => {
+  const [value, setValue] = useState(() => { try { return localStorage.getItem(NOTES_KEY) || ''; } catch { return ''; } });
+  const change = (next: string) => {
+    setValue(next);
+    try { localStorage.setItem(NOTES_KEY, next); } catch {}
+  };
+  return (
+    <div className="w-full space-y-1">
+      <textarea
+        value={value}
+        onChange={(e) => change(e.target.value)}
+        placeholder="Jot down anything you want to remember…"
+        aria-label="Notes"
+        rows={6}
+        className="w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+      />
+      <p className="text-xs text-slate-500">Saved on this device as you type.</p>
+    </div>
+  );
+};
+const WIDGET_ORDER_KEY = 'eden_widget_order';
+const WIDGET_ACTIVE_KEY = 'eden_widget_active';
+const WIDGET_POPPED_KEY = 'eden_widget_popped';
+const WIDGET_POS_KEY = 'eden_widget_pos';
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -103,11 +138,61 @@ function loadOrder(): PanelId[] {
   return result;
 }
 
+// Saved widget order, tolerant of widgets being added or removed later.
+function loadWidgetOrder(): WidgetId[] {
+  const saved = load<WidgetId[]>(WIDGET_ORDER_KEY, []).filter((id) => WIDGET_IDS.includes(id));
+  // A tab added later goes right after the tab that comes before it by default (so Notes lands on the far left).
+  const result = [...saved];
+  WIDGET_IDS.forEach((id, i) => {
+    if (result.includes(id)) return;
+    const before = WIDGET_IDS.slice(0, i).reverse().find((x) => result.includes(x));
+    result.splice(before ? result.indexOf(before) + 1 : 0, 0, id);
+  });
+  return result;
+}
+
 export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, projects, cards, onOpenProject, ownerName, onAsk, onTalkTo, onOpen, onRetryCard }) => {
   const [text, setText] = useState('');
+  // Widget bar: order, which tab is open in the middle, which are popped out, and where the popped-out ones sit.
+  const [widgetOrder, setWidgetOrder] = useState<WidgetId[]>(loadWidgetOrder);
+  const [activeWidget, setActiveWidget] = useState<WidgetId>(() => { const a = load<WidgetId>(WIDGET_ACTIVE_KEY, 'radar'); return WIDGET_IDS.includes(a) ? a : 'radar'; });
+  const [popped, setPopped] = useState<WidgetId[]>(() => load<WidgetId[]>(WIDGET_POPPED_KEY, []).filter((id) => WIDGET_IDS.includes(id)));
+  const [widgetPos, setWidgetPos] = useState<Record<string, { x: number; y: number }>>(() => load(WIDGET_POS_KEY, {}));
+  const [draggingTab, setDraggingTab] = useState<WidgetId | null>(null);
+  const chooseWidget = (id: WidgetId) => { setActiveWidget(id); save(WIDGET_ACTIVE_KEY, id); };
+  const setPoppedSaved = (next: WidgetId[]) => { setPopped(next); save(WIDGET_POPPED_KEY, next); };
+  const moveWidgetPos = (id: WidgetId, x: number, y: number) => setWidgetPos((p) => { const next = { ...p, [id]: { x, y } }; save(WIDGET_POS_KEY, next); return next; });
+  const moveTab = (id: WidgetId, target: WidgetId) => {
+    if (id === target) return;
+    setWidgetOrder((current) => {
+      const next = current.filter((w) => w !== id);
+      next.splice(current.indexOf(target), 0, id);
+      save(WIDGET_ORDER_KEY, next);
+      return next;
+    });
+  };
+  // Keyboard alternative to dragging a tab: Shift + arrow keys.
+  const nudgeTab = (id: WidgetId, delta: number) => {
+    setWidgetOrder((current) => {
+      const from = current.indexOf(id);
+      const to = Math.max(0, Math.min(current.length - 1, from + delta));
+      if (from === to) return current;
+      const next = [...current];
+      next.splice(from, 1);
+      next.splice(to, 0, id);
+      save(WIDGET_ORDER_KEY, next);
+      return next;
+    });
+  };
   const [order, setOrder] = useState<PanelId[]>(loadOrder);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => load(COLLAPSED_KEY, {}));
   const [dragging, setDragging] = useState<PanelId | null>(null);
+  const [sizes, setSizes] = useState<Record<string, 'x1' | 'default'>>(() => load(SIZE_KEY, {}));
+  const toggleSize = (id: PanelId) => {
+    const next = { ...sizes, [id]: sizes[id] === 'x1' ? 'default' : 'x1' } as Record<string, 'x1' | 'default'>;
+    setSizes(next);
+    save(SIZE_KEY, next);
+  };
   // Your dashboard layout (saved on this device): which panels show and the top cards. Panels sit in one centered column.
   const [prefs, setPrefsState] = useState(() => ({ hidden: [] as string[], needsYou: true, ask: true, quickLinks: true, ticker: true, hiddenLinks: [] as string[], ...load('eden_dashboard_prefs', {}) }));
   const setPrefs = (patch: Partial<typeof prefs>) => setPrefsState((p) => { const next = { ...p, ...patch }; save('eden_dashboard_prefs', next); return next; });
@@ -601,22 +686,115 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     },
   };
 
-  return (
-    <div className="flex min-h-full flex-col lg:flex-row">
-    {/* Left panel: what goes here is still to be decided (TBD) */}
-    <aside aria-label="Left panel (to be decided)" className="shrink-0 border-b border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60 lg:w-64 lg:border-b-0 lg:border-r lg:p-5">
-      <div className="lg:sticky lg:top-5">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Left panel</h2>
-        <div className="mt-3 rounded-lg border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-          <p className="font-semibold text-slate-700 dark:text-slate-200">TBD</p>
-          <p className="mt-1">Still to be decided. Tell me what you want here.</p>
-        </div>
-      </div>
-    </aside>
+  // Widgets: the bug radar (a just-for-fun game where your ship shoots bugs) and the dashboard panels.
+  const widgetTitle = (id: WidgetId) => (id === 'notes' ? '📝 Notes' : id === 'radar' ? '🎯 Bug radar' : panels[id].title);
+  const widgetBody = (id: WidgetId, big = false) => (id === 'notes' ? <NotesWidget /> : id === 'radar' ? <RadarWidget maxWidth={big ? 320 : 240} /> : panels[id].body);
+  const defaultPos = (i: number) => ({ x: Math.max(8, window.innerWidth - 368 - i * 28), y: 80 + i * 28 });
 
-    {/* Main area on the right: like a media player, the content sits in the big stage and a status bar runs along the bottom */}
+  return (
+    <div className="flex min-h-full flex-col">
+    {/* The content sits in the big stage and a status bar runs along the bottom, like a media player */}
     <div className="flex min-w-0 flex-1 flex-col">
-    <div className="mx-auto w-full max-w-4xl flex-1 space-y-6 p-4 sm:p-8">
+    <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 p-4 sm:p-8 lg:flex-row lg:items-start">
+      {/* Widgets sidebar on the left: tabs (drag to rearrange, Shift + arrow keys works too). The open tab shows below them. Pop out floats it above the page. */}
+      <aside aria-label="Widgets sidebar" className="w-full shrink-0 lg:sticky lg:top-4 lg:w-72">
+      <section aria-label="Widgets" className="rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/60">
+        <div role="tablist" aria-label="Widgets. Drag a tab to rearrange." className="flex flex-wrap gap-1 border-b border-slate-200 p-2 dark:border-slate-800">
+          {widgetOrder.map((id) => {
+            const isActive = id === activeWidget;
+            const isPopped = popped.includes(id);
+            return (
+              <div
+                key={id}
+                draggable
+                onDragStart={(e) => { setDraggingTab(id); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); }}
+                onDragEnd={() => setDraggingTab(null)}
+                onDragOver={(e) => { if (!draggingTab) return; e.preventDefault(); if (draggingTab !== id) moveTab(draggingTab, id); }}
+                onDrop={(e) => { e.preventDefault(); setDraggingTab(null); }}
+                className={`flex shrink-0 items-center rounded-lg border text-sm ${draggingTab === id ? 'opacity-60' : ''} ${isActive ? 'border-indigo-500 bg-white text-indigo-700 dark:bg-slate-900 dark:text-indigo-300' : 'border-transparent text-slate-600 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-900'}`}
+              >
+                <button
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => chooseWidget(id)}
+                  onKeyDown={(e) => {
+                    if (!e.shiftKey) return;
+                    if (e.key === 'ArrowLeft') { e.preventDefault(); nudgeTab(id, -1); }
+                    else if (e.key === 'ArrowRight') { e.preventDefault(); nudgeTab(id, 1); }
+                  }}
+                  title="Drag to rearrange"
+                  className="cursor-grab whitespace-nowrap rounded-l-lg px-3 py-1.5 active:cursor-grabbing"
+                >
+                  {widgetTitle(id)}{isPopped && <span className="ml-1 text-xs text-slate-400">(popped out)</span>}
+                </button>
+                <button
+                  onClick={() => setPoppedSaved(isPopped ? popped.filter((w) => w !== id) : [...popped, id])}
+                  aria-pressed={isPopped}
+                  aria-label={`${isPopped ? 'Dock' : 'Pop out'} ${widgetTitle(id)}`}
+                  title={isPopped ? 'Dock back into the bar' : 'Pop out into a floating window'}
+                  className={`rounded-r-lg px-1.5 py-1.5 ${isPopped ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <div role="tabpanel" className="flex justify-center p-3">
+          {popped.includes(activeWidget) ? (
+            <div className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+              <p>{widgetTitle(activeWidget)} is popped out.</p>
+              <button onClick={() => setPoppedSaved(popped.filter((w) => w !== activeWidget))} className="mt-2 rounded-lg border border-slate-300 px-3 py-1.5 text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">
+                Dock it back here
+              </button>
+            </div>
+          ) : (
+            <div className={`w-full ${activeWidget === 'radar' ? 'mx-auto max-w-[320px]' : ''}`}>{widgetBody(activeWidget, true)}</div>
+          )}
+        </div>
+      </section>
+      </aside>
+
+      <div className="min-w-0 flex-1 space-y-6">
+      {/* Ask box (at the top) */}
+      {prefs.ask && <div>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">What are we working on{ownerName ? `, ${ownerName.split(' ')[0]}` : ''}?</h1>
+        <div className="mt-4 rounded-xl border border-slate-300 bg-white p-3 focus-within:border-indigo-500 dark:border-slate-700 dark:bg-slate-900">
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (newlineOnCtrlEnter(e, setText)) return;
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            rows={3}
+            placeholder="Ask Chief anything, or use @name to bring in someone from your team"
+            className="w-full resize-none bg-transparent text-slate-900 placeholder-slate-400 focus:outline-none dark:text-slate-100"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            {STARTERS.map((s) => (
+              <button
+                key={s.label}
+                onClick={() => setText(s.text)}
+                className="rounded-full border border-slate-300 px-3 py-1 text-sm text-slate-600 hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-300 dark:hover:text-indigo-400"
+              >
+                {s.label}
+              </button>
+            ))}
+            <button
+              onClick={submit}
+              disabled={!text.trim()}
+              className="ml-auto flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
+            >
+              <Send className="h-4 w-4" /> Send
+            </button>
+          </div>
+        </div>
+      </div>}
+
       {/* Quick links: one click to the places you use most */}
       {prefs.quickLinks && (
         <nav aria-label="Quick links" className="flex flex-wrap gap-2">
@@ -766,49 +944,11 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
         </section>
       )}
 
-      {/* Ask box */}
-      {prefs.ask && <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">What are we working on{ownerName ? `, ${ownerName.split(' ')[0]}` : ''}?</h1>
-        <div className="mt-4 rounded-xl border border-slate-300 bg-white p-3 focus-within:border-indigo-500 dark:border-slate-700 dark:bg-slate-900">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (newlineOnCtrlEnter(e, setText)) return;
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            rows={3}
-            placeholder="Ask Chief anything, or use @name to bring in someone from your team"
-            className="w-full resize-none bg-transparent text-slate-900 placeholder-slate-400 focus:outline-none dark:text-slate-100"
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            {STARTERS.map((s) => (
-              <button
-                key={s.label}
-                onClick={() => setText(s.text)}
-                className="rounded-full border border-slate-300 px-3 py-1 text-sm text-slate-600 hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-300 dark:hover:text-indigo-400"
-              >
-                {s.label}
-              </button>
-            ))}
-            <button
-              onClick={submit}
-              disabled={!text.trim()}
-              className="ml-auto flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
-            >
-              <Send className="h-4 w-4" /> Send
-            </button>
-          </div>
-        </div>
-      </div>}
-
-      <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {order.filter((id) => !prefs.hidden.includes(id)).map((id) => {
           const p = panels[id];
           const isCollapsed = !!collapsed[id];
+          const isX1 = sizes[id] === 'x1';
           return (
             <section
               key={id}
@@ -821,7 +961,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                 e.preventDefault();
                 setDragging(null);
               }}
-              className={`flex flex-col rounded-xl border bg-white p-5 transition-shadow dark:bg-slate-900 ${
+              className={`flex min-w-0 flex-col rounded-xl border bg-white p-5 transition-shadow dark:bg-slate-900 ${isX1 ? '' : 'sm:col-span-2'} ${
                 dragging === id ? 'border-indigo-500 opacity-60 shadow-lg' : 'border-slate-200 dark:border-slate-800'
               }`}
             >
@@ -856,6 +996,14 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                   <h2 className="truncate font-semibold text-slate-900 dark:text-white">{p.title}</h2>
                   {p.count !== undefined && <span className="text-sm text-slate-500">{p.count}</span>}
                 </button>
+                <button
+                  onClick={() => toggleSize(id)}
+                  aria-pressed={isX1}
+                  title={isX1 ? 'Half width (x1). Click for the default full width.' : 'Full width (default). Click for half width (x1).'}
+                  className={`hidden shrink-0 rounded border px-1.5 py-0.5 text-xs sm:block ${isX1 ? 'border-indigo-500 text-indigo-700 dark:text-indigo-300' : 'border-slate-300 text-slate-500 dark:border-slate-700 dark:text-slate-400'}`}
+                >
+                  {isX1 ? 'x1' : 'Default'}
+                </button>
                 <button onClick={p.onAction} className="flex shrink-0 items-center gap-1 text-sm text-indigo-600 hover:underline dark:text-indigo-400">
                   {p.action} <ArrowRight className="h-3.5 w-3.5" />
                 </button>
@@ -864,6 +1012,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
             </section>
           );
         })}
+      </div>
       </div>
     </div>
 
@@ -886,6 +1035,16 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
       </span>
     </div>
     </div>
+
+    {/* Popped-out widgets float above the page */}
+    {popped.map((id, i) => {
+      const pos = widgetPos[id] ?? defaultPos(i);
+      return (
+        <FloatingWidget key={id} title={widgetTitle(id)} x={pos.x} y={pos.y} onMove={(x, y) => moveWidgetPos(id, x, y)} onDock={() => setPoppedSaved(popped.filter((w) => w !== id))}>
+          {widgetBody(id)}
+        </FloatingWidget>
+      );
+    })}
     </div>
   );
 };

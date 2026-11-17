@@ -4,6 +4,7 @@ import { useGameOn, resetGame } from '../gameMode.ts';
 import { User, Plug, Bot, GitBranch, SlidersHorizontal, Sun, Moon, Save, Loader2 } from 'lucide-react';
 import { SettingsView } from './SettingsView.tsx';
 import { ReposView } from './ReposView.tsx';
+import { Sections } from './Sections.tsx';
 import { ProfileCard } from './ProfileCard.tsx';
 import { DevicesView } from './DevicesView.tsx';
 import { RemoteView } from './RemoteView.tsx';
@@ -66,12 +67,12 @@ interface AccountViewProps {
   onSaved: () => void; // reload anything that depends on settings (profile name, connections)
 }
 
-const TABS: { id: AccountTab; label: string; icon: React.ElementType }[] = [
-  { id: 'account', label: 'Account', icon: User },
-  { id: 'team', label: 'Team & AI', icon: Bot },
-  { id: 'connections', label: 'Connections', icon: Plug },
-  { id: 'github', label: 'GitHub', icon: GitBranch },
-  { id: 'preferences', label: 'Preferences', icon: SlidersHorizontal },
+const TABS: { id: AccountTab; label: string; icon: React.ElementType; hint: string }[] = [
+  { id: 'account', label: 'Account', icon: User, hint: 'Your name and studio' },
+  { id: 'team', label: 'Team & AI', icon: Bot, hint: 'Your AI teammates and AI settings' },
+  { id: 'connections', label: 'Connections', icon: Plug, hint: 'Linked services, devices, remote access' },
+  { id: 'github', label: 'GitHub', icon: GitBranch, hint: 'Your code projects' },
+  { id: 'preferences', label: 'Preferences', icon: SlidersHorizontal, hint: 'Theme, game mode, terminal' },
 ];
 
 const inputClass =
@@ -128,10 +129,36 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
   };
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 p-4 sm:p-8">
+    <div className="mx-auto flex max-w-4xl flex-col gap-6 p-4 sm:p-8 lg:flex-row lg:items-start">
+      <aside aria-label="Settings menu" className={`${cardClass} hidden w-full shrink-0 lg:sticky lg:top-8 lg:block lg:w-56`}>
+        <h2 className="font-semibold text-slate-900 dark:text-white">Settings</h2>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Pick what you want to change.</p>
+        <nav className="mt-3 space-y-1">
+          {TABS.map(({ id, label, icon: Icon, hint }) => (
+            <button
+              key={id}
+              onClick={() => {
+                setTab(id);
+                setMessage(null);
+              }}
+              aria-current={tab === id ? 'page' : undefined}
+              className={`flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left ${
+                tab === id ? 'bg-indigo-600 text-white' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+              }`}
+            >
+              <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">{label}</span>
+                <span className={`block text-xs ${tab === id ? 'text-indigo-100' : 'text-slate-500 dark:text-slate-400'}`}>{hint}</span>
+              </span>
+            </button>
+          ))}
+        </nav>
+      </aside>
+      <div className="min-w-0 max-w-2xl flex-1 space-y-6">
       <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Account and settings</h1>
 
-      <div role="tablist" className="flex gap-1 rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-800 dark:bg-slate-900">
+      <div role="tablist" className="flex gap-1 lg:hidden rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-800 dark:bg-slate-900">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -150,55 +177,79 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
         ))}
       </div>
 
-      {tab === 'account' && <ProfileCard name={name} />}
-
       {tab === 'account' && (
-        <form
-          className={`${cardClass} space-y-4`}
-          onSubmit={(e) => {
-            e.preventDefault();
-            save({ OWNER_NAME: name.trim(), STUDIO_NAME: studio.trim() });
-          }}
-        >
-          <div>
-            <label htmlFor="ac-name" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Your name</label>
-            <input id="ac-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="What should the hub call you?" className={inputClass} />
-          </div>
-          <div>
-            <label htmlFor="ac-studio" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Studio name</label>
-            <input id="ac-studio" value={studio} onChange={(e) => setStudio(e.target.value)} maxLength={60} placeholder="The name you sell under" className={inputClass} />
-          </div>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Kept on this computer only. The hub has no online account or password.</p>
-          <div className="flex items-center gap-3">
-            <button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40">
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
-            </button>
-            {message && <span role="status" className={`text-sm ${message.ok ? 'text-emerald-600' : 'text-red-500'}`}>{message.text}</span>}
-          </div>
-        </form>
+        <Sections
+          storageKey="account"
+          items={[
+            { id: 'profile', title: 'Profile', body: <ProfileCard name={name} /> },
+            {
+              id: 'details',
+              title: 'Your name and studio',
+              body: (
+                <form
+                  className={`${cardClass} space-y-4`}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    save({ OWNER_NAME: name.trim(), STUDIO_NAME: studio.trim() });
+                  }}
+                >
+                  <div>
+                    <label htmlFor="ac-name" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Your name</label>
+                    <input id="ac-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="What should the hub call you?" className={inputClass} />
+                  </div>
+                  <div>
+                    <label htmlFor="ac-studio" className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Studio name</label>
+                    <input id="ac-studio" value={studio} onChange={(e) => setStudio(e.target.value)} maxLength={60} placeholder="The name you sell under" className={inputClass} />
+                  </div>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">Kept on this computer only. The hub has no online account or password.</p>
+                  <div className="flex items-center gap-3">
+                    <button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40">
+                      {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
+                    </button>
+                    {message && <span role="status" className={`text-sm ${message.ok ? 'text-emerald-600' : 'text-red-500'}`}>{message.text}</span>}
+                  </div>
+                </form>
+              ),
+            },
+          ]}
+        />
       )}
 
       {tab === 'connections' && (
-        <div className="space-y-6">
-          <SettingsView onSaved={onSaved} part="connections" />
-          <DevicesView />
-          <RemoteView />
-        </div>
+        <Sections
+          storageKey="connections"
+          className="space-y-6"
+          items={[
+            { id: 'connections', title: 'Connections', body: <SettingsView onSaved={onSaved} part="connections" /> },
+            { id: 'devices', title: 'Devices', body: <DevicesView /> },
+            { id: 'remote', title: 'Remote access', body: <RemoteView /> },
+          ]}
+        />
       )}
 
       {tab === 'team' && (
-        <div className="space-y-6">
-          {team}
-          <SettingsView onSaved={onSaved} part="ai" />
-        </div>
+        <Sections
+          storageKey="team"
+          className="space-y-6"
+          items={[
+            ...(team ? [{ id: 'team', title: 'Your AI team', body: team }] : []),
+            { id: 'ai', title: 'AI settings', body: <SettingsView onSaved={onSaved} part="ai" /> },
+          ]}
+        />
       )}
 
       {tab === 'github' && <ReposView />}
 
       {tab === 'preferences' && (
-        <div className="space-y-4">
-          {workflows && <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"><h2 className="px-5 pt-4 text-lg font-semibold text-slate-900 dark:text-white">Workflows</h2>{workflows}</section>}
-          <InstallCard />
+        <Sections
+          storageKey="preferences"
+          items={[
+            ...(workflows ? [{ id: 'workflows', title: 'Workflows', body: <section className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"><h2 className="px-5 pt-4 text-lg font-semibold text-slate-900 dark:text-white">Workflows</h2>{workflows}</section> }] : []),
+            { id: 'install', title: 'Install as an app', body: <InstallCard /> },
+            {
+              id: 'theme',
+              title: 'Theme',
+              body: (
           <section className={cardClass}>
             <h2 className="font-semibold text-slate-900 dark:text-white">Theme</h2>
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -221,7 +272,12 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
               })}
             </div>
           </section>
-
+              ),
+            },
+            {
+              id: 'options',
+              title: 'Options',
+              body: (
           <section className={cardClass}>
             <h2 className="font-semibold text-slate-900 dark:text-white">Options</h2>
             <div className="mt-3 flex items-start gap-4">
@@ -255,7 +311,12 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
               </div>
             )}
           </section>
-
+              ),
+            },
+            {
+              id: 'terminal',
+              title: 'Terminal',
+              body: (
           <section className={cardClass}>
             <div className="flex items-start gap-4">
               <div className="flex-1">
@@ -277,8 +338,12 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
             </div>
             {message && <p role="status" className={`mt-3 text-sm ${message.ok ? 'text-emerald-600' : 'text-red-500'}`}>{message.text}</p>}
           </section>
-        </div>
+              ),
+            },
+          ]}
+        />
       )}
+      </div>
     </div>
   );
 };

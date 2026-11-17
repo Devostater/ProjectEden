@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Avatar, useProfile } from './Avatar.tsx';
 import { Arrangeable, useArrangedOrder } from '../arrange.tsx';
 import {
   LayoutDashboard,
@@ -60,7 +59,6 @@ interface SidebarProps {
   agents: Agent[];
   onNewRoom: () => void;
   onRequest: (request: SidebarRequest) => void;
-  profile: { name: string; studio: string };
   mobileOpen?: boolean; // phone: the sidebar is a drawer
   onCloseMobile?: () => void;
 }
@@ -325,7 +323,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   agents,
   onNewRoom,
   onRequest,
-  profile,
   mobileOpen = false,
   onCloseMobile,
 }) => {
@@ -452,9 +449,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const runningWorkflows = pipelines.filter((p) => p.lastStatus === 'running').length;
   const runningUpdates = useRunningUpdates();
 
-  const displayName = profile.name || 'Account';
-  const initial = (profile.name || profile.studio || 'A').trim().charAt(0).toUpperCase();
-
   // Re-arrange the pages in this bar (saved per device). Arrange mode shows Up/Down buttons on each entry.
   const custom = useCustomTabs();
   const [quickAdd, setQuickAdd] = useState(false);
@@ -469,7 +463,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   };
-  const sideProfile = useProfile();
   // Left-bar pages you hid in Arrange mode (saved on this device).
   const [sideHidden, setSideHidden] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_sidebar_hidden') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
   const toggleSideHidden = (id: string) => setSideHidden((h) => { const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id]; try { localStorage.setItem('eden_sidebar_hidden', JSON.stringify(next)); } catch {} return next; });
@@ -733,24 +726,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             />
           )}
         </nav>
-
-        <div className={`border-t border-slate-200 dark:border-slate-800 ${collapsed ? 'p-2' : 'p-3'}`}>
-          <button
-            onClick={() => setActiveTab('settings')}
-            aria-current={activeTab === 'settings' ? 'page' : undefined}
-            aria-label={collapsed ? 'Account and settings' : undefined}
-            title={collapsed ? 'Account and settings' : undefined}
-            className={`${itemClass(activeTab === 'settings', collapsed)} ${collapsed ? '' : 'mt-2 !py-2'}`}
-          >
-            <Avatar src={sideProfile?.avatar} initial={initial} frame={sideProfile?.frame} size={30} />
-            {!collapsed && (
-              <span className="min-w-0 text-left">
-                <span className="block truncate leading-tight">{displayName}</span>
-                <span className={`block truncate text-xs leading-tight ${activeTab === 'settings' ? 'text-white/70' : 'text-slate-400'}`}>{profile.studio || 'Account and settings'}</span>
-              </span>
-            )}
-          </button>
-        </div>
       </aside>
     </>
   );

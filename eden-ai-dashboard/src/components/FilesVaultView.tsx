@@ -44,7 +44,8 @@ export const FilesVaultView: React.FC<FilesVaultViewProps> = ({
   const [editedContent, setEditedContent] = useState('');
   const [copied, setCopied] = useState(false);
 
-  // GitHub Import State
+  // GitHub Import State (the dialog is opened by the icon at the top)
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [ghRepo, setGhRepo] = useState('');
   const [ghPath, setGhPath] = useState('');
   const [isFetchingGh, setIsFetchingGh] = useState(false);
@@ -138,6 +139,8 @@ export const FilesVaultView: React.FC<FilesVaultViewProps> = ({
       } else if (data.type === 'file') {
         setSelectedFileId(data.file.id);
         setGhItems(null);
+        setIsImportOpen(false);
+        setSource('local');
       }
     } catch (err: any) {
       console.error('GitHub fetch failed:', err);
@@ -165,6 +168,8 @@ export const FilesVaultView: React.FC<FilesVaultViewProps> = ({
         const data = await res.json();
         if (data.file) {
           setSelectedFileId(data.file.id);
+          setIsImportOpen(false);
+          setSource('local');
         }
       } catch (err) {
         console.error(err);
@@ -206,6 +211,15 @@ export const FilesVaultView: React.FC<FilesVaultViewProps> = ({
             ))}
           </div>
           <button
+            type="button"
+            onClick={() => setIsImportOpen(true)}
+            title="Import from GitHub"
+            aria-label="Import from GitHub"
+            className="p-2 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+          >
+            <GitPullRequest className="w-4 h-4" />
+          </button>
+          <button
             onClick={() => setIsNewModalOpen(true)}
             className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-sm transition-colors flex items-center gap-1.5 whitespace-nowrap"
           >
@@ -217,8 +231,18 @@ export const FilesVaultView: React.FC<FilesVaultViewProps> = ({
 
       {source === 'cloud' && <ReposView />}
 
-      {/* GitHub Quick Sync Strip */}
-      <div className={`${source === 'cloud' ? '' : 'hidden '}p-4 rounded-xl border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 space-y-3`}>
+      {/* Import from GitHub pop-up (opened by the icon at the top) */}
+      {isImportOpen && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs"
+        onClick={() => setIsImportOpen(false)}
+      >
+      <div
+        role="dialog"
+        aria-label="Import from GitHub"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-2xl p-5 rounded-2xl border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-xl space-y-3"
+      >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <GitPullRequest className="w-4 h-4 text-amber-500" />
@@ -226,7 +250,14 @@ export const FilesVaultView: React.FC<FilesVaultViewProps> = ({
               Import from GitHub
             </h3>
           </div>
-          <span className="text-2xs text-slate-400 font-mono"></span>
+          <button
+            type="button"
+            onClick={() => setIsImportOpen(false)}
+            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-sm font-semibold"
+            title="Close"
+          >
+            ✕
+          </button>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-2">
@@ -290,6 +321,8 @@ export const FilesVaultView: React.FC<FilesVaultViewProps> = ({
           </div>
         )}
       </div>
+      </div>
+      )}
 
       {/* Main Vault Workspace (Split Tree & Viewer) */}
       <div className={`${source === 'cloud' ? 'hidden ' : ''}grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[550px]`}>

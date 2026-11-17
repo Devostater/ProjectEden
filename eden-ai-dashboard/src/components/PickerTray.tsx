@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Wand2, MessagesSquare, Pencil, Loader2 } from 'lucide-react';
 import { usePicks, removePick, clearPicks, picksAsText, getPickTarget } from '../picker.ts';
@@ -39,8 +39,28 @@ export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onResu
     setBusy(false);
   };
 
+  // Sit just above the bottom panel (its tab bar and whatever is open), so the tray never covers it.
+  // Without a bottom panel (phone) or when it fills the screen, keep the usual spot.
+  const [lift, setLift] = useState<number | null>(null);
+  useEffect(() => {
+    const panel = document.querySelector('[data-eden-bottom-panel]') as HTMLElement | null;
+    const measure = () => {
+      const r = panel?.getBoundingClientRect();
+      const gap = r && r.width > 0 && r.height > 0 ? window.innerHeight - r.top : 0;
+      setLift(gap > 0 && gap < window.innerHeight * 0.8 ? Math.round(gap + 12) : null);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    const watch = panel && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    if (panel) watch?.observe(panel);
+    return () => {
+      window.removeEventListener('resize', measure);
+      watch?.disconnect();
+    };
+  }, []);
+
   return createPortal(
-    <div data-eden-picker-ui="" className="fixed bottom-20 left-1/2 z-[2147483646] w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-indigo-400 bg-white/95 p-3 shadow-xl backdrop-blur dark:bg-slate-900/95">
+    <div data-eden-picker-ui="" style={lift !== null ? { bottom: lift } : undefined} className={`fixed ${lift !== null ? '' : 'bottom-20'} left-1/2 z-[2147483646] max-h-[calc(100dvh-6rem)] w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 overflow-y-auto rounded-xl border border-indigo-400 bg-white/95 p-3 shadow-xl backdrop-blur dark:bg-slate-900/95`}>
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Pencil className="h-4 w-4 text-indigo-500" />
         <span className="font-medium text-slate-900 dark:text-white">{picking ? 'Click parts of the screen to pick them' : picks.length ? `${picks.length} picked${getPickTarget().name ? ` in ${getPickTarget().name}` : ' in EDEN'}` : 'Picker'}</span>

@@ -1,6 +1,6 @@
 import React from 'react';
 import { ui } from '../ui.ts';
-import { Play, Pause, Flag, Loader2, Inbox, AlertTriangle, ArrowRight } from 'lucide-react';
+import { Play, Pause, Flag, Loader2, Inbox, AlertTriangle, ArrowRight, ChevronUp, ChevronDown } from 'lucide-react';
 import type { PanelProject } from './BottomPanel.tsx';
 import { FlowTab, ProgressTab, WorkloadTab } from './ProjectVisuals.tsx';
 import { Roadmap, roadmapProgress } from './Roadmap.tsx';
@@ -78,26 +78,89 @@ export const MissionView: React.FC<PanelProject> = ({ project, cards, onOpenCard
 };
 
 // Journey: roadmap, progress, card map and trail in one scroll, so the whole story of the project reads top to bottom.
-export const JourneyView: React.FC<PanelProject> = (p) => (
-  <div className="space-y-5">
-    <section>
-      <div className={ui.label}>Progress</div>
-      <ProgressTab {...p} />
-    </section>
-    <section className="@container">
-      <div className={ui.label}>Roadmap</div>
-      <Roadmap key={p.project.id} project={p.project} onSave={p.onSaveRoadmap} embedded />
-    </section>
-    <section>
-      <div className={ui.label}>Card map</div>
-      <div className="h-[380px] rounded-xl border border-slate-200 dark:border-slate-800"><FlowTab {...p} zoom="fit" /></div>
-    </section>
-    <section>
-      <div className={ui.label}>Trail: latest work</div>
-      <WorkTrail key={p.project.id} project={p.project} cards={p.cards} agents={p.agents} onOpenCard={p.onOpenCard} />
-    </section>
-  </div>
-);
+// Each part has small up/down arrows in its title so you can reorder them; the order is remembered on this computer.
+const JOURNEY_ORDER_KEY = 'eden_journey_order';
+const JOURNEY_PARTS = ['progress', 'roadmap', 'cardmap', 'trail'] as const;
+type JourneyPart = (typeof JOURNEY_PARTS)[number];
+
+const loadJourneyOrder = (): JourneyPart[] => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(JOURNEY_ORDER_KEY) || '[]');
+    if (Array.isArray(saved)) {
+      const known = saved.filter((id): id is JourneyPart => JOURNEY_PARTS.includes(id));
+      // Keep the saved order, and add any part that is missing at the end.
+      return [...new Set([...known, ...JOURNEY_PARTS])];
+    }
+  } catch {
+    /* fall back to the default order */
+  }
+  return [...JOURNEY_PARTS];
+};
+
+export const JourneyView: React.FC<PanelProject> = (p) => {
+  const [order, setOrder] = React.useState<JourneyPart[]>(loadJourneyOrder);
+
+  const move = (id: JourneyPart, by: -1 | 1) => {
+    setOrder((cur) => {
+      const from = cur.indexOf(id);
+      const to = from + by;
+      if (from < 0 || to < 0 || to >= cur.length) return cur;
+      const next = [...cur];
+      [next[from], next[to]] = [next[to], next[from]];
+      try {
+        localStorage.setItem(JOURNEY_ORDER_KEY, JSON.stringify(next));
+      } catch {
+        /* order just won't be remembered */
+      }
+      return next;
+    });
+  };
+
+  const arrow = 'rounded p-0.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-30 disabled:hover:bg-transparent dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100';
+  const header = (id: JourneyPart, title: string) => {
+    const i = order.indexOf(id);
+    return (
+      <div className={ui.label}>
+        <span className="flex-1">{title}</span>
+        <button type="button" onClick={() => move(id, -1)} disabled={i <= 0} title="Move this part up" aria-label={`Move ${title} up`} className={arrow}>
+          <ChevronUp className="h-3.5 w-3.5" />
+        </button>
+        <button type="button" onClick={() => move(id, 1)} disabled={i >= order.length - 1} title="Move this part down" aria-label={`Move ${title} down`} className={arrow}>
+          <ChevronDown className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    );
+  };
+
+  const parts: Record<JourneyPart, React.ReactNode> = {
+    progress: (
+      <section key="progress">
+        {header('progress', 'Progress')}
+        <ProgressTab {...p} />
+      </section>
+    ),
+    roadmap: (
+      <section key="roadmap" className="@container">
+        {header('roadmap', 'Roadmap')}
+        <Roadmap key={p.project.id} project={p.project} onSave={p.onSaveRoadmap} embedded />
+      </section>
+    ),
+    cardmap: (
+      <section key="cardmap">
+        {header('cardmap', 'Card map')}
+        <div className="h-[380px] rounded-xl border border-slate-200 dark:border-slate-800"><FlowTab {...p} zoom="fit" /></div>
+      </section>
+    ),
+    trail: (
+      <section key="trail">
+        {header('trail', 'Trail: latest work')}
+        <WorkTrail key={p.project.id} project={p.project} cards={p.cards} agents={p.agents} onOpenCard={p.onOpenCard} />
+      </section>
+    ),
+  };
+
+  return <div className="space-y-5">{order.map((id) => parts[id])}</div>;
+};
 
 // Insights under the board: swipe sideways through pages of numbers and charts.
 export const BoardInsights: React.FC<PanelProject> = (p) => {

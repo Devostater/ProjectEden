@@ -75,6 +75,24 @@ export const Roadmap: React.FC<{ project: Project; onSave: (roadmap: RoadmapGoal
   const [blockTitle, setBlockTitle] = useState('');
   const [newGoal, setNewGoal] = useState('');
   const [confirmGoal, setConfirmGoal] = useState<string | null>(null);
+  // Goal cards the owner has minimized (remembered per project)
+  const [minimized, setMinimized] = useState<string[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(`eden-roadmap-min-${project.id}`) || '[]');
+      return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+  const toggleGoal = (id: string) => {
+    setMinimized((list) => {
+      const next = list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+      try {
+        localStorage.setItem(`eden-roadmap-min-${project.id}`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
   const toggle = () => {
     setOpen((v) => {
       try {
@@ -127,11 +145,15 @@ export const Roadmap: React.FC<{ project: Project; onSave: (roadmap: RoadmapGoal
             {roadmap.map((g) => {
               const pct = progressOf(g.blocks);
               const done = g.blocks.filter((b) => b.state === 'done').length;
+              const isMin = minimized.includes(g.id);
               return (
                 <div key={g.id} className="flex flex-col rounded-xl border border-slate-200 p-3 dark:border-slate-800">
                   <div className="flex items-center gap-2">
-                    <span className="text-lg" aria-hidden>{g.icon}</span>
-                    <span className="min-w-0 flex-1 truncate font-medium text-slate-900 dark:text-white">{g.title}</span>
+                    <button onClick={() => toggleGoal(g.id)} aria-expanded={!isMin} aria-label={`${isMin ? 'Expand' : 'Minimize'} ${g.title}`} title={isMin ? 'Show the blocks' : 'Minimize'} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                      <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${isMin ? '-rotate-90' : ''}`} />
+                      <span className="text-lg" aria-hidden>{g.icon}</span>
+                      <span className="min-w-0 flex-1 truncate font-medium text-slate-900 dark:text-white">{g.title}</span>
+                    </button>
                     <span className="text-xs tabular-nums text-slate-500">{done}/{g.blocks.length}</span>
                     {confirmGoal === g.id ? (
                       <span className="flex items-center gap-1 text-xs">
@@ -147,6 +169,7 @@ export const Roadmap: React.FC<{ project: Project; onSave: (roadmap: RoadmapGoal
                   <div className="mt-2">
                     <Bar pct={pct} className="h-1.5" />
                   </div>
+                  {!isMin && (<>
                   <ul className="mt-3 flex flex-col gap-1.5">
                     {g.blocks.map((b) => (
                       <li key={b.id} className="group flex items-center gap-2">
@@ -187,6 +210,7 @@ export const Roadmap: React.FC<{ project: Project; onSave: (roadmap: RoadmapGoal
                       <Plus className="h-3.5 w-3.5" /> Add a block
                     </button>
                   )}
+                  </>)}
                 </div>
               );
             })}

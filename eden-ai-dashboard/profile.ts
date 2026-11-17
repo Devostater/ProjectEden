@@ -18,12 +18,29 @@ export interface Profile {
   prestige: number; // prestige points
   credits: number;
   diamonds: number;
+  playerClass: string; // your character class, e.g. "Game Wizard"
+  xp: number; // experience points earned toward the next level
+  stats: Stats; // four character stats, 1 to 99
 }
-const EMPTY: Profile = { avatar: '', frame: 'none', bio: '', links: [], commands: [], playerLevel: 1, workTitle: '', gameTitle: '', prestige: 0, credits: 0, diamonds: 0 };
+export interface Stats { creativity: number; logic: number; charm: number; luck: number }
+const STAT_KEYS: (keyof Stats)[] = ['creativity', 'logic', 'charm', 'luck'];
+const EMPTY: Profile = { avatar: '', frame: 'none', bio: '', links: [], commands: [], playerLevel: 1, workTitle: '', gameTitle: '', prestige: 0, credits: 0, diamonds: 0,
+  playerClass: '', xp: 0, stats: { creativity: 10, logic: 10, charm: 10, luck: 10 } };
+
+// A stat is a whole number from 1 to 99 (anything else becomes 10).
+function cleanStats(v: any): Stats {
+  const out = { ...EMPTY.stats };
+  for (const k of STAT_KEYS) {
+    const n = Math.floor(Number(v?.[k]));
+    if (Number.isFinite(n)) out[k] = Math.min(99, Math.max(1, n));
+  }
+  return out;
+}
 
 function load(): Profile {
   try {
-    return { ...EMPTY, ...JSON.parse(fs.readFileSync(FILE, 'utf8')) };
+    const saved = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+    return { ...EMPTY, ...saved, stats: cleanStats(saved?.stats) };
   } catch {
     return { ...EMPTY };
   }
@@ -68,7 +85,8 @@ export function registerProfileRoutes(app: Express) {
       .slice(0, 12);
     const profile: Profile = { avatar, frame: str(b.frame, 30) || 'none', bio: str(b.bio, 300), links, commands,
       playerLevel: num(b.playerLevel, 1, 1), workTitle: str(b.workTitle, 60), gameTitle: str(b.gameTitle, 80),
-      prestige: num(b.prestige, 0, 0), credits: num(b.credits, 0, 0), diamonds: num(b.diamonds, 0, 0) };
+      prestige: num(b.prestige, 0, 0), credits: num(b.credits, 0, 0), diamonds: num(b.diamonds, 0, 0),
+      playerClass: str(b.playerClass, 40), xp: num(b.xp, 0, 0), stats: cleanStats(b.stats) };
     const tmp = FILE + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(profile, null, 2));
     fs.renameSync(tmp, FILE);

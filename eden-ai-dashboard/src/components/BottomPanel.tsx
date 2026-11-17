@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight, Copy, Check, SlidersHorizontal, EyeOff, Map as MapIcon, MessagesSquare, AppWindow, Settings } from 'lucide-react';
+import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight, Copy, Check, SlidersHorizontal, EyeOff, Map as MapIcon, MessagesSquare, AppWindow, Settings, Plus } from 'lucide-react';
 import { LiveAppView } from './LiveAppView.tsx';
 import { JourneyView } from './ProjectPages.tsx';
 import { ProjectChat } from './ProjectChat.tsx';
@@ -23,6 +23,10 @@ const ALL_TABS: PanelTab[] = [...PROJECT_TABS, 'review', 'lyra', 'activity', 'te
 
 // The little LYRA face used as the tab's icon.
 const LyraIcon: React.FC<{ className?: string }> = () => <LyraChibi connected className="h-5 w-5" />;
+
+// Names and icons for the + (Add a tab) menu.
+const TAB_LABELS: Record<PanelTab, string> = { app: 'App', chief: 'Chief', journey: 'Journey', flow: 'Flow', workload: 'Workload', progress: 'Progress', trail: 'Trail', roadmap: 'Roadmap', toolbox: 'Toolbox', preview: 'Preview', review: 'Review', lyra: 'LYRA', activity: 'Activity', terminal: 'Terminal' };
+const TAB_ICONS: Record<PanelTab, React.ElementType> = { app: AppWindow, chief: MessagesSquare, journey: MapIcon, flow: Workflow, workload: Users, progress: TrendingUp, trail: Footprints, roadmap: Hammer, toolbox: Wrench, preview: Eye, review: Eye, lyra: LyraIcon, activity: Activity, terminal: TerminalSquare };
 
 // Set while the Projects page is open: adds the Flow, Workload and Progress tabs for that project.
 export interface PanelProject {
@@ -366,12 +370,30 @@ export const BottomPanel: React.FC<{
   };
   const sidePanelOpen = !!useSideActionsTarget();
   const inSidePanel = (id: PanelTab) => sidePanelOpen && PROJECT_TABS.includes(id) && id !== 'preview' && id !== 'chief' && id !== 'app';
+
+  // The + button: put a tab you hid back on the bar. Only tabs that are hidden right now are listed.
+  const [addOpen, setAddOpen] = useState(false);
+  const addRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!addOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (addRef.current && !addRef.current.contains(e.target as Node)) setAddOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setAddOpen(false);
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [addOpen]);
+  const addableTabs = (project ? ALL_TABS : ALL_TABS.filter((t) => !PROJECT_TABS.includes(t))).filter((t) => t !== 'review' && hiddenTabs.includes(t) && !inSidePanel(t));
   const tabButton = (id: PanelTab, label: React.ReactNode, Icon: React.ElementType, dot = false) => inSidePanel(id) ? null : (
-    <Arrangeable key={id} id={id} label={typeof label === 'string' ? label : id.charAt(0).toUpperCase() + id.slice(1)} arr={dockOrder} arranging={arrangingDock} horizontal showing={project ? ALL_TABS : ALL_TABS.filter((t) => !PROJECT_TABS.includes(t))} className="flex shrink-0" hidden={hiddenTabs.includes(id)} onToggleHidden={() => toggleHidden(id)}>
+    <Arrangeable key={id} id={id} label={typeof label === 'string' ? label : id.charAt(0).toUpperCase() + id.slice(1)} arr={dockOrder} arranging={arrangingDock} holdDrag="dock" horizontal showing={project ? ALL_TABS : ALL_TABS.filter((t) => !PROJECT_TABS.includes(t))} className="flex shrink-0" hidden={hiddenTabs.includes(id)} onToggleHidden={() => toggleHidden(id)}>
       <button
         onClick={() => (open && tab === id ? toggle() : pick(id))}
         aria-pressed={open && tab === id}
-        className={`relative flex shrink-0 items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors ${
+        className={`relative flex h-full shrink-0 items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors ${
           open && tab === id
             ? 'bg-indigo-600 text-white shadow-sm'
             : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white'
@@ -385,7 +407,8 @@ export const BottomPanel: React.FC<{
 
   return (
     <div
-      className={`hidden shrink-0 flex-col md:flex border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 ${open && fullScreen ? 'fixed inset-0 z-[70]' : 'relative z-[5]'}`}
+      data-eden-bottom-panel=""
+      className={`hidden shrink-0 flex-col md:flex border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 ${open && fullScreen ? 'fixed inset-0 z-[70]' : 'relative z-[15]'}`}
       style={open && fullScreen ? undefined : { height: open ? (maximized ? '75dvh' : height) : '3.25rem' }}
     >
       {open && !fullScreen && (
@@ -404,7 +427,7 @@ export const BottomPanel: React.FC<{
         />
       )}
       <div className="flex h-[3.25rem] shrink-0 items-center border-b border-slate-200 px-2 dark:border-slate-800">
-        <div className="flex min-w-0 flex-1 items-center justify-evenly gap-1 overflow-x-auto">
+        <div className="flex min-w-0 flex-1 items-stretch justify-evenly gap-1 self-stretch overflow-x-auto">
         {project && tabButton('app', 'App', AppWindow)}
         {project && tabButton('chief', 'Chief', MessagesSquare)}
         {project && tabButton('journey', 'Journey', MapIcon)}
@@ -423,23 +446,38 @@ export const BottomPanel: React.FC<{
           )}
         {project && tabButton('toolbox', 'Toolbox', Wrench)}
         {project && tabButton('preview', 'Preview', Eye)}
-        {project && !arrangingDock && !sidePanelOpen && <span style={{ order: dockOrder.pos('review') }} className="mx-1.5 h-6 w-px shrink-0 bg-slate-200 dark:bg-slate-700" />}
+        {project && !arrangingDock && !sidePanelOpen && <span style={{ order: dockOrder.pos('review') }} className="mx-1.5 h-6 w-px shrink-0 self-center bg-slate-200 dark:bg-slate-700" />}
+        {/* Review now lives in the top status bar (next to Nexus and the other status buttons). */}
+        {tabButton('lyra', 'LYRA', LyraIcon)}
         {tabButton(
-          'review',
+          'activity',
           <>
-            Review
-            {review.cards.length > 0 && (
-              <span className={`rounded-full px-1.5 text-xs font-semibold tabular-nums ${open && tab === 'review' ? 'bg-white/25 text-white' : 'bg-amber-500 text-white'}`}>{review.cards.length}</span>
+            Activity
+            {working > 0 && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenWorkers?.();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onOpenWorkers?.();
+                  }
+                }}
+                title={`${working} AI ${working === 1 ? 'job' : 'jobs'} working now: see or stop them`}
+                aria-label={`${working} AI working`}
+                className="flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-xs font-semibold tabular-nums text-white hover:bg-emerald-600"
+              >
+                {working}
+              </span>
             )}
           </>,
-          Inbox
-        )}
-        {tabButton('lyra', 'LYRA', LyraIcon)}
-        {tabButton('activity', 'Activity', Activity, unread)}
-        {working > 0 && (
-          <button onClick={onOpenWorkers} title={`${working} AI ${working === 1 ? 'job' : 'jobs'} working now: see or stop them`} aria-label={`${working} AI working`} className="flex h-6 min-w-6 shrink-0 items-center justify-center self-center rounded-full bg-emerald-500 px-1.5 text-xs font-semibold tabular-nums text-white hover:bg-emerald-600">
-            {working}
-          </button>
+          Activity,
+          unread
         )}
         {tabButton('terminal', 'Terminal', TerminalSquare)}
         </div>
@@ -454,6 +492,47 @@ export const BottomPanel: React.FC<{
               <SlidersHorizontal className="h-4 w-4" /> Done
             </button>
           )}
+          <div ref={addRef} className="relative">
+            <button
+              onClick={() => setAddOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={addOpen}
+              aria-label="Add a tab"
+              title="Add a tab: bring back one you hid"
+              className={`${toolClass} ${addOpen ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-white' : ''}`}
+            >
+              <Plus className="h-5 w-5" />
+            </button>
+            {addOpen && (
+              <div
+                role="menu"
+                aria-label="Add a tab"
+                className={`absolute right-0 z-50 w-64 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900 ${open && fullScreen ? 'top-full mt-2' : 'bottom-full mb-2'}`}
+              >
+                {addableTabs.length === 0 ? (
+                  <p className="px-3 py-2 text-sm text-slate-500 dark:text-slate-400">Every tab is already on the bar. To hide one, use Customize the tabs in Settings.</p>
+                ) : (
+                  addableTabs.map((id) => {
+                    const Icon = TAB_ICONS[id];
+                    return (
+                      <button
+                        key={id}
+                        role="menuitem"
+                        onClick={() => {
+                          toggleHidden(id);
+                          setAddOpen(false);
+                          pick(id);
+                        }}
+                        className={menuItem}
+                      >
+                        <Icon className="h-4 w-4" /> Add {TAB_LABELS[id]}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
           <div ref={menuRef} className="relative">
             <button
               onClick={() => setMenuOpen((v) => !v)}

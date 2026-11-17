@@ -502,13 +502,19 @@ async function startServer() {
       if (pinnedLocal && !localModels().includes(pinnedLocal)) {
         return { author: agent?.name || 'Assistant', agentId: agent?.id, content: '', error: `The local model ${pinnedLocal.replace(/^x:[^:]+:/, '')} isn't running. Start Ollama, or switch the chat to Online.` };
       }
+      // A big model (like gpt-oss:20b) needs about 9 GB of free memory; without it Ollama fails with "Internal Server Error".
+      if (pinnedLocal && !fitsNow(pinnedLocal)) {
+        return { author: agent?.name || 'Assistant', agentId: agent?.id, content: '', error: `${pinnedLocal.replace(/^x:[^:]+:/, '')} needs about 9 GB of free memory and this PC doesn't have that right now. Close other heavy programs and try again, pick a smaller model in the chat model picker, or switch the chat to Online.` };
+      }
       const queue = pinnedLocal
         ? [pinnedLocal]
         : isOffline()
-        ? [...new Set([offlineFirst, ...localModels()].filter(Boolean) as string[])]
+        ? [...new Set([offlineFirst, ...localModels()].filter((x) => x && fitsNow(x)) as string[])]
         : [...(providerUnavailable(wantedProvider) ? [] : [wanted]), ...fallbackModels(wantedProvider)];
       let lastError = isOffline()
-        ? "Offline, and no AI on this PC is running. Start Ollama, then try again."
+        ? (localModels().length
+          ? "Offline, and the AI on this PC needs more free memory than it has right now. Close other heavy programs and try again."
+          : "Offline, and no AI on this PC is running. Start Ollama, then try again.")
         : `${providerLabel(wantedProvider)} isn't available right now, and no other AI is connected. Set one up in Account → Connections.`;
       for (const m of queue) {
         try {

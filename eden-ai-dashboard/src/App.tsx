@@ -408,7 +408,7 @@ export default function App() {
         activePipelineId={pipelineId}
         agents={agents}
         onNewRoom={() => setNewRoomRequest((n) => n + 1)}
-        onRequest={(r) => setRequest({ ...r, n: (request?.n || 0) + 1 })} profile={profile} mobileOpen={drawer} onCloseMobile={() => setDrawer(false)} />
+        onRequest={(r) => setRequest({ ...r, n: (request?.n || 0) + 1 })} mobileOpen={drawer} onCloseMobile={() => setDrawer(false)} />
 
       <div className="relative flex h-[100dvh] min-w-0 flex-1 flex-col overflow-hidden">
         <div className="eden-bg" aria-hidden="true">
@@ -427,7 +427,7 @@ export default function App() {
           </div>
         )}
 
-        <StatusBar keepPage={keepPage} onKeepPage={(v) => { saveKeep(v); setKeepPage(v); }} title={split && wide ? '' : TITLES[activeTab] || ''} split={split || picking} onToggleSplit={() => (split ? close(paneToClose(keepPage, focus)) : picking ? cancelPicking() : startPicking())} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} actions={commandActions} />
+        <StatusBar profileName={profile.name || profile.studio} studioName={profile.studio}keepPage={keepPage} onKeepPage={(v) => { saveKeep(v); setKeepPage(v); }} title={split && wide ? '' : TITLES[activeTab] || ''} split={split || picking} onToggleSplit={() => (split ? close(paneToClose(keepPage, focus)) : picking ? cancelPicking() : startPicking())} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} review={review} actions={commandActions} />
 
         <main ref={mainRef} className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="shrink-0">
@@ -458,7 +458,7 @@ export default function App() {
                 </PaneFrame>
               );
             })}
-            {!split && !picking && panelProject && <ProjectSidePanel project={panelProject} showActions={activeTab === 'projects'} />}
+            {!split && !picking && panelProject && <ProjectSidePanel project={panelProject} showActions={activeTab === 'projects'} showMeeting={activeTab === 'meetings'} />}
             {split && wide && <SplitHandle ratio={ratio} setRatio={setRatio} containerRef={paneRowRef} />}
             {picking && wide && <div style={{ order: 1 }} className="w-3 shrink-0 bg-slate-200 dark:bg-slate-800" aria-hidden />}
             {picking && (

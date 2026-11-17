@@ -5,7 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { spawn } from 'child_process';
+import { spawn, execFile } from 'child_process';
 import { generate, lyraConnected, pingLyra } from './providers';
 import { logActivity, fileProblem } from './activity';
 import { mayManage } from './pairing';
@@ -297,6 +297,34 @@ export function registerLyraRoutes(app: Express) {
       res.json({ ok: true });
     } catch (err: any) {
       res.status(500).json({ error: `Could not start LYRA: ${err?.message || 'unknown error'}` });
+    }
+  });
+
+  // Stops LYRA: closes whatever is listening on her port on this computer (and the programs it started).
+  app.post('/api/lyra/stop', async (req, res) => {
+    if (!fromThisComputer(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'LYRA can only be stopped from the hub on this computer.' });
+    await pingLyra();
+    if (!lyraConnected()) return res.json({ ok: true, already: true });
+    if (process.platform !== 'win32') return res.status(400).json({ error: 'Stopping LYRA from here only works on the Windows computer.' });
+    const port = Number(new URL(LYRA()).port) || 4777;
+    try {
+      const found: string = await new Promise((resolve, reject) =>
+        execFile('powershell.exe', ['-NoProfile', '-Command', `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique) -join ','`], { timeout: 10000, windowsHide: true }, (err, out) => (err ? reject(err) : resolve(String(out).trim()))),
+      );
+      const pids = found.split(',').map((p) => Number(p)).filter((p) => Number.isInteger(p) && p > 4 && p !== process.pid);
+      if (pids.length === 0) return res.status(404).json({ error: "Couldn't find LYRA's program on this computer. Close her window by hand." });
+      for (const pid of pids) {
+        await new Promise<void>((resolve) => execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 10000, windowsHide: true }, () => resolve()));
+      }
+      // Her window (opened by Start LYRA) is left empty, so close it too. Best effort.
+      await new Promise<void>((resolve) => execFile('taskkill', ['/FI', 'WINDOWTITLE eq LYRA*', '/FI', 'IMAGENAME eq cmd.exe', '/T', '/F'], { timeout: 10000, windowsHide: true }, () => resolve()));
+      await new Promise((r) => setTimeout(r, 1000));
+      await pingLyra();
+      if (lyraConnected()) return res.status(500).json({ error: 'LYRA is still answering. Close her window by hand.' });
+      logActivity('info', 'LYRA was stopped from the hub.');
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: `Could not stop LYRA: ${err?.message || 'unknown error'}` });
     }
   });
 

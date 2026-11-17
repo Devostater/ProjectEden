@@ -1,11 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import { Upload, Trash2, Plus, X, Save, Loader2, Sparkles, ExternalLink, Play, Star, Briefcase, Gamepad2, Trophy, Coins, Gem } from 'lucide-react';
+import { Upload, Trash2, Plus, X, Save, Loader2, Sparkles, ExternalLink, Play, Star, Briefcase, Gamepad2, Trophy, Coins, Gem, Swords, Palette, Brain, Heart, Clover } from 'lucide-react';
 import { Avatar, FRAMES, PROFILE_EVENT, useProfile, type ProfileData } from './Avatar.tsx';
 
 // Picture, frame, bio, your links and your own quick commands (a command sends its text to Chat).
 const card = 'rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900';
 const input = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white';
 const h = 'text-sm font-semibold text-slate-900 dark:text-white';
+
+// The four character stats shown on the card.
+const STATS = [
+  { key: 'creativity', label: 'Creativity', hint: 'Ideas, art and design', Icon: Palette, color: 'text-pink-500' },
+  { key: 'logic', label: 'Logic', hint: 'Problem solving and code', Icon: Brain, color: 'text-sky-500' },
+  { key: 'charm', label: 'Charm', hint: 'Teamwork and talking to players', Icon: Heart, color: 'text-rose-500' },
+  { key: 'luck', label: 'Luck', hint: 'Happy accidents', Icon: Clover, color: 'text-emerald-500' },
+] as const;
 
 // Shrinks the picture to 256x256 (cropped to a square) so it stays small.
 function toSmallPicture(file: File): Promise<string> {
@@ -33,6 +41,7 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
   if (!p) return null;
   const set = (patch: Partial<ProfileData>) => { setP({ ...p, ...patch }); setMsg(null); };
   const initial = (name || 'You').trim().charAt(0).toUpperCase();
+  const xpNeeded = p.playerLevel * 100; // each level takes 100 XP more than the one before
 
   const save = async () => {
     setBusy(true);
@@ -57,13 +66,25 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
           <p className="text-lg font-semibold text-slate-900 dark:text-white">{name || 'Your profile'}</p>
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-600 dark:text-slate-300">
             <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300"><Star className="h-3.5 w-3.5" aria-hidden /> Level {p.playerLevel}</span>
+            {p.playerClass && <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300"><Swords className="h-3.5 w-3.5" aria-hidden /> {p.playerClass}</span>}
             {p.workTitle && <span className="inline-flex items-center gap-1"><Briefcase className="h-4 w-4 text-slate-400" aria-hidden /> {p.workTitle}</span>}
             {p.gameTitle && <span className="inline-flex items-center gap-1"><Gamepad2 className="h-4 w-4 text-slate-400" aria-hidden /> {p.gameTitle}</span>}
           </p>
+          <div className="w-64 max-w-full">
+            <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400"><span>Experience</span><span>{Math.min(p.xp, xpNeeded).toLocaleString()} / {xpNeeded.toLocaleString()} XP</span></div>
+            <div role="progressbar" aria-label="Experience toward the next level" aria-valuemin={0} aria-valuemax={xpNeeded} aria-valuenow={Math.min(p.xp, xpNeeded)} className="mt-1 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+              <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500" style={{ width: `${Math.min(100, (p.xp / xpNeeded) * 100)}%` }} />
+            </div>
+          </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
             <span title="Prestige points" className="inline-flex items-center gap-1.5"><Trophy className="h-4 w-4 text-amber-500" aria-hidden /> {p.prestige.toLocaleString()} <span className="font-normal text-slate-500 dark:text-slate-400">prestige</span></span>
             <span title="Current credits" className="inline-flex items-center gap-1.5"><Coins className="h-4 w-4 text-yellow-500" aria-hidden /> {p.credits.toLocaleString()} <span className="font-normal text-slate-500 dark:text-slate-400">credits</span></span>
             <span title="Diamonds" className="inline-flex items-center gap-1.5"><Gem className="h-4 w-4 text-cyan-500" aria-hidden /> {p.diamonds.toLocaleString()} <span className="font-normal text-slate-500 dark:text-slate-400">diamonds</span></span>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-800 dark:text-slate-100">
+            {STATS.map((s) => (
+              <span key={s.key} title={s.hint} className="inline-flex items-center gap-1.5"><s.Icon className={`h-4 w-4 ${s.color}`} aria-hidden /> <span className="font-normal text-slate-500 dark:text-slate-400">{s.label}</span> <span className="font-semibold">{p.stats[s.key]}</span></span>
+            ))}
           </div>
           <div className="flex flex-wrap gap-2">
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
@@ -99,6 +120,20 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
             <label htmlFor="pf-game" className="text-xs text-slate-500 dark:text-slate-400">Video game title</label>
             <input id="pf-game" value={p.gameTitle} onChange={(e) => set({ gameTitle: e.target.value })} maxLength={80} placeholder="The game you are making" className={`${input} mt-1`} />
           </div>
+          <div>
+            <label htmlFor="pf-class" className="text-xs text-slate-500 dark:text-slate-400">Character class</label>
+            <input id="pf-class" value={p.playerClass} onChange={(e) => set({ playerClass: e.target.value })} maxLength={40} placeholder="e.g. Game Wizard" className={`${input} mt-1`} />
+          </div>
+          <div>
+            <label htmlFor="pf-xp" className="text-xs text-slate-500 dark:text-slate-400">Experience (XP) · {xpNeeded.toLocaleString()} needed for the next level</label>
+            <input id="pf-xp" type="number" min={0} value={p.xp} onChange={(e) => set({ xp: Math.max(0, Math.floor(Number(e.target.value)) || 0) })} className={`${input} mt-1`} />
+          </div>
+          {STATS.map((s) => (
+            <div key={s.key}>
+              <label htmlFor={`pf-${s.key}`} className="text-xs text-slate-500 dark:text-slate-400">{s.label} (1 to 99)</label>
+              <input id={`pf-${s.key}`} type="number" min={1} max={99} value={p.stats[s.key]} onChange={(e) => set({ stats: { ...p.stats, [s.key]: Math.min(99, Math.max(1, Math.floor(Number(e.target.value)) || 1)) } })} className={`${input} mt-1`} />
+            </div>
+          ))}
           <div>
             <label htmlFor="pf-prestige" className="text-xs text-slate-500 dark:text-slate-400">Prestige points</label>
             <input id="pf-prestige" type="number" min={0} value={p.prestige} onChange={(e) => set({ prestige: Math.max(0, Math.floor(Number(e.target.value)) || 0) })} className={`${input} mt-1`} />
