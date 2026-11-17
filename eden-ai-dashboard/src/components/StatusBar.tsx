@@ -53,6 +53,8 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
   // Attention chips always show; calm ones ('Online', 'n devices'…) only on bigger screens so a phone bar isn't crowded.
   const chip = 'h-8 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium transition-colors';
   const calm = 'border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800';
+  // Routine status (online, PC, devices) folds into one Status button; chips that need you always show.
+  const [more, setMore] = useState(false);
   const o = s.offline;
   const b = s.busy;
   return (
@@ -65,23 +67,23 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           </button>
         )}
         {o && (
-          <button onClick={() => setActiveTab('settings')} title="Offline mode (Account → Connections)" className={`${chip} ${o.offline ? 'flex border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200' : `hidden md:flex ${calm}`}`}>
+          <button onClick={() => setActiveTab('settings')} title="Offline mode (Account → Connections)" className={`${chip} ${o.offline ? 'flex border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200' : `${more ? 'hidden md:flex' : 'hidden'} ${calm}`}`}>
             {o.offline ? <WifiOff className="h-3.5 w-3.5" /> : <Wifi className="h-3.5 w-3.5 text-emerald-500" />}
             {o.offline ? 'Offline: local AI' : 'Online'}
           </button>
         )}
         {o?.localFirst && !o.offline && (
-          <button onClick={() => setActiveTab('settings')} title="Local first: share of AI work done on this PC this week" className={`${chip} hidden md:flex border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-950/40`}>
+          <button onClick={() => setActiveTab('settings')} title="Local first: share of AI work done on this PC this week" className={`${chip} ${more ? 'hidden md:flex' : 'hidden'} border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-950/40`}>
             <Leaf className="h-3.5 w-3.5" /> {o.week.local + o.week.cloud ? `${o.week.localPercent}% local` : 'Local first'}
           </button>
         )}
         {b && (
-          <button onClick={() => setActiveTab('devices')} title={b.active ? `PC busy: ${b.reason}` : 'This PC (Devices)'} className={`${chip} ${b.active ? 'flex border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200' : `hidden md:flex ${calm}`}`}>
+          <button onClick={() => setActiveTab('devices')} title={b.active ? `PC busy: ${b.reason}` : 'This PC (Devices)'} className={`${chip} ${b.active ? 'flex border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200' : `${more ? 'hidden md:flex' : 'hidden'} ${calm}`}`}>
             <Gauge className="h-3.5 w-3.5" /> {b.active ? 'PC busy' : `PC ${b.cpuPercent}% · ${b.freeGb} GB free`}
           </button>
         )}
         {s.devices !== undefined && (
-          <button onClick={() => setActiveTab('devices')} title="Connected phones and tablets (Devices)" className={`${chip} hidden md:flex ${calm}`}>
+          <button onClick={() => setActiveTab('devices')} title="Connected phones and tablets (Devices)" className={`${chip} ${more ? 'hidden md:flex' : 'hidden'} ${calm}`}>
             <Tablet className="h-3.5 w-3.5" /> {s.devices} {s.devices === 1 ? 'device' : 'devices'} <Plus className="h-3 w-3 text-indigo-500" />
           </button>
         )}
@@ -90,6 +92,9 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
             <PauseCircle className="h-3.5 w-3.5" /> {s.pausedForUpdate ? 'AI paused while an update is applied' : 'AI paused'}
           </span>
         )}
+        <button onClick={() => setMore((v) => !v)} aria-expanded={more} title={more ? 'Hide status' : 'Show status: online, PC, devices'} className={`${chip} hidden md:flex ${calm}`}>
+          {more ? 'Less' : 'Status'}
+        </button>
       </div>
       <GoBox setActiveTab={setActiveTab} />
       {pauseSlot}

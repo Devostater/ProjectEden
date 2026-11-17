@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight, Copy, Check, SlidersHorizontal, EyeOff } from 'lucide-react';
+import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight, Copy, Check, SlidersHorizontal, EyeOff, Map as MapIcon } from 'lucide-react';
+import { JourneyView } from './ProjectPages.tsx';
 import type { Agent, Card, Project, RoadmapGoal } from '../types/index.ts';
 import { FlowTab, WorkloadTab, ProgressTab } from './ProjectVisuals.tsx';
 import { Roadmap, roadmapProgress } from './Roadmap.tsx';
@@ -14,8 +15,8 @@ import { UsagePanel } from './UsageBars.tsx';
 import { useSideActionsTarget } from './ProjectSidePanel.tsx';
 import { PauseAI } from './PauseAI.tsx';
 
-type PanelTab = 'flow' | 'workload' | 'progress' | 'trail' | 'roadmap' | 'toolbox' | 'preview' | 'review' | 'lyra' | 'activity' | 'terminal';
-const PROJECT_TABS: PanelTab[] = ['flow', 'workload', 'progress', 'trail', 'roadmap', 'toolbox', 'preview'];
+type PanelTab = 'journey' | 'flow' | 'workload' | 'progress' | 'trail' | 'roadmap' | 'toolbox' | 'preview' | 'review' | 'lyra' | 'activity' | 'terminal';
+const PROJECT_TABS: PanelTab[] = ['journey', 'flow', 'workload', 'progress', 'trail', 'roadmap', 'toolbox', 'preview'];
 const ALL_TABS: PanelTab[] = [...PROJECT_TABS, 'review', 'lyra', 'activity', 'terminal'];
 
 // The little LYRA face used as the tab's icon.
@@ -294,7 +295,21 @@ export const BottomPanel: React.FC<{
   const [arrangingDock, setArrangingDock] = useState(false);
   // Tabs you hid with Customize (saved on this device). While the Projects side panel is open, its tools are
   // already there, so those tabs leave the bottom bar (Preview stays: the side panel has no Preview).
-  const [hiddenTabs, setHiddenTabs] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_dock_hidden') || '["toolbox"]'); return Array.isArray(v) ? v : []; } catch { return []; } });
+  const [hiddenTabs, setHiddenTabs] = useState<string[]>(() => {
+    const merged = ['flow', 'progress', 'trail', 'roadmap', 'toolbox'];
+    try {
+      const v = JSON.parse(localStorage.getItem('eden_dock_hidden') || '[]');
+      let list: string[] = Array.isArray(v) ? v : [];
+      if (!localStorage.getItem('eden_dock_journey')) {
+        list = [...new Set([...list, ...merged])];
+        localStorage.setItem('eden_dock_journey', '1');
+        localStorage.setItem('eden_dock_hidden', JSON.stringify(list));
+      }
+      return list;
+    } catch {
+      return merged;
+    }
+  });
   const toggleHidden = (id: string) => setHiddenTabs((h) => { const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id]; try { localStorage.setItem('eden_dock_hidden', JSON.stringify(next)); } catch {} return next; });
   const sidePanelOpen = !!useSideActionsTarget();
   const inSidePanel = (id: PanelTab) => sidePanelOpen && PROJECT_TABS.includes(id) && id !== 'preview';
@@ -337,6 +352,7 @@ export const BottomPanel: React.FC<{
       )}
       <div className="flex h-[3.25rem] shrink-0 items-center border-b border-slate-200 px-2 dark:border-slate-800">
         <div className="flex min-w-0 flex-1 items-center justify-evenly gap-1 overflow-x-auto">
+        {project && tabButton('journey', 'Journey', MapIcon)}
         {project && tabButton('flow', 'Flow', Workflow)}
         {project && tabButton('workload', 'Workload', Users)}
         {project && tabButton('progress', 'Progress', TrendingUp)}
@@ -436,6 +452,7 @@ export const BottomPanel: React.FC<{
 
       {open && project && PROJECT_TABS.includes(tab) && (
         <div className="min-h-0 flex-1">
+          {tab === 'journey' && <div className="h-full overflow-y-auto p-3"><JourneyView {...project} /></div>}
           {tab === 'flow' && <FlowTab {...project} zoom={zoom} />}
           {tab === 'workload' && <WorkloadTab {...project} />}
           {tab === 'progress' && <ProgressTab {...project} />}

@@ -1,4 +1,5 @@
 import React from 'react';
+import { ui } from '../ui.ts';
 import { Play, Pause, Flag, Loader2, Inbox, AlertTriangle, ArrowRight } from 'lucide-react';
 import type { PanelProject } from './BottomPanel.tsx';
 import { FlowTab, ProgressTab, WorkloadTab } from './ProjectVisuals.tsx';
@@ -7,8 +8,6 @@ import { WorkTrail } from './WorkTrail.tsx';
 
 // Mission: the project at a glance. What it's for, what the AI is doing, what's next, what waits on you,
 // and the controls that decide how far the AI may go on its own (Continue/Pause and checkpoints).
-const box = 'rounded-xl border border-slate-200 p-3 dark:border-slate-800';
-const head = 'mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
 
 export const MissionView: React.FC<PanelProject> = ({ project, cards, onOpenCard, onSaveProject }) => {
   const mine = cards.filter((c) => c.projectId === project.id);
@@ -36,13 +35,13 @@ export const MissionView: React.FC<PanelProject> = ({ project, cards, onOpenCard
 
   return (
     <div className="space-y-3">
-      <div className={box}>
-        <div className={head}><Flag className="h-3.5 w-3.5" /> Mission</div>
+      <div className={ui.section}>
+        <div className={ui.label}><Flag className="h-3.5 w-3.5" /> Mission</div>
         <p className="text-sm text-slate-800 dark:text-slate-100">{project.goal || 'No goal yet. Add one in the project settings so the AI knows what "finished" means.'}</p>
         {rm && <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Roadmap {rm.pct}% · {rm.done}/{rm.total} blocks done{nextBlock ? ` · next block: ${nextBlock.title}` : ''}</p>}
       </div>
 
-      <div className={`${box} flex flex-wrap items-center gap-3`}>
+      <div className={`${ui.section} flex flex-wrap items-center gap-3`}>
         <button
           onClick={() => onSaveProject({ autoRun: !running })}
           className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold text-white ${running ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
@@ -57,20 +56,20 @@ export const MissionView: React.FC<PanelProject> = ({ project, cards, onOpenCard
       </div>
 
       <div className="grid gap-3 @lg:grid-cols-2">
-        <div className={box}>
-          <div className={head}><Loader2 className={`h-3.5 w-3.5 ${now.length ? 'animate-spin' : ''}`} /> Working now</div>
+        <div className={ui.section}>
+          <div className={ui.label}><Loader2 className={`h-3.5 w-3.5 ${now.length ? 'animate-spin' : ''}`} /> Working now</div>
           {list(now, 'Nothing running right now.')}
         </div>
-        <div className={box}>
-          <div className={head}><ArrowRight className="h-3.5 w-3.5" /> Up next</div>
+        <div className={ui.section}>
+          <div className={ui.label}><ArrowRight className="h-3.5 w-3.5" /> Up next</div>
           {list(next, 'No cards in Ready.')}
         </div>
-        <div className={box}>
-          <div className={head}><Inbox className="h-3.5 w-3.5" /> Waiting on you</div>
+        <div className={ui.section}>
+          <div className={ui.label}><Inbox className="h-3.5 w-3.5" /> Waiting on you</div>
           {list(review, 'Nothing to review.')}
         </div>
-        <div className={box}>
-          <div className={head}><AlertTriangle className="h-3.5 w-3.5" /> Needs a fix</div>
+        <div className={ui.section}>
+          <div className={ui.label}><AlertTriangle className="h-3.5 w-3.5" /> Needs a fix</div>
           {list(failed, 'No failed cards.')}
         </div>
       </div>
@@ -82,19 +81,19 @@ export const MissionView: React.FC<PanelProject> = ({ project, cards, onOpenCard
 export const JourneyView: React.FC<PanelProject> = (p) => (
   <div className="space-y-5">
     <section>
-      <div className={head}>Progress</div>
+      <div className={ui.label}>Progress</div>
       <ProgressTab {...p} />
     </section>
     <section className="@container">
-      <div className={head}>Roadmap</div>
+      <div className={ui.label}>Roadmap</div>
       <Roadmap key={p.project.id} project={p.project} onSave={p.onSaveRoadmap} embedded />
     </section>
     <section>
-      <div className={head}>Card map</div>
+      <div className={ui.label}>Card map</div>
       <div className="h-[380px] rounded-xl border border-slate-200 dark:border-slate-800"><FlowTab {...p} zoom="fit" /></div>
     </section>
     <section>
-      <div className={head}>Trail: latest work</div>
+      <div className={ui.label}>Trail: latest work</div>
       <WorkTrail key={p.project.id} project={p.project} cards={p.cards} agents={p.agents} onOpenCard={p.onOpenCard} />
     </section>
   </div>
@@ -111,7 +110,7 @@ export const BoardInsights: React.FC<PanelProject> = (p) => {
     <section aria-label="Project insights" className="mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2">
       {pages.map(([title, body]) => (
         <div key={title} className="w-[min(36rem,85%)] shrink-0 snap-start rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-          <div className={head}>{title}</div>
+          <div className={ui.label}>{title}</div>
           <div className="max-h-[22rem] overflow-y-auto">{body}</div>
         </div>
       ))}
