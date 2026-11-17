@@ -16,6 +16,12 @@ export const HEADS_UP_CHOICES: { minutes: number; label: string }[] = [
   { minutes: 60, label: '1 hour before' },
 ];
 
+// The time you picked is remembered even while the heads-up is switched off.
+const TIME_KEY = 'eden_meeting_headsup_time';
+export const TIME_CHOICES = HEADS_UP_CHOICES.filter((c) => c.minutes > 0);
+const DEFAULT_TIME = 15;
+const SYNC_EVENT = 'eden-headsup-change';
+
 const readMinutes = (): number => {
   try {
     const v = Number(localStorage.getItem(MINUTES_KEY));
@@ -23,6 +29,13 @@ const readMinutes = (): number => {
   } catch {
     return 0;
   }
+};
+const readTime = (): number => {
+  try {
+    const t = Number(localStorage.getItem(TIME_KEY));
+    if (TIME_CHOICES.some((c) => c.minutes === t)) return t;
+  } catch {}
+  return readMinutes() || DEFAULT_TIME;
 };
 const readDismissed = (): string[] => {
   try {
@@ -46,6 +59,7 @@ const idFor = (h: HeadsUp) => `${h.key}@${h.at}`;
 
 export const useMeetingHeadsUp = () => {
   const [minutes, setMinutesState] = useState(readMinutes);
+  const [time, setTimeState] = useState(readTime);
   const [meetings, setMeetings] = useState<{ projectId: string; name: string; color: string; meeting?: string; meetingAt?: string }[]>([]);
   const [dismissed, setDismissed] = useState(readDismissed);
   const [now, setNow] = useState(() => Date.now());
@@ -71,10 +85,23 @@ export const useMeetingHeadsUp = () => {
     return () => clearInterval(t);
   }, [minutes]);
 
+  // Every place that shows this setting (the Notifications list and the Meeting tab) stays in step.
+  useEffect(() => {
+    const sync = () => { setMinutesState(readMinutes()); setTimeState(readTime()); setNow(Date.now()); };
+    window.addEventListener(SYNC_EVENT, sync);
+    return () => window.removeEventListener(SYNC_EVENT, sync);
+  }, []);
+
+  // 0 switches it off; any other value is the time and switches it on.
   const setMinutes = useCallback((m: number) => {
+    try {
+      localStorage.setItem(MINUTES_KEY, String(m));
+      if (m > 0) localStorage.setItem(TIME_KEY, String(m));
+    } catch {}
+    window.dispatchEvent(new Event(SYNC_EVENT));
     setMinutesState(m);
+    if (m > 0) setTimeState(m);
     setNow(Date.now());
-    try { localStorage.setItem(MINUTES_KEY, String(m)); } catch {}
   }, []);
 
   let list: HeadsUp[] = [];
@@ -106,5 +133,6 @@ export const useMeetingHeadsUp = () => {
     });
   }, []);
 
-  return { minutes, setMinutes, headsUp: list, dismiss };
+  // time = how early you chose; on = whether it is switched on.
+  return { minutes, setMinutes, time, on: minutes > 0, headsUp: list, dismiss };
 };

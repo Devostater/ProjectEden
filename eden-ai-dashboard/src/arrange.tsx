@@ -137,7 +137,9 @@ export const Arrangeable: React.FC<{
       // shift what is under a still pointer and send a slow click to the wrong button.
       isLifted = true;
     }, 300);
+    const pid = e.pointerId; // follow only the pointer that started the hold (not a second finger or the mouse)
     const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== pid) return;
       if (!isLifted) {
         // Moved before the hold finished: this is a normal press or scroll, not a drag.
         if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > slop) finish(false);
@@ -173,8 +175,8 @@ export const Arrangeable: React.FC<{
         if (drop && moved && to) arr.moveNear(id, to);
       }
     };
-    const up = () => finish(true);
-    const cancel = () => finish(false);
+    const up = (ev: PointerEvent) => { if (ev.pointerId === pid) finish(true); };
+    const cancel = (ev: PointerEvent) => { if (ev.pointerId === pid) finish(false); };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', cancel);

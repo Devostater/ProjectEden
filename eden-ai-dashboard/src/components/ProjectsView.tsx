@@ -1409,7 +1409,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                     </button>
                   </div>
 
-                  <div className="min-h-[6rem] flex-1 space-y-1.5 overflow-y-auto px-1 pb-1">
+                  {/* Cards scroll inside the column; the list stops at about 5½ cards tall (24rem), so a long column shows a half card as a hint to scroll. */}
+                  <div className="min-h-[6rem] max-h-[24rem] flex-1 space-y-1.5 overflow-y-auto px-1 pb-1">
                     {addingIn === col.id && (
                       <input
                         autoFocus

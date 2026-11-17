@@ -62,7 +62,7 @@ export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onResu
       const r = panel?.getBoundingClientRect();
       const gap = r && r.width > 0 && r.height > 0 ? Math.min(window.innerHeight, window.innerHeight - r.top) : 0;
       if (gap <= 0) return setPlace(null);
-      const natural = trayRef.current ? trayRef.current.scrollHeight : 200; // full height, even if capped
+      const natural = trayRef.current ? trayRef.current.scrollHeight + 2 : 200; // full height (plus its 1 px borders), even if capped
       const room = window.innerHeight - gap - 12 - top;
       setPlace(room >= natural ? { bottom: Math.round(gap + 12) } : { top });
     };
@@ -70,6 +70,9 @@ export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onResu
     window.addEventListener('resize', measure);
     const watch = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
     if (panel) watch?.observe(panel);
+    // The top bar can change height (a notice appears above it, text size changes): follow it.
+    const bar = document.querySelector('[aria-label="Pick elements"]')?.closest('.border-b');
+    if (bar) watch?.observe(bar);
     if (trayRef.current) watch?.observe(trayRef.current);
     return () => {
       window.removeEventListener('resize', measure);
@@ -83,12 +86,13 @@ export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onResu
       : { top: place.top, maxHeight: `calc(100dvh - ${place.top + 16}px)` };
 
   if (picking)
+    // The small bar lets clicks through everywhere except its two buttons, so what sits under it can still be picked.
     return createPortal(
-      <div data-eden-picker-ui="" role="status" style={{ top: topLimit }} className="fixed right-4 z-[2147483646] flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-full border border-indigo-400 bg-white/95 py-1 pl-3 pr-1 text-sm shadow-lg backdrop-blur dark:bg-slate-900/95">
+      <div data-eden-picker-ui="" role="status" style={{ top: topLimit }} className={`pointer-events-none fixed right-4 z-[2147483646] flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-full border border-indigo-400 bg-white/95 py-1 pl-3 pr-1 text-sm shadow-lg backdrop-blur dark:bg-slate-900/95`}>
         <Pencil className="h-4 w-4 shrink-0 text-indigo-500" />
         <span className="truncate text-slate-800 dark:text-slate-100">{picks.length ? `${picks.length} picked: click more, or Done` : 'Click what you want to change'}</span>
-        <button onClick={onStop} className="shrink-0 rounded-full bg-indigo-600 px-3 py-1 font-medium text-white hover:bg-indigo-500">Done</button>
-        <button onClick={onClose} aria-label="Close the picker" title="Close (Esc stops picking)" className="shrink-0 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
+        <button onClick={onStop} className="pointer-events-auto shrink-0 rounded-full bg-indigo-600 px-3 py-1 font-medium text-white hover:bg-indigo-500">Done</button>
+        <button onClick={onClose} aria-label="Close the picker" title="Close (Esc stops picking)" className="pointer-events-auto shrink-0 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
       </div>,
       document.body,
     );
