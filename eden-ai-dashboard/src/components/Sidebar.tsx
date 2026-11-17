@@ -29,6 +29,7 @@ import {
   Star as StarIcon,
   ExternalLink,
   X,
+  Trophy,
 } from 'lucide-react';
 import { UsageBars } from './UsageBars.tsx';
 import { PauseAI } from './PauseAI.tsx';
@@ -38,7 +39,7 @@ import type { ProjectsApi } from '../projectsStore.ts';
 import { RoomList } from './NexusRooms.tsx';
 import type { Agent, DAGPipeline } from '../types/index.ts';
 
-export type AppTab = 'home' | 'projects' | 'meetings' | 'nexus' | 'chat' | 'my-ai' | 'pipelines' | 'files' | 'updates' | 'repos' | 'devices' | 'remote' | 'settings';
+export type AppTab = 'home' | 'projects' | 'meetings' | 'nexus' | 'chat' | 'my-ai' | 'pipelines' | 'files' | 'updates' | 'repos' | 'devices' | 'remote' | 'achievements' | 'settings';
 
 // What the sidebar asks a page to open, e.g. "the new-project form" or "this teammate".
 export type SidebarRequest =
@@ -466,7 +467,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Left-bar pages you hid in Arrange mode (saved on this device).
   const [sideHidden, setSideHidden] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_sidebar_hidden') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
   const toggleSideHidden = (id: string) => setSideHidden((h) => { const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id]; try { localStorage.setItem('eden_sidebar_hidden', JSON.stringify(next)); } catch {} return next; });
-  const navOrder = useArrangedOrder('eden_sidebar_order', ['home', 'projects', 'meetings', 'nexus', 'chat', 'team', 'files', 'updates', ...custom.tabs.map((t) => t.id)]);
+  const navOrder = useArrangedOrder('eden_sidebar_order', ['home', 'projects', 'meetings', 'nexus', 'chat', 'team', 'files', 'updates', 'achievements', ...custom.tabs.map((t) => t.id)]);
   const [arranging, setArranging] = useState(false);
 
   return (
@@ -700,6 +701,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Arrangeable id="updates" label="Code updates" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('updates')} onToggleHidden={() => toggleSideHidden('updates')}>
           {navButton('updates', 'Code updates', Wand2, 0, runningUpdates)}
           </Arrangeable>
+          <Arrangeable id="achievements" label="Achievements" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('achievements')} onToggleHidden={() => toggleSideHidden('achievements')}>
+          {navButton('achievements', 'Achievements', Trophy)}
+          </Arrangeable>
           {custom.tabs.map((t) => (
             <Arrangeable key={t.id} id={t.id} label={t.label} arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" onRemove={() => custom.remove(t.id)}>
               <div className="flex items-center">
@@ -739,6 +743,7 @@ const CUSTOM_PAGES: { id: string; label: string }[] = [
   { id: 'pipelines', label: 'Workflows' },
   { id: 'devices', label: 'Devices' },
   { id: 'remote', label: 'Remote' },
+  { id: 'achievements', label: 'Achievements' },
   { id: 'my-ai', label: 'My AI' },
 ];
 function useCustomTabs() {

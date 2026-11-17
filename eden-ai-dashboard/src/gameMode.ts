@@ -78,10 +78,21 @@ export function readGameSave(): GameSave {
   }
 }
 
+// Total XP you need to reach the start of a level.
+export function xpAtLevel(level: number) {
+  let total = 0;
+  for (let l = 1; l < level; l++) total += xpForLevel(l);
+  return total;
+}
+
+// Announced whenever the game save changes, so the Account profile card can show the same level and XP.
+export const GAME_SAVE_EVENT = 'eden-game-save';
+
 export function writeGameSave(save: GameSave) {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(save));
   } catch {}
+  window.dispatchEvent(new Event(GAME_SAVE_EVENT));
 }
 
 export function applyGameMode(on: boolean) {

@@ -63,9 +63,13 @@ interface Live {
   speaking: string;
   turnsLeft: number;
   stop: boolean;
+  turnsTotal: number; // how many AI messages this discussion may use
+  turnsDone: number; // finished turns, to estimate the time left
+  workMs: number; // time spent on finished turns
+  tokens: number; // tokens used so far in this discussion
 }
 const live = new Map<string, Live>(); // one running discussion per room
-const liveOf = (roomId: string) => live.get(roomId) || { running: false, speaking: '', turnsLeft: 0, stop: false };
+const liveOf = (roomId: string): Live => live.get(roomId) || { running: false, speaking: '', turnsLeft: 0, stop: false, turnsTotal: 0, turnsDone: 0, workMs: 0, tokens: 0 };
 
 const firstName = (a: Agent) => a.name.split(' ')[0];
 export const runningRooms = () => [...live.values()].filter((l) => l.running).length;
@@ -156,12 +160,16 @@ export function registerNexusRoutes(app: Express, getStore: () => NexusStore, sa
 
   async function speak(room: NexusRoom, state: Live, agent: Agent, system: string): Promise<{ text: string; via: string } | null> {
     state.speaking = agent.name;
+    const startedAt = Date.now();
     try {
       const answer = await askTeammate(agent, system, `The conversation so far:\n\n${transcript(room)}\n\nNow it is your turn, ${agent.name}.`, {
         maxTokens: 1500,
         onlyModels: modelsFor(room, agent),
       });
       state.turnsLeft -= 1;
+      state.turnsDone += 1;
+      state.workMs += Date.now() - startedAt;
+      state.tokens += answer.tokens || 0;
       const via = room.freeOnly && providerFor(agent.model) !== 'google' ? 'free Gemini' : answer.via || '';
       return { text: answer.text.replace(new RegExp(`^\\s*\\**${agent.name}\\**\\s*:\\s*`, 'i'), ''), via };
     } catch (err: any) {
@@ -179,7 +187,7 @@ export function registerNexusRoutes(app: Express, getStore: () => NexusStore, sa
     if (!lead) return;
     const team = members(room).filter((a) => a.id !== lead.id);
     const roster = team.map((a) => `${firstName(a)} (${a.role})`).join(', ') || 'nobody else';
-    const state: Live = { running: true, speaking: '', turnsLeft: depth, stop: false };
+    const state: Live = { running: true, speaking: '', turnsLeft: depth, stop: false, turnsTotal: depth, turnsDone: 0, workMs: 0, tokens: 0 };
     live.set(room.id, state);
     logActivity('work', `Nexus (${room.name}): a discussion started (up to ${depth} AI messages${room.freeOnly ? ', free only' : ''}).`);
 
@@ -337,7 +345,15 @@ You are ${agent.name} (${agent.role}). Speak from your specialty. If one other m
       room: summary(room),
       messages: room.messages.filter((m) => m.seq > since),
       latest: room.messages[room.messages.length - 1]?.seq || 0,
-      state: { running: state.running, speaking: state.speaking, turnsLeft: state.turnsLeft },
+      state: {
+        running: state.running,
+        speaking: state.speaking,
+        turnsLeft: state.turnsLeft,
+        turnsTotal: state.turnsTotal,
+        turnsDone: state.turnsDone,
+        avgTurnMs: state.turnsDone ? Math.round(state.workMs / state.turnsDone) : 0,
+        tokens: state.tokens,
+      },
       depths: DEPTHS,
     });
   });

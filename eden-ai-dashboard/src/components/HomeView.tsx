@@ -919,21 +919,6 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
       </div>
     </div>
 
-    {/* Bottom bar, like a player's control strip: a quick summary and the places you jump to most */}
-    <div role="status" className="sticky bottom-0 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-200 bg-white/95 px-4 py-3 text-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 sm:px-8">
-      <span className={`flex items-center gap-1.5 font-medium ${allClear ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}`}>
-        {allClear ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-        {!checked ? 'Checking…' : allClear ? 'All clear' : 'Needs you'}
-      </span>
-      <span className="text-slate-500 dark:text-slate-400">
-        {agents.length} on your team · {projects.length} {projects.length === 1 ? 'project' : 'projects'}
-      </span>
-      <span className="ml-auto flex gap-2">
-        <button onClick={() => openPanel('review')} className="rounded-lg border border-slate-300 px-3 py-1 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
-          Review{reviewCount + readyUpdates > 0 ? ` (${reviewCount + readyUpdates})` : ''}
-        </button>
-      </span>
-    </div>
     </div>
 
     {/* The popped-out radar floats above the page and stays put while you scroll */}

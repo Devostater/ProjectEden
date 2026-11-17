@@ -1,6 +1,6 @@
 import React from 'react';
 import { ui } from '../ui.ts';
-import { Play, Pause, Flag, Loader2, Inbox, AlertTriangle, ArrowRight, ChevronUp, ChevronDown } from 'lucide-react';
+import { Play, Pause, Flag, Loader2, Inbox, AlertTriangle, ArrowRight, ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { PanelProject } from './BottomPanel.tsx';
 import { FlowTab, ProgressTab, WorkloadTab } from './ProjectVisuals.tsx';
 import { Roadmap, roadmapProgress } from './Roadmap.tsx';
@@ -169,14 +169,65 @@ export const BoardInsights: React.FC<PanelProject> = (p) => {
     ['Who is working', <WorkloadTab {...p} />],
     ['Latest work', <WorkTrail key={p.project.id} project={p.project} cards={p.cards} agents={p.agents} onOpenCard={p.onOpenCard} />],
   ];
+  const scroller = React.useRef<HTMLElement>(null);
+  const [current, setCurrent] = React.useState(0);
+
+  // Which page is closest to the middle of the strip right now.
+  const syncCurrent = () => {
+    const box = scroller.current;
+    if (!box) return;
+    const mid = box.getBoundingClientRect().left + box.clientWidth / 2;
+    let best = 0;
+    let bestGap = Infinity;
+    box.querySelectorAll<HTMLElement>('[data-page]').forEach((el, i) => {
+      const r = el.getBoundingClientRect();
+      const gap = Math.abs(r.left + r.width / 2 - mid);
+      if (gap < bestGap) { bestGap = gap; best = i; }
+    });
+    setCurrent(best);
+  };
+
+  const goTo = (i: number) => {
+    const box = scroller.current;
+    const el = box?.querySelectorAll<HTMLElement>('[data-page]')[i];
+    if (!box || !el) return;
+    const b = box.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    box.scrollTo({ left: box.scrollLeft + (r.left + r.width / 2) - (b.left + b.width / 2), behavior: 'smooth' });
+  };
+
+  const arrowBtn = 'rounded-lg border border-slate-200 bg-white p-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-white dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:disabled:hover:bg-slate-900';
+  const spacer = <div aria-hidden className="w-[calc(50%-min(18rem,42.5%))] shrink-0 -mx-1.5" />;
+
   return (
-    <section aria-label="Project insights" className="mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2">
-      {pages.map(([title, body]) => (
-        <div key={title} className="w-[min(36rem,85%)] shrink-0 snap-start rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-          <div className={ui.label}>{title}</div>
-          <div className="max-h-[22rem] overflow-y-auto">{body}</div>
+    <div className="mt-4">
+      <section ref={scroller} onScroll={syncCurrent} aria-label="Project insights" className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2">
+        {spacer}
+        {pages.map(([title, body]) => (
+          <div key={title} data-page className="w-[min(36rem,85%)] shrink-0 snap-center rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+            <div className={ui.label}>{title}</div>
+            <div className="max-h-[22rem] overflow-y-auto">{body}</div>
+          </div>
+        ))}
+        {spacer}
+      </section>
+      <div className="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-2 py-1.5 dark:border-slate-800 dark:bg-slate-900">
+        <button type="button" onClick={() => goTo(current - 1)} disabled={current <= 0} title="Previous page" aria-label="Previous page" className={arrowBtn}>
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <div className="flex min-w-0 flex-1 items-center justify-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+          <span className="truncate font-medium">{pages[current]?.[0]}</span>
+          <span className="text-xs text-slate-500 dark:text-slate-400">{current + 1} of {pages.length}</span>
+          <span className="flex gap-1">
+            {pages.map(([title], i) => (
+              <button key={title} type="button" onClick={() => goTo(i)} title={title} aria-label={`Show ${title}`} className={`h-2 w-2 rounded-full ${i === current ? 'bg-indigo-600' : 'bg-slate-300 hover:bg-slate-400 dark:bg-slate-600'}`} />
+            ))}
+          </span>
         </div>
-      ))}
-    </section>
+        <button type="button" onClick={() => goTo(current + 1)} disabled={current >= pages.length - 1} title="Next page" aria-label="Next page" className={arrowBtn}>
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
   );
 };

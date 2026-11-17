@@ -42,6 +42,8 @@ import { useChatThreads } from './chatThreads.ts';
 import { useProjects } from './projectsStore.ts';
 import { ProjectsView } from './components/ProjectsView.tsx';
 import { GameHud } from './components/GameHud.tsx';
+import { AchievementsView, AchievementToasts } from './components/AchievementsView.tsx';
+import { recordActivity } from './earned.ts';
 import './gameMode.ts'; // sets the saved video game look (off unless turned on in Preferences) before anything paints
 
 // Once per device: open the bottom dock taller than the old 256px so it can be read (about 22rem at the chosen
@@ -139,6 +141,13 @@ export default function App() {
 
   // The number of cards waiting for your review, shown in the browser tab title.
   const reviewCount = projectsApi.cards.filter((c) => c.column === 'review').length;
+  // Points and achievements come from what you do here (see earned.ts). Counts only go up.
+  const chatMessages = chat.threads.reduce((n, t) => n + t.messages.filter((m) => m.role === 'user').length, 0);
+  const doneCards = projectsApi.cards.filter((c) => c.column === 'done').length;
+  useEffect(() => {
+    recordActivity({ projects: projectsApi.projects.length, cards: projectsApi.cards.length, doneCards, workflows: pipelines.length, teammates: agents.length, rooms: nexusRooms.rooms.length, files: files.length, chatMessages, page: panes });
+  }, [projectsApi.projects.length, projectsApi.cards.length, doneCards, pipelines.length, agents.length, nexusRooms.rooms.length, files.length, chatMessages, panes.join('|')]);
+
   useEffect(() => {
     document.title = reviewCount > 0 ? `(${reviewCount}) Eden AI Hub` : 'Eden AI Hub';
   }, [reviewCount]);
@@ -370,6 +379,8 @@ export default function App() {
             {activeTab === 'devices' && <DevicesView />}
   
             {activeTab === 'remote' && <RemoteView />}
+
+            {activeTab === 'achievements' && <AchievementsView />}
   
             {activeTab === 'settings' && (
               <AccountView
@@ -522,6 +533,7 @@ export default function App() {
         />
 
         <GameHud />
+        <AchievementToasts />
 
         <div className="eden-dock contents">
         <BottomPanel

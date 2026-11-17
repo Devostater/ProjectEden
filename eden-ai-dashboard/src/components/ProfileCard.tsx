@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Upload, Trash2, Plus, X, Save, Loader2, Sparkles, ExternalLink, Play, Star, Briefcase, Gamepad2, Trophy, Coins, Gem, Swords, Palette, Brain, Heart, Clover } from 'lucide-react';
 import { Avatar, FRAMES, PROFILE_EVENT, useProfile, normalizeProfile, type ProfileData } from './Avatar.tsx';
+import { STAT_RULES, earnedStats, statPoints, useActivity } from '../earned.ts';
+import { GAME_SAVE_EVENT, levelOf, readGameSave, writeGameSave, xpAtLevel, xpForLevel, type GameSave } from '../gameMode.ts';
 
 // Picture, frame, bio, your links and your own quick commands (a command sends its text to Chat).
 const card = 'rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900';
@@ -37,16 +39,42 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
   const [p, setP] = useState<ProfileData | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [game, setGame] = useState<GameSave>(readGameSave);
   useEffect(() => { if (saved && !p) setP(saved); }, [saved, p]);
+  // Level and XP come from the Eden game, so the card and the game always show the same numbers.
+  useEffect(() => {
+    const reread = () => setGame(readGameSave());
+    window.addEventListener(GAME_SAVE_EVENT, reread);
+    window.addEventListener('eden-game-mode', reread);
+    window.addEventListener('storage', reread);
+    return () => {
+      window.removeEventListener(GAME_SAVE_EVENT, reread);
+      window.removeEventListener('eden-game-mode', reread);
+      window.removeEventListener('storage', reread);
+    };
+  }, []);
+  const activity = useActivity();
   if (!p) return null;
+  // The four stats come from what you have done in Eden (see earned.ts).
+  const stats = earnedStats(activity);
   const set = (patch: Partial<ProfileData>) => { setP({ ...p, ...patch }); setMsg(null); };
   const initial = (name || 'You').trim().charAt(0).toUpperCase();
-  const xpNeeded = p.playerLevel * 100; // each level takes 100 XP more than the one before
+  const { level, into: xpInto, need: xpNeeded } = levelOf(game.xp);
+  // Typing a new level or XP changes the game too, so the two stay in step.
+  const setGameXp = (xp: number) => {
+    const next = { ...readGameSave(), xp };
+    writeGameSave(next);
+    setGame(next);
+    window.dispatchEvent(new Event('eden-game-mode')); // the game picks up the new number
+    setMsg(null);
+  };
+  const changeLevel = (n: number) => { const l = Math.min(999, Math.max(1, n)); setGameXp(xpAtLevel(l) + Math.min(xpInto, xpForLevel(l) - 1)); };
+  const changeXp = (n: number) => setGameXp(xpAtLevel(level) + Math.min(xpNeeded - 1, Math.max(0, n)));
 
   const save = async () => {
     setBusy(true);
     try {
-      const r = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
+      const r = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...p, stats, playerLevel: level, xp: xpInto }) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'Could not save.');
       // Keep what was typed for any field an older hub leaves out of its reply.
@@ -66,15 +94,15 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
         <div className="space-y-2">
           <p className="text-lg font-semibold text-slate-900 dark:text-white">{name || 'Your profile'}</p>
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-600 dark:text-slate-300">
-            <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300"><Star className="h-3.5 w-3.5" aria-hidden /> Level {p.playerLevel}</span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300"><Star className="h-3.5 w-3.5" aria-hidden /> Level {level}</span>
             {p.playerClass && <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-700 dark:bg-violet-500/20 dark:text-violet-300"><Swords className="h-3.5 w-3.5" aria-hidden /> {p.playerClass}</span>}
             {p.workTitle && <span className="inline-flex items-center gap-1"><Briefcase className="h-4 w-4 text-slate-400" aria-hidden /> {p.workTitle}</span>}
             {p.gameTitle && <span className="inline-flex items-center gap-1"><Gamepad2 className="h-4 w-4 text-slate-400" aria-hidden /> {p.gameTitle}</span>}
           </p>
           <div className="w-64 max-w-full">
-            <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400"><span>Experience</span><span>{Math.min(p.xp, xpNeeded).toLocaleString()} / {xpNeeded.toLocaleString()} XP</span></div>
-            <div role="progressbar" aria-label="Experience toward the next level" aria-valuemin={0} aria-valuemax={xpNeeded} aria-valuenow={Math.min(p.xp, xpNeeded)} className="mt-1 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-              <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500" style={{ width: `${Math.min(100, (p.xp / xpNeeded) * 100)}%` }} />
+            <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400"><span>Experience</span><span>{xpInto.toLocaleString()} / {xpNeeded.toLocaleString()} XP</span></div>
+            <div role="progressbar" aria-label="Experience toward the next level" aria-valuemin={0} aria-valuemax={xpNeeded} aria-valuenow={xpInto} className="mt-1 h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+              <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500" style={{ width: `${Math.min(100, (xpInto / xpNeeded) * 100)}%` }} />
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
@@ -83,9 +111,22 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
             <span title="Diamonds" className="inline-flex items-center gap-1.5"><Gem className="h-4 w-4 text-cyan-500" aria-hidden /> {p.diamonds.toLocaleString()} <span className="font-normal text-slate-500 dark:text-slate-400">diamonds</span></span>
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-800 dark:text-slate-100">
-            {STATS.map((s) => (
-              <span key={s.key} title={s.hint} className="inline-flex items-center gap-1.5"><s.Icon className={`h-4 w-4 ${s.color}`} aria-hidden /> <span className="font-normal text-slate-500 dark:text-slate-400">{s.label}</span> <span className="font-semibold">{p.stats[s.key]}</span></span>
-            ))}
+            {STATS.map((s) => {
+              const points = statPoints(activity, s.key);
+              return (
+                <span key={s.key} tabIndex={0} aria-label={`${s.label} ${stats[s.key]}. Earned by using Eden. Hover or focus to see how.`} className="group relative inline-flex cursor-help items-center gap-1.5 rounded outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">
+                  <s.Icon className={`h-4 w-4 ${s.color}`} aria-hidden /> <span className="font-normal text-slate-500 dark:text-slate-400">{s.label}</span> <span className="font-semibold">{stats[s.key]}</span>
+                  <span role="tooltip" className="pointer-events-none invisible absolute left-0 top-full z-30 mt-1 w-72 max-w-[80vw] rounded-lg border border-slate-200 bg-white p-3 text-xs font-normal text-slate-700 opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-visible:visible group-focus-visible:opacity-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                    <span className="block text-sm font-semibold text-slate-900 dark:text-white">{s.label}: {stats[s.key]}</span>
+                    <span className="block text-slate-500 dark:text-slate-400">{s.hint}. Earned by using Eden, not typed in. You have {points.toLocaleString()} {points === 1 ? 'point' : 'points'} (every stat starts at 1 and stops at 99).</span>
+                    <span className="mt-2 block font-semibold text-slate-900 dark:text-white">How to earn it</span>
+                    {STAT_RULES[s.key].map((r) => (
+                      <span key={r.how} className="mt-1 block">+{r.per} · {r.how} <span className="text-slate-500 dark:text-slate-400">(you have {r.count(activity).toLocaleString()} {r.unit})</span></span>
+                    ))}
+                  </span>
+                </span>
+              );
+            })}
           </div>
           <div className="flex flex-wrap gap-2">
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
@@ -110,8 +151,8 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
         <h3 className={h}>Your details</h3>
         <div className="mt-2 grid gap-3 sm:grid-cols-2">
           <div>
-            <label htmlFor="pf-level" className="text-xs text-slate-500 dark:text-slate-400">Player level</label>
-            <input id="pf-level" type="number" min={1} value={p.playerLevel} onChange={(e) => set({ playerLevel: Math.max(1, Math.floor(Number(e.target.value)) || 1) })} className={`${input} mt-1`} />
+            <label htmlFor="pf-level" className="text-xs text-slate-500 dark:text-slate-400">Player level (same as the game)</label>
+            <input id="pf-level" type="number" min={1} max={999} value={level} onChange={(e) => changeLevel(Math.floor(Number(e.target.value)) || 1)} className={`${input} mt-1`} />
           </div>
           <div>
             <label htmlFor="pf-work" className="text-xs text-slate-500 dark:text-slate-400">Work title</label>
@@ -127,14 +168,9 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
           </div>
           <div>
             <label htmlFor="pf-xp" className="text-xs text-slate-500 dark:text-slate-400">Experience (XP) · {xpNeeded.toLocaleString()} needed for the next level</label>
-            <input id="pf-xp" type="number" min={0} value={p.xp} onChange={(e) => set({ xp: Math.max(0, Math.floor(Number(e.target.value)) || 0) })} className={`${input} mt-1`} />
+            <input id="pf-xp" type="number" min={0} max={xpNeeded - 1} value={xpInto} onChange={(e) => changeXp(Math.floor(Number(e.target.value)) || 0)} className={`${input} mt-1`} />
           </div>
-          {STATS.map((s) => (
-            <div key={s.key}>
-              <label htmlFor={`pf-${s.key}`} className="text-xs text-slate-500 dark:text-slate-400">{s.label} (1 to 99)</label>
-              <input id={`pf-${s.key}`} type="number" min={1} max={99} value={p.stats[s.key]} onChange={(e) => set({ stats: { ...p.stats, [s.key]: Math.min(99, Math.max(1, Math.floor(Number(e.target.value)) || 1)) } })} className={`${input} mt-1`} />
-            </div>
-          ))}
+          <p className="text-xs text-slate-500 dark:text-slate-400 sm:col-span-2">Creativity, Logic, Charm and Luck are earned by using Eden. Hover one above to see how, or open the Achievements page.</p>
           <div>
             <label htmlFor="pf-prestige" className="text-xs text-slate-500 dark:text-slate-400">Prestige points</label>
             <input id="pf-prestige" type="number" min={0} value={p.prestige} onChange={(e) => set({ prestige: Math.max(0, Math.floor(Number(e.target.value)) || 0) })} className={`${input} mt-1`} />

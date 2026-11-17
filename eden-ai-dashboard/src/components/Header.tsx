@@ -15,6 +15,7 @@ export const TITLES: Record<AppTab, string> = {
   repos: 'GitHub',
   devices: 'Devices',
   remote: 'Remote',
+  achievements: 'Achievements',
   settings: 'Connect',
 };
 
