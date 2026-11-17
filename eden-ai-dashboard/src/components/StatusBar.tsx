@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TextSizePicker } from './TextSizePicker.tsx';
-import { Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Inbox, Columns2, Square, Search } from 'lucide-react';
+import { Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Inbox, Columns2, Square, Search, Pencil } from 'lucide-react';
+import { startPicking } from '../picker.ts';
+import { PickerTray } from './PickerTray.tsx';
 import type { AppTab } from './Sidebar.tsx';
 import { VoiceCommands, type CommandActions } from './VoiceCommands.tsx';
 import { openPanel } from '../panel.ts';
@@ -97,6 +99,7 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
         </button>
       </div>
       <GoBox setActiveTab={setActiveTab} />
+      <PickButton setActiveTab={setActiveTab} />
       {pauseSlot}
       {onToggleSplit && (
         <button
@@ -150,5 +153,22 @@ const GoBox: React.FC<{ setActiveTab: (t: AppTab) => void }> = ({ setActiveTab }
       </label>
       <datalist id="eden-go-pages">{[...new Set(pages.map(([, n]) => n).filter(Boolean))].map((n) => <option key={n} value={n} />)}</datalist>
     </form>
+  );
+};
+
+// The pencil: pick parts of the screen to point the AI at them (see picker.ts).
+const PickButton: React.FC<{ setActiveTab: (t: AppTab) => void }> = ({ setActiveTab }) => {
+  const [on, setOn] = useState(false);
+  const stopRef = useRef<(() => void) | null>(null);
+  const stop = () => { stopRef.current?.(); stopRef.current = null; setOn(false); };
+  const toggle = () => { if (on) return stop(); stopRef.current = startPicking(document, () => { stopRef.current = null; setOn(false); }); setOn(true); };
+  useEffect(() => () => stopRef.current?.(), []);
+  return (
+    <>
+      <button data-eden-picker-ui="" onClick={toggle} aria-pressed={on} title={on ? 'Stop picking (Esc)' : 'Pick parts of the screen to show the AI what to change'} aria-label="Pick elements" className={`hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg border md:flex ${on ? 'border-indigo-400 bg-indigo-600 text-white' : 'border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800'}`}>
+        <Pencil className="h-4 w-4" />
+      </button>
+      <PickerTray picking={on} onStop={stop} onCodeUpdate={() => { stop(); setActiveTab('updates'); }} onChief={() => { stop(); setActiveTab('projects'); }} />
+    </>
   );
 };
