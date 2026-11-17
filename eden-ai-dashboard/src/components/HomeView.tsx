@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, GitBranch, FileText, GripVertical, Plus, Send, SlidersHorizontal, Eye, EyeOff } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, ChevronsDownUp, ChevronsUpDown, GitBranch, FileText, GripVertical, Plus, Send, SlidersHorizontal, Eye, EyeOff } from 'lucide-react';
 import type { Agent, Card, DAGPipeline, HostedFile, Project } from '../types/index.ts';
 import { newlineOnCtrlEnter } from '../textbox.ts';
 import { UsageBar, useProviderUsage, RefreshUsageButton } from './UsageBars.tsx';
@@ -7,6 +7,7 @@ import { openPanel } from '../panel.ts';
 import { roadmapProgress, progressOf } from './Roadmap.tsx';
 import { diagnose, applyFix, canFix, limitStillOn, type FixableJob } from '../updateFixes.ts';
 import { useFolded, FoldHeader } from './Foldable.tsx';
+import { setTickerItems } from '../ticker.ts';
 
 // A JSON POST to the hub that throws with the hub's own message when it says no.
 const postJson = async (url: string, body?: unknown) => {
@@ -56,8 +57,21 @@ const STARTERS = [
   },
 ];
 
-type PanelId = 'roadmaps' | 'projects' | 'team' | 'lyra' | 'ai' | 'workflows' | 'files';
-const DEFAULT_ORDER: PanelId[] = ['roadmaps', 'projects', 'team', 'lyra', 'ai', 'workflows', 'files'];
+// One-click links at the top of the dashboard. You can hide the ones you don't use in Customize.
+const QUICK_LINKS: { id: string; label: string; go: (open: HomeViewProps['onOpen']) => void }[] = [
+  { id: 'projects', label: 'Projects', go: (open) => open('projects') },
+  { id: 'team', label: 'My team', go: (open) => open('my-ai') },
+  { id: 'workflows', label: 'Workflows', go: (open) => open('pipelines') },
+  { id: 'files', label: 'Files', go: (open) => open('files') },
+  { id: 'updates', label: 'Code updates', go: (open) => open('updates') },
+  { id: 'review', label: 'Review', go: () => openPanel('review') },
+  { id: 'lyra', label: 'LYRA', go: () => openPanel('lyra') },
+  { id: 'activity', label: 'Activity', go: () => openPanel('activity') },
+  { id: 'settings', label: 'Settings', go: (open) => open('settings') },
+];
+
+type PanelId = 'roadmaps' | 'projects' | 'health' | 'team' | 'lyra' | 'ai' | 'workflows' | 'files';
+const DEFAULT_ORDER: PanelId[] = ['roadmaps', 'projects', 'health', 'team', 'lyra', 'ai', 'workflows', 'files'];
 const ORDER_KEY = 'eden_dashboard_order';
 const COLLAPSED_KEY = 'eden_dashboard_collapsed';
 
@@ -79,7 +93,14 @@ function save(key: string, value: unknown) {
 // Saved order, tolerant of panels being added or removed in later versions.
 function loadOrder(): PanelId[] {
   const saved = load<PanelId[]>(ORDER_KEY, []).filter((id) => DEFAULT_ORDER.includes(id));
-  return [...DEFAULT_ORDER.filter((id) => !saved.includes(id)), ...saved];
+  // A panel added later goes right after the panel that comes before it by default.
+  const result = [...saved];
+  DEFAULT_ORDER.forEach((id, i) => {
+    if (result.includes(id)) return;
+    const before = DEFAULT_ORDER.slice(0, i).reverse().find((x) => result.includes(x));
+    result.splice(before ? result.indexOf(before) + 1 : 0, 0, id);
+  });
+  return result;
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, projects, cards, onOpenProject, ownerName, onAsk, onTalkTo, onOpen, onRetryCard }) => {
@@ -87,12 +108,10 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
   const [order, setOrder] = useState<PanelId[]>(loadOrder);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => load(COLLAPSED_KEY, {}));
   const [dragging, setDragging] = useState<PanelId | null>(null);
-  // Your dashboard layout (saved on this device): which panels show, how many columns, how tall, and the top cards.
-  const [prefs, setPrefsState] = useState(() => load('eden_dashboard_prefs', { hidden: [] as string[], cols: 2, height: 'md', needsYou: true, ask: true }));
+  // Your dashboard layout (saved on this device): which panels show and the top cards. Panels sit in one centered column.
+  const [prefs, setPrefsState] = useState(() => ({ hidden: [] as string[], needsYou: true, ask: true, quickLinks: true, ticker: true, hiddenLinks: [] as string[], ...load('eden_dashboard_prefs', {}) }));
   const setPrefs = (patch: Partial<typeof prefs>) => setPrefsState((p) => { const next = { ...p, ...patch }; save('eden_dashboard_prefs', next); return next; });
   const [customizing, setCustomizing] = useState(false);
-  const HEIGHTS: Record<string, string> = { sm: 'h-60', md: 'h-80', lg: 'h-[28rem]' };
-  const COLS: Record<number, string> = { 1: 'md:grid-cols-1', 2: 'md:grid-cols-2', 3: 'md:grid-cols-2 xl:grid-cols-3' };
   const usage = useProviderUsage();
   // What needs the owner: finished tasks in Review, code updates ready to apply, and errors from the last day.
   const reviewCount = cards.filter((c) => c.column === 'review').length;
@@ -140,7 +159,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
   const [fixing, setFixing] = useState(false);
   const [fixNote, setFixNote] = useState('');
   const [fixedIds, setFixedIds] = useState<number[]>([]);
-  const [needsFolded, toggleNeeds] = useFolded('eden_needs_you_folded');
+  const [needsFolded, toggleNeeds, setNeedsFolded] = useFolded('eden_needs_you_folded');
   const toFix = recentErrors.filter((e) => !fixedIds.includes(e.id));
   const fixAll = async () => {
     if (fixing || toFix.length === 0) return;
@@ -241,6 +260,17 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     save(COLLAPSED_KEY, next);
   };
 
+  // Fold every panel (and the "Needs you" card) at once, or open them all again.
+  const shownPanels = order.filter((id) => !prefs.hidden.includes(id));
+  const allFolded = shownPanels.every((id) => collapsed[id]) && (!prefs.needsYou || needsFolded);
+  const setAllFolded = (fold: boolean) => {
+    const next = { ...collapsed };
+    shownPanels.forEach((id) => { next[id] = fold; });
+    setCollapsed(next);
+    save(COLLAPSED_KEY, next);
+    setNeedsFolded(fold);
+  };
+
   // Put `id` where `target` currently is.
   const moveTo = (id: PanelId, target: PanelId) => {
     if (id === target) return;
@@ -271,6 +301,36 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
   const withRoadmap = projects.filter((p) => roadmapProgress(p.roadmap));
   const allBlocks = withRoadmap.flatMap((p) => (p.roadmap || []).flatMap((g) => g.blocks));
   const overallPct = progressOf(allBlocks);
+  // The news ticker: a plain-words line of what is happening right now (built from what the dashboard already knows).
+  const tickerItems: string[] = [];
+  const workingNow = cards.filter((c) => c.runState === 'running').length;
+  if (workingNow) tickerItems.push(`${workingNow} ${workingNow === 1 ? 'task is' : 'tasks are'} being worked on`);
+  if (reviewCount) tickerItems.push(`${reviewCount} finished ${reviewCount === 1 ? 'task is' : 'tasks are'} waiting in Review`);
+  if (readyUpdates) tickerItems.push(`${readyUpdates} code ${readyUpdates === 1 ? 'update is' : 'updates are'} ready to apply`);
+  if (lyraEdits) tickerItems.push(`${lyraEdits} LYRA ${lyraEdits === 1 ? 'edit is' : 'edits are'} waiting for your OK`);
+  if (recentErrors.length) tickerItems.push(`${recentErrors.length} ${recentErrors.length === 1 ? 'problem' : 'problems'} in the last 24 hours`);
+  if (lyra?.connected) tickerItems.push('LYRA is running');
+  if (withRoadmap.length) tickerItems.push(`All projects ${overallPct}% built`);
+  if (!tickerItems.length) tickerItems.push(checked ? 'All clear. Nothing is waiting for you.' : 'Checking what is happening…');
+  // The ticker itself lives in the status bar at the top; hand it the lines (or nothing when it is switched off).
+  const tickerKey = prefs.ticker ? tickerItems.join('\n') : '';
+  useEffect(() => {
+    setTickerItems(tickerKey ? tickerKey.split('\n') : null);
+  }, [tickerKey]);
+  // Health across all projects: card counts per project and added up (same counting as the Project health box on a project page).
+  const healthRows = projects.map((p) => {
+    const mine = cards.filter((c) => c.projectId === p.id);
+    return {
+      p,
+      total: mine.length,
+      done: mine.filter((c) => c.column === 'done').length,
+      doing: mine.filter((c) => c.column === 'doing').length,
+      review: mine.filter((c) => c.column === 'review').length,
+      failed: mine.filter((c) => c.runState === 'failed').length,
+      rm: roadmapProgress(p.roadmap),
+    };
+  });
+  const healthTotal = healthRows.reduce((s, r) => ({ total: s.total + r.total, done: s.done + r.done, doing: s.doing + r.doing, review: s.review + r.review, failed: s.failed + r.failed }), { total: 0, done: 0, doing: 0, review: 0, failed: 0 });
   const panels: Record<PanelId, { title: string; count?: number; action: string; onAction: () => void; body: React.ReactNode }> = {
     roadmaps: {
       title: '🏗️ Under construction',
@@ -392,6 +452,48 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
         </button>
       ),
     },
+    health: {
+      title: '📊 Overall project health',
+      count: projects.length,
+      action: 'Open boards',
+      onAction: () => onOpen('projects'),
+      body: projects.length ? (
+        <div className="space-y-4">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-5">
+            {([['Cards', healthTotal.total], ['Done', healthTotal.done], ['In progress', healthTotal.doing], ['Waiting for review', healthTotal.review], ['Failed', healthTotal.failed]] as const).map(([k, v]) => (
+              <div key={k}>
+                <dt className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">{k}</dt>
+                <dd className={`text-lg font-semibold tabular-nums ${k === 'Failed' && v ? 'text-red-500' : 'text-slate-900 dark:text-white'}`}>{v}</dd>
+              </div>
+            ))}
+          </dl>
+          <ul className="space-y-2">
+            {healthRows.map(({ p, total, done, doing, review, failed, rm }) => (
+              <li key={p.id}>
+                <button onClick={() => onOpenProject(p.id)} className="block w-full rounded-lg border border-slate-200 p-3 text-left hover:border-indigo-400 dark:border-slate-800 dark:hover:border-indigo-500">
+                  <span className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: p.color }} />
+                    <span className="min-w-0 flex-1 truncate font-medium text-slate-900 dark:text-white">{p.name}</span>
+                    {rm ? <b className="tabular-nums text-slate-700 dark:text-slate-200">Roadmap {rm.pct}%</b> : <span className="text-xs text-slate-400">No roadmap yet</span>}
+                  </span>
+                  <span className="mt-1.5 block text-sm tabular-nums text-slate-500">
+                    {total ? `${total} ${total === 1 ? 'card' : 'cards'} · ${done} done · ${doing} in progress · ${review} waiting for review` : 'No cards yet'}
+                    {failed > 0 && <span className="text-red-600 dark:text-red-400"> · {failed} failed</span>}
+                  </span>
+                  {rm && (
+                    <span className="mt-2 block h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                      <span className="block h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-500" style={{ width: `${rm.pct}%` }} />
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="text-sm text-slate-500">No projects yet. Create one to see its health here.</p>
+      ),
+    },
     team: {
       title: 'Your team',
       count: agents.length,
@@ -500,7 +602,32 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
   };
 
   return (
-    <div className={`mx-auto ${prefs.cols === 3 ? 'max-w-7xl' : 'max-w-4xl'} space-y-6 p-4 sm:p-8`}>
+    <div className="flex min-h-full flex-col lg:flex-row">
+    {/* Left panel: what goes here is still to be decided (TBD) */}
+    <aside aria-label="Left panel (to be decided)" className="shrink-0 border-b border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60 lg:w-64 lg:border-b-0 lg:border-r lg:p-5">
+      <div className="lg:sticky lg:top-5">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Left panel</h2>
+        <div className="mt-3 rounded-lg border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+          <p className="font-semibold text-slate-700 dark:text-slate-200">TBD</p>
+          <p className="mt-1">Still to be decided. Tell me what you want here.</p>
+        </div>
+      </div>
+    </aside>
+
+    {/* Main area on the right: like a media player, the content sits in the big stage and a status bar runs along the bottom */}
+    <div className="flex min-w-0 flex-1 flex-col">
+    <div className="mx-auto w-full max-w-4xl flex-1 space-y-6 p-4 sm:p-8">
+      {/* Quick links: one click to the places you use most */}
+      {prefs.quickLinks && (
+        <nav aria-label="Quick links" className="flex flex-wrap gap-2">
+          {QUICK_LINKS.filter((l) => !prefs.hiddenLinks.includes(l.id)).map((l) => (
+            <button key={l.id} onClick={() => l.go(onOpen)} className="rounded-full border border-slate-300 px-3 py-1 text-sm text-slate-600 hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-300 dark:hover:text-indigo-400">
+              {l.label}
+            </button>
+          ))}
+        </nav>
+      )}
+
       {/* Needs you: finished tasks to review, code updates to apply, recent errors */}
       {checked && prefs.needsYou && <section aria-label="Needs you" className={`rounded-xl border p-5 ${allClear ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10' : 'border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10'}`}>
         {allClear ? (
@@ -591,6 +718,54 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
         )}
       </section>}
 
+      {/* Panels: collapse with the arrow, drag by the grip to rearrange (or focus the grip and use arrow keys) */}
+      <div className="flex justify-end gap-2">
+        <button onClick={() => setAllFolded(!allFolded)} className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+          {allFolded ? <ChevronsUpDown className="h-4 w-4" /> : <ChevronsDownUp className="h-4 w-4" />} {allFolded ? 'Expand all' : 'Collapse all'}
+        </button>
+        <button onClick={() => setCustomizing((v) => !v)} aria-expanded={customizing} className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm ${customizing ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
+          <SlidersHorizontal className="h-4 w-4" /> {customizing ? 'Done' : 'Customize'}
+        </button>
+      </div>
+      {customizing && (
+        <section aria-label="Customize the dashboard" className="space-y-4 rounded-xl border border-indigo-300 bg-white p-4 text-sm dark:border-indigo-700 dark:bg-slate-900">
+          <div>
+            <h3 className="font-semibold text-slate-900 dark:text-white">Show</h3>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {([['ticker', 'News ticker'], ['quickLinks', 'Quick links'], ['needsYou', 'Needs you'], ['ask', 'Ask box']] as const).map(([k, label]) => (
+                <button key={k} onClick={() => setPrefs({ [k]: !prefs[k] } as any)} aria-pressed={prefs[k]} className={`flex items-center gap-1.5 rounded-full border px-3 py-1 ${prefs[k] ? 'border-indigo-500 text-indigo-700 dark:text-indigo-300' : 'border-slate-300 text-slate-400 dark:border-slate-700'}`}>
+                  {prefs[k] ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />} {label}
+                </button>
+              ))}
+              {order.map((id) => {
+                const on = !prefs.hidden.includes(id);
+                return (
+                  <button key={id} onClick={() => setPrefs({ hidden: on ? [...prefs.hidden, id] : prefs.hidden.filter((x) => x !== id) })} aria-pressed={on} className={`flex items-center gap-1.5 rounded-full border px-3 py-1 ${on ? 'border-indigo-500 text-indigo-700 dark:text-indigo-300' : 'border-slate-300 text-slate-400 dark:border-slate-700'}`}>
+                    {on ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />} {panels[id].title}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {prefs.quickLinks && (
+            <div>
+              <h3 className="font-semibold text-slate-900 dark:text-white">Quick links</h3>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {QUICK_LINKS.map((l) => {
+                  const on = !prefs.hiddenLinks.includes(l.id);
+                  return (
+                    <button key={l.id} onClick={() => setPrefs({ hiddenLinks: on ? [...prefs.hiddenLinks, l.id] : prefs.hiddenLinks.filter((x) => x !== l.id) })} aria-pressed={on} className={`flex items-center gap-1.5 rounded-full border px-3 py-1 ${on ? 'border-indigo-500 text-indigo-700 dark:text-indigo-300' : 'border-slate-300 text-slate-400 dark:border-slate-700'}`}>
+                      {on ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />} {l.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <p className="text-xs text-slate-500 dark:text-slate-400">Drag a panel by its grip to move it. Saved on this device.</p>
+        </section>
+      )}
+
       {/* Ask box */}
       {prefs.ask && <div>
         <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">What are we working on{ownerName ? `, ${ownerName.split(' ')[0]}` : ''}?</h1>
@@ -630,50 +805,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
         </div>
       </div>}
 
-      {/* Panels: collapse with the arrow, drag by the grip to rearrange (or focus the grip and use arrow keys) */}
-      <div className="flex justify-end">
-        <button onClick={() => setCustomizing((v) => !v)} aria-expanded={customizing} className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm ${customizing ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
-          <SlidersHorizontal className="h-4 w-4" /> {customizing ? 'Done' : 'Customize'}
-        </button>
-      </div>
-      {customizing && (
-        <section aria-label="Customize the dashboard" className="space-y-4 rounded-xl border border-indigo-300 bg-white p-4 text-sm dark:border-indigo-700 dark:bg-slate-900">
-          <div>
-            <h3 className="font-semibold text-slate-900 dark:text-white">Show</h3>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {([['needsYou', 'Needs you'], ['ask', 'Ask box']] as const).map(([k, label]) => (
-                <button key={k} onClick={() => setPrefs({ [k]: !prefs[k] } as any)} aria-pressed={prefs[k]} className={`flex items-center gap-1.5 rounded-full border px-3 py-1 ${prefs[k] ? 'border-indigo-500 text-indigo-700 dark:text-indigo-300' : 'border-slate-300 text-slate-400 dark:border-slate-700'}`}>
-                  {prefs[k] ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />} {label}
-                </button>
-              ))}
-              {order.map((id) => {
-                const on = !prefs.hidden.includes(id);
-                return (
-                  <button key={id} onClick={() => setPrefs({ hidden: on ? [...prefs.hidden, id] : prefs.hidden.filter((x) => x !== id) })} aria-pressed={on} className={`flex items-center gap-1.5 rounded-full border px-3 py-1 ${on ? 'border-indigo-500 text-indigo-700 dark:text-indigo-300' : 'border-slate-300 text-slate-400 dark:border-slate-700'}`}>
-                    {on ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />} {panels[id].title}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-6">
-            <div>
-              <h3 className="font-semibold text-slate-900 dark:text-white">Columns</h3>
-              <div className="mt-2 flex gap-1">
-                {[1, 2, 3].map((n) => <button key={n} onClick={() => setPrefs({ cols: n })} aria-pressed={prefs.cols === n} className={`h-9 w-9 rounded-lg border-2 font-semibold ${prefs.cols === n ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-slate-200 dark:border-slate-700'}`}>{n}</button>)}
-              </div>
-            </div>
-            <div>
-              <h3 className="font-semibold text-slate-900 dark:text-white">Panel height</h3>
-              <div className="mt-2 flex gap-1">
-                {([['sm', 'Short'], ['md', 'Medium'], ['lg', 'Tall']] as const).map(([k, label]) => <button key={k} onClick={() => setPrefs({ height: k })} aria-pressed={prefs.height === k} className={`rounded-lg border-2 px-3 py-1.5 ${prefs.height === k ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-slate-200 dark:border-slate-700'}`}>{label}</button>)}
-              </div>
-            </div>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Drag a panel by its grip to move it. Saved on this device.</p>
-        </section>
-      )}
-      <div className={`grid grid-cols-1 items-start gap-4 ${COLS[prefs.cols] || COLS[2]}`}>
+      <div className="flex flex-col gap-4">
         {order.filter((id) => !prefs.hidden.includes(id)).map((id) => {
           const p = panels[id];
           const isCollapsed = !!collapsed[id];
@@ -689,7 +821,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                 e.preventDefault();
                 setDragging(null);
               }}
-              className={`flex flex-col rounded-xl border bg-white p-5 transition-shadow dark:bg-slate-900 ${isCollapsed ? '' : HEIGHTS[prefs.height] || 'h-80'} ${
+              className={`flex flex-col rounded-xl border bg-white p-5 transition-shadow dark:bg-slate-900 ${
                 dragging === id ? 'border-indigo-500 opacity-60 shadow-lg' : 'border-slate-200 dark:border-slate-800'
               }`}
             >
@@ -728,11 +860,32 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                   {p.action} <ArrowRight className="h-3.5 w-3.5" />
                 </button>
               </div>
-              {!isCollapsed && <div className="min-h-0 flex-1 overflow-y-auto">{p.body}</div>}
+              {!isCollapsed && <div>{p.body}</div>}
             </section>
           );
         })}
       </div>
+    </div>
+
+    {/* Bottom bar, like a player's control strip: a quick summary and the places you jump to most */}
+    <div role="status" className="sticky bottom-0 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-200 bg-white/95 px-4 py-3 text-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 sm:px-8">
+      <span className={`flex items-center gap-1.5 font-medium ${allClear ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}`}>
+        {allClear ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+        {!checked ? 'Checking…' : allClear ? 'All clear' : 'Needs you'}
+      </span>
+      <span className="text-slate-500 dark:text-slate-400">
+        {agents.length} on your team · {projects.length} {projects.length === 1 ? 'project' : 'projects'}
+      </span>
+      <span className="ml-auto flex gap-2">
+        <button onClick={() => openPanel('review')} className="rounded-lg border border-slate-300 px-3 py-1 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+          Review{reviewCount > 0 ? ` (${reviewCount})` : ''}
+        </button>
+        <button onClick={() => onOpen('updates')} className="rounded-lg border border-slate-300 px-3 py-1 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+          Code updates{readyUpdates > 0 ? ` (${readyUpdates})` : ''}
+        </button>
+      </span>
+    </div>
+    </div>
     </div>
   );
 };

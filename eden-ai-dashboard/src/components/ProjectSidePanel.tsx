@@ -7,8 +7,9 @@ import { WorkloadTab } from './ProjectVisuals.tsx';
 import { roadmapProgress } from './Roadmap.tsx';
 import { PROJECT_PANELS } from '../panelMeta.ts';
 
-// The Projects page's right-hand panel, shown when only one page is open on a wide screen.
-// Health summary, the project's buttons (moved here from the page header), then the project tools.
+// The right-hand panel, shown on every page when only one page is open on a wide screen. It always follows the
+// project you have open on the Projects page.
+// Health summary, the project's buttons (moved here from the page header, Projects page only), then the project tools.
 // Drag its left edge to make it wider or narrower; the size is remembered.
 type SideTab = 'mission' | 'chief' | 'journey' | 'workload';
 const SIDE_TABS: { id: SideTab; label: string; icon: React.ElementType }[] = [
@@ -48,7 +49,7 @@ const Label: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   </h3>
 );
 
-export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project }) => {
+export const ProjectSidePanel: React.FC<{ project: PanelProject; showActions?: boolean }> = ({ project, showActions = true }) => {
   const [tab, setTabState] = useState<SideTab>(() => (ORDER.includes(read('eden_side_tab', 'mission') as SideTab) ? (read('eden_side_tab', 'mission') as SideTab) : 'mission'));
   const [closed, setClosed] = useState(() => read('eden_side_closed', '') === '1');
   const [width, setWidth] = useState(() => Math.max(MIN_W, Number(read('eden_side_width', String(DEFAULT_W))) || DEFAULT_W));
@@ -118,6 +119,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
             <ChevronRight className="h-5 w-5" />
           </button>
         </div>
+        <p className="mt-1 truncate text-sm font-medium text-slate-900 dark:text-white" title={project.project.name}>{project.project.name}</p>
         <div className="mt-3 flex items-center gap-5">
           <svg viewBox="0 0 80 80" className={`${narrow ? 'h-20 w-20' : 'h-28 w-28'} shrink-0`} role="img" aria-label={`${pct}% ${rm ? 'of the roadmap' : 'of cards'} done`}>
             <circle cx="40" cy="40" r={r} fill="none" strokeWidth="8" className="stroke-slate-200 dark:stroke-slate-800" />
@@ -135,6 +137,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
         </div>
       </section>
 
+      {showActions && (
       <section className="shrink-0 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
         <Label>Project</Label>
         {/* The Projects page draws its buttons (Plan with Chief, AI works Ready cards, team, Settings, Sync, New AZI project) here. */}
@@ -143,6 +146,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
           className={`mt-3 grid grid-cols-[repeat(auto-fit,minmax(5.5rem,1fr))] gap-2 [&>button]:!flex [&>button]:!h-20 [&>button]:!flex-col [&>button]:!items-center [&>button]:!justify-center [&>button]:!gap-2 [&>button]:!whitespace-normal [&>button]:!rounded-xl [&>button]:!p-2 [&>button]:!text-center [&>button]:!text-xs [&>button_svg]:!h-6 [&>button_svg]:!w-6`}
         />
       </section>
+      )}
 
       <section className="flex shrink-0 flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div role="tablist" aria-label="Project tools" className="grid grid-cols-[repeat(auto-fit,minmax(5rem,1fr))] gap-2 border-b border-slate-200 p-3 dark:border-slate-800">

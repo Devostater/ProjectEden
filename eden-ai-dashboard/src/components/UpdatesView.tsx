@@ -163,6 +163,7 @@ export const UpdatesView: React.FC = () => {
   const [fixingAll, setFixingAll] = useState(false);
   const [estimateMs, setEstimateMs] = useState(8 * 60 * 1000); // how long an update usually takes
   const [clock, setClock] = useState(Date.now()); // ticks every second while something runs, so elapsed time counts up
+  const [readyOpen, setReadyOpen] = useState(false); // the one "ready for your review" group in Active is unfolded
   const live = useRef(false);
 
   const load = async () => {
@@ -577,8 +578,38 @@ export const UpdatesView: React.FC = () => {
           const percent = progressOf(job);
           const overdue = job.status !== 'queued' && elapsed > estimateMs;
           const fix = diagnose(job, jobs);
+          // Two or more updates waiting for review share one row in Active. Press it to see them one by one.
+          const readyJobs = jobs.filter((j) => j.status === 'ready');
+          const grouped = tab === 'active' && job.status === 'ready' && readyJobs.length > 1;
+          const groupHead = grouped && readyJobs[0].id === job.id && (
+            <button
+              key={`ready-group-${job.id}`}
+              onClick={() => setReadyOpen(!readyOpen)}
+              aria-expanded={readyOpen}
+              className="flex w-full items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-left dark:border-amber-800 dark:bg-amber-950/30"
+            >
+              <ChevronDown className={`mt-0.5 h-4 w-4 shrink-0 text-amber-600 transition-transform dark:text-amber-400 ${readyOpen ? '' : '-rotate-90'}`} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-slate-900 dark:text-white">{readyJobs.length} updates ready for your review</span>
+                <span className="mt-0.5 block text-xs text-amber-700 dark:text-amber-400">
+                  {readyOpen ? 'Press to fold them back into one' : 'Press to look at them one by one'}
+                </span>
+                {!readyOpen && (
+                  <ul className="mt-1.5 space-y-0.5 text-xs text-slate-600 dark:text-slate-300">
+                    {readyJobs.slice(0, 5).map((j) => (
+                      <li key={j.id} className="truncate">· {j.request}</li>
+                    ))}
+                    {readyJobs.length > 5 && <li>· and {readyJobs.length - 5} more</li>}
+                  </ul>
+                )}
+              </span>
+            </button>
+          );
+          if (grouped && !readyOpen) return groupHead || null;
           return (
-            <article key={job.id} className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            <React.Fragment key={job.id}>
+            {groupHead}
+            <article className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
               <button
                 onClick={() => setOpenId(open ? null : job.id)}
                 aria-expanded={open}
@@ -772,6 +803,7 @@ export const UpdatesView: React.FC = () => {
                 </div>
               )}
             </article>
+            </React.Fragment>
           );
         })}
       </section>

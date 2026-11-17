@@ -41,6 +41,8 @@ import type { Agent, DAGPipeline, HostedFile } from './types/index.ts';
 import { useChatThreads } from './chatThreads.ts';
 import { useProjects } from './projectsStore.ts';
 import { ProjectsView } from './components/ProjectsView.tsx';
+import { GameHud } from './components/GameHud.tsx';
+import './gameMode.ts'; // sets the saved video game look (off unless turned on in Preferences) before anything paints
 
 // Once per device: open the bottom dock taller than the old 256px so it can be read (about 22rem at the chosen
 // text size, at most 45% of the window). A taller height you already saved is kept; you can still drag it.
@@ -456,7 +458,7 @@ export default function App() {
                 </PaneFrame>
               );
             })}
-            {!split && !picking && activeTab === 'projects' && panelProject && <ProjectSidePanel project={panelProject} />}
+            {!split && !picking && panelProject && <ProjectSidePanel project={panelProject} showActions={activeTab === 'projects'} />}
             {split && wide && <SplitHandle ratio={ratio} setRatio={setRatio} containerRef={paneRowRef} />}
             {picking && wide && <div style={{ order: 1 }} className="w-3 shrink-0 bg-slate-200 dark:bg-slate-800" aria-hidden />}
             {picking && (
@@ -517,6 +519,8 @@ export default function App() {
           }
           extraTitle={projectsApi.active ? `This project: ${projectsApi.active.name}` : undefined}
         />
+
+        <GameHud />
 
         <div className="eden-dock contents">
         <BottomPanel

@@ -490,7 +490,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onDoubleClick={() => { setBarWidth(224); try { localStorage.setItem('eden_sidebar_width', '224'); } catch {} }}
             className="absolute inset-y-0 -right-1 z-20 hidden w-2 cursor-col-resize hover:bg-indigo-400/50 md:block" />
         )}
-        <div className={`flex items-center border-b border-slate-200 dark:border-slate-800 ${collapsed ? 'flex-col gap-2 px-2 py-3' : 'gap-1 py-3 pl-4 pr-2'}`}>
+        <div className={`flex items-center border-b border-slate-200 dark:border-slate-800 min-h-[5.5rem] shrink-0 ${collapsed ? 'flex-col justify-center gap-1 px-2 py-2' : 'gap-1 py-1.5 pl-4 pr-2'}`}>
           <button onClick={() => setActiveTab('home')} className="flex min-w-0 flex-1 items-center gap-2.5" aria-label="Eden AI Hub, go to Dashboard">
             <div className="eden-logo flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">
               <Hexagon className="h-4 w-4" />
@@ -783,7 +783,7 @@ const AddCustomTab: React.FC<{ onAdd: (label: string, target: string) => void; s
   const [label, setLabel] = useState('');
   const [target, setTarget] = useState('settings');
   const [link, setLink] = useState('');
-  const field = 'w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-900';
+  const field = 'w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100';
   if (!open) return <button onClick={() => setOpen(true)} className="mt-2 flex min-h-10 w-full items-center justify-center gap-1.5 rounded-lg border-2 border-dashed border-indigo-400 font-medium text-indigo-700 dark:text-indigo-300"><Plus className="h-4 w-4" /> Add custom tab</button>;
   const finalTarget = target === 'link' ? link.trim() : target;
   const ok = label.trim() && (target !== 'link' || /^https?:\/\//i.test(finalTarget));
@@ -797,7 +797,7 @@ const AddCustomTab: React.FC<{ onAdd: (label: string, target: string) => void; s
       {target === 'link' && <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://…" aria-label="Web link" className={field} />}
       <div className="flex gap-2">
         <button disabled={!ok} onClick={() => { onAdd(label.trim(), finalTarget); setLabel(''); setLink(''); setOpen(false); }} className="min-h-9 flex-1 rounded-lg bg-indigo-600 font-semibold text-white disabled:opacity-40">Add</button>
-        <button onClick={() => setOpen(false)} className="min-h-9 rounded-lg border-2 border-slate-300 px-3 dark:border-slate-600">Cancel</button>
+        <button onClick={() => setOpen(false)} className="min-h-9 rounded-lg border-2 border-slate-300 px-3 text-slate-800 dark:border-slate-600 dark:text-slate-100">Cancel</button>
       </div>
     </div>
   );

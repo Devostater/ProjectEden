@@ -42,9 +42,11 @@ function useEscape(onClose: () => void) {
   }, [onClose]);
 }
 
-const Dialog: React.FC<{ title: string; wide?: boolean; onClose: () => void; onSubmit: (e: React.FormEvent) => void; footer: React.ReactNode; children: React.ReactNode }> = ({
+// With `aside`, the dialog shows the main content (children) with an info panel beside it.
+const Dialog: React.FC<{ title: string; wide?: boolean; aside?: React.ReactNode; onClose: () => void; onSubmit: (e: React.FormEvent) => void; footer: React.ReactNode; children: React.ReactNode }> = ({
   title,
   wide,
+  aside,
   onClose,
   onSubmit,
   footer,
@@ -56,7 +58,7 @@ const Dialog: React.FC<{ title: string; wide?: boolean; onClose: () => void; onS
       <form
         onSubmit={onSubmit}
         onClick={(e) => e.stopPropagation()}
-        className={`flex max-h-[90dvh] w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900`}
+        className={`flex max-h-[90dvh] w-full ${aside ? 'max-w-6xl md:h-[90dvh]' : wide ? 'max-w-2xl' : 'max-w-lg'} flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900`}
       >
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
           <h2 className="font-semibold text-slate-900 dark:text-white">{title}</h2>
@@ -64,7 +66,14 @@ const Dialog: React.FC<{ title: string; wide?: boolean; onClose: () => void; onS
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="space-y-4 overflow-y-auto p-5">{children}</div>
+        {aside ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-hidden">
+            <div className="min-w-0 flex-1 space-y-4 p-6 md:overflow-y-auto">{children}</div>
+            <aside className="space-y-4 border-t border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-950/40 md:w-96 md:shrink-0 md:overflow-y-auto md:border-l md:border-t-0">{aside}</aside>
+          </div>
+        ) : (
+          <div className="space-y-4 overflow-y-auto p-5">{children}</div>
+        )}
         <div className="flex items-center gap-3 border-t border-slate-200 px-5 py-4 dark:border-slate-800">{footer}</div>
       </form>
     </div>
@@ -367,76 +376,19 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
     onAsk(`${who}Please work on this for the project "${project.name}".${goal}\n\nTask: ${title.trim()}${details.trim() ? `\n\n${details.trim()}` : ''}`);
   };
 
-  return (
-    <Dialog
-      title={working ? `${assignee?.name || 'A teammate'} is working on this…` : inReview ? 'Review this card' : 'Card'}
-      wide
-      onClose={onClose}
-      onSubmit={save}
-      footer={
-        <>
-          <button
-            type="button"
-            onClick={async () => {
-              await api.deleteCard(card.id);
-              onClose();
-            }}
-            className="flex items-center gap-1.5 text-sm text-red-600 hover:underline dark:text-red-400"
-          >
-            <Trash2 className="h-4 w-4" /> Delete
-          </button>
-          {inReview ? (
-            <>
-              <button type="button" onClick={approve} title="Approve, and save the result as a file in the project's Deliverables folder" className="ml-auto flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
-                <Check className="h-4 w-4" /> Approve
-              </button>
-            </>
-          ) : (
-            <>
-              <button type="button" onClick={ask} className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
-                <MessageSquare className="h-4 w-4" /> Ask {assignee ? assignee.name.split(' ')[0] : 'Chief'}
-              </button>
-              {project.codebaseId && (
-                <button type="button" onClick={changeCode} title="The AI changes the code on a copy; you review it in Code updates" className="flex items-center gap-1.5 rounded-lg border border-indigo-300 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-50 dark:border-indigo-500/50 dark:text-indigo-300 dark:hover:bg-indigo-950/40">
-                  <Code2 className="h-4 w-4" /> Change the code
-                </button>
-              )}
-              <button type="submit" disabled={!title.trim()} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40">
-                Save
-              </button>
-            </>
-          )}
-        </>
-      }
-    >
-      {codeNote && <p role="status" className="rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200">{codeNote}</p>}
-      {card.source && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-sm text-slate-700 dark:border-indigo-500/30 dark:bg-indigo-950/30 dark:text-slate-200">
-          {card.source.kind === 'nexus' ? <Network className="h-4 w-4 shrink-0 text-indigo-500" /> : <Sparkles className="h-4 w-4 shrink-0 text-indigo-500" />}
-          <span className="min-w-0 flex-1">
-            {card.source.kind === 'nexus' ? (
-              <>From the Nexus discussion in <b>{card.source.roomName || 'a room'}</b></>
-            ) : (
-              <>From a plan by Chief{card.source.label ? <>: <span className="italic">“{card.source.label}”</span></> : ''}</>
-            )}
-            <span className="text-slate-500"> · {new Date(card.source.at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
-          </span>
-          {card.source.kind === 'nexus' && card.source.roomId && onOpenSource && (
-            <button type="button" onClick={() => onOpenSource(card)} className="shrink-0 rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-500">
-              Open conversation
-            </button>
-          )}
-        </div>
-      )}
+  // The info panel beside the report: the card's details and settings.
+  const info = (
+    <>
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Card info</h3>
       <div>
         <label htmlFor="cd-title" className={labelClass}>Title</label>
         <input id="cd-title" required value={title} onChange={(e) => setTitle(e.target.value)} className={inputClass} />
       </div>
       <div>
         <label htmlFor="cd-details" className={labelClass}>Details</label>
-        <textarea id="cd-details" rows={4} value={details} onChange={(e) => setDetails(e.target.value)} placeholder="What needs doing, and what does done look like?" className={inputClass} />
+        <textarea id="cd-details" rows={5} value={details} onChange={(e) => setDetails(e.target.value)} placeholder="What needs doing, and what does done look like?" className={inputClass} />
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3">
         <div>
           <label htmlFor="cd-who" className={labelClass}>Who</label>
           <select id="cd-who" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className={inputClass}>
@@ -512,14 +464,82 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
         </select>
         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">The AI won't start this card until these are Done, and it is given their results.</p>
       </div>
+    </>
+  );
+
+  return (
+    <Dialog
+      title={working ? `${assignee?.name || 'A teammate'} is working on this…` : inReview ? 'Review this card' : 'Card'}
+      aside={info}
+      onClose={onClose}
+      onSubmit={save}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={async () => {
+              await api.deleteCard(card.id);
+              onClose();
+            }}
+            className="flex items-center gap-1.5 text-sm text-red-600 hover:underline dark:text-red-400"
+          >
+            <Trash2 className="h-4 w-4" /> Delete
+          </button>
+          {inReview ? (
+            <>
+              <button type="button" onClick={approve} title="Approve, and save the result as a file in the project's Deliverables folder" className="ml-auto flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+                <Check className="h-4 w-4" /> Approve
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" onClick={ask} className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+                <MessageSquare className="h-4 w-4" /> Ask {assignee ? assignee.name.split(' ')[0] : 'Chief'}
+              </button>
+              {project.codebaseId && (
+                <button type="button" onClick={changeCode} title="The AI changes the code on a copy; you review it in Code updates" className="flex items-center gap-1.5 rounded-lg border border-indigo-300 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-50 dark:border-indigo-500/50 dark:text-indigo-300 dark:hover:bg-indigo-950/40">
+                  <Code2 className="h-4 w-4" /> Change the code
+                </button>
+              )}
+              <button type="submit" disabled={!title.trim()} className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40">
+                Save
+              </button>
+            </>
+          )}
+        </>
+      }
+    >
+      {codeNote && <p role="status" className="rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200">{codeNote}</p>}
+      {card.source && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-sm text-slate-700 dark:border-indigo-500/30 dark:bg-indigo-950/30 dark:text-slate-200">
+          {card.source.kind === 'nexus' ? <Network className="h-4 w-4 shrink-0 text-indigo-500" /> : <Sparkles className="h-4 w-4 shrink-0 text-indigo-500" />}
+          <span className="min-w-0 flex-1">
+            {card.source.kind === 'nexus' ? (
+              <>From the Nexus discussion in <b>{card.source.roomName || 'a room'}</b></>
+            ) : (
+              <>From a plan by Chief{card.source.label ? <>: <span className="italic">“{card.source.label}”</span></> : ''}</>
+            )}
+            <span className="text-slate-500"> · {new Date(card.source.at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
+          </span>
+          {card.source.kind === 'nexus' && card.source.roomId && onOpenSource && (
+            <button type="button" onClick={() => onOpenSource(card)} className="shrink-0 rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-500">
+              Open conversation
+            </button>
+          )}
+        </div>
+      )}
       <div>
-        <label htmlFor="cd-note" className={labelClass}>{inReview ? 'Result and notes' : 'Notes'}</label>
+        <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{title.trim() || 'Untitled card'}</h3>
+        {card.notes.length === 0 && <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">No report yet. When the AI finishes, its report shows here. The card's details are in the panel on the right.</p>}
+      </div>
+      <div>
+        <label htmlFor="cd-note" className={labelClass}>Report and notes</label>
         {card.notes.length > 0 && (
           <ul className="mb-2 space-y-2">
             {card.notes.map((n) => (
               <li
                 key={n.id}
-                className={`rounded-lg px-3 py-2 text-sm ${
+                className={`rounded-lg px-4 py-3 text-[15px] leading-relaxed ${
                   n.kind === 'error'
                     ? 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300'
                     : n.kind === 'result'
@@ -1374,7 +1394,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                     </button>
                   </div>
 
-                  <div className="flex-1 space-y-2 overflow-y-auto px-1 pb-1">
+                  <div className="flex-1 space-y-1.5 overflow-y-auto px-1 pb-1">
                     {addingIn === col.id && (
                       <input
                         autoFocus
@@ -1414,7 +1434,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                           }}
                           onClick={() => setOpenCardId(card.id)}
                           title={compactCols.includes(col.id) ? card.title : undefined}
-                          className={`block w-full cursor-grab rounded-lg border border-slate-200 bg-white ${compactCols.includes(col.id) ? 'px-3 py-1.5 [&>*:not(:first-child)]:hidden [&>span:first-child]:truncate [&>span:first-child]:text-sm' : 'p-3'} text-left shadow-sm hover:border-indigo-400 active:cursor-grabbing dark:border-slate-700 dark:bg-slate-800 dark:hover:border-indigo-500 ${
+                          className={`block w-full cursor-grab rounded-lg border border-slate-200 bg-white ${compactCols.includes(col.id) ? 'px-3 py-1.5 [&>*:not(:first-child)]:hidden [&>span:first-child]:truncate [&>span:first-child]:text-sm' : 'px-3 py-2'} text-left shadow-sm hover:border-indigo-400 active:cursor-grabbing dark:border-slate-700 dark:bg-slate-800 dark:hover:border-indigo-500 ${
                             dragId === card.id ? 'opacity-40' : ''
                           }`}
                         >
@@ -1431,37 +1451,37 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                             ) : null;
                           })()}
                           {card.runState === 'running' && (
-                            <span className="mt-2 flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400">
+                            <span className="mt-1 flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400">
                               <Loader2 className="h-3 w-3 animate-spin" /> {who ? who.name : 'A teammate'} is working…
                             </span>
                           )}
                           {card.startAfter && Date.parse(card.startAfter) > Date.now() && card.column !== 'done' && (
-                            <span className="mt-2 flex items-center gap-1.5 text-xs font-medium text-sky-700 dark:text-sky-300">
+                            <span className="mt-1 flex items-center gap-1.5 text-xs font-medium text-sky-700 dark:text-sky-300">
                               <Clock className="h-3 w-3" /> Starts {whenLabel(card.startAfter)}
                             </span>
                           )}
                           {card.runState === 'waiting' && !card.runMessage?.startsWith('Queued:') && (
-                            <span className="mt-2 flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                            <span className="mt-1 flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
                               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" /> {card.runMessage}
                             </span>
                           )}
                           {card.runState === 'failed' && (
-                            <span className="mt-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+                            <span className="mt-1 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
                               <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" /> Couldn't run. Open for details.
                             </span>
                           )}
                           {card.runState !== 'waiting' && (card.dependsOn || []).some((d) => cards.some((c) => c.id === d && c.column !== 'done')) && (
-                            <span className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+                            <span className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
                               <Link2 className="h-3 w-3" /> Waits for {(() => { const n = (card.dependsOn || []).filter((d) => cards.some((c) => c.id === d && c.column !== 'done')).length; return `${n} card${n === 1 ? '' : 's'}`; })()}
                             </span>
                           )}
                           {col.id === 'ready' && autoRun && !card.assigneeId && (
-                            <span className="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+                            <span className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
                               <Bot className="h-3 w-3" /> Assign a teammate to start
                             </span>
                           )}
                           {(who || card.priority === 'high' || card.notes.length > 0) && (
-                            <span className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+                            <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
                               {who && (
                                 <span className="flex items-center gap-1.5">
                                   <span className="flex h-5 w-5 items-center justify-center rounded text-[10px] font-bold text-white" style={{ backgroundColor: who.color }}>

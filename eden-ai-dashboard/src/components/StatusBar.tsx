@@ -8,6 +8,7 @@ import { VoiceCommands, type CommandActions } from './VoiceCommands.tsx';
 import { openPanel } from '../panel.ts';
 import type { KeepPage } from '../panes.ts';
 import { TITLES } from './Header.tsx';
+import { useTickerItems } from '../ticker.ts';
 
 interface Status {
   offline?: { offline: boolean; mode: string; localFirst: boolean; week: { localPercent: number; local: number; cloud: number } };
@@ -22,6 +23,7 @@ const get = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null)).ca
 // Slim bar across the top: where things stand at a glance, each part a shortcut to where it's set.
 export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => void; darkMode: boolean; setDarkMode: (v: boolean) => void; reviewCount?: number; actions: CommandActions; split?: boolean; onToggleSplit?: () => void; keepPage?: KeepPage; onKeepPage?: (v: KeepPage) => void; pauseSlot?: React.ReactNode }> = ({ split = false, onToggleSplit, keepPage = 'focused', onKeepPage, pauseSlot, title, setActiveTab, darkMode, setDarkMode, reviewCount = 0, actions }) => {
   const [s, setS] = useState<Status>({});
+  const ticker = useTickerItems();
   useEffect(() => {
     const load = async () => {
       const [offline, busy, devices, pause] = await Promise.all([get('/api/offline'), get('/api/pc-busy'), get('/api/devices'), get('/api/ai/pause')]);
@@ -61,9 +63,9 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
   const o = s.offline;
   const b = s.busy;
   return (
-    <div className="relative z-20 flex items-center gap-2 border-b border-slate-200 bg-white/90 px-3 py-1.5 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
+    <div className="relative z-20 flex min-h-[5.5rem] items-center gap-2 border-b border-slate-200 bg-white/90 px-3 py-1.5 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
       {title && <span className="mr-1 max-w-[40vw] shrink-0 truncate text-base font-bold text-slate-900 dark:text-white">{title}</span>}
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
+      <div className={`flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] ${ticker ? 'max-w-[45%] shrink-0' : 'flex-1'}`}>
         {reviewCount > 0 && (
           <button onClick={() => openPanel('review')} title="Finished work waiting for you: open Review" className={`${chip} flex border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200`}>
             <Inbox className="h-3.5 w-3.5" /> {reviewCount} to review
@@ -99,6 +101,20 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           {more ? 'Less' : 'Status'}
         </button>
       </div>
+      {/* News ticker: what is happening right now. Fills the height of the bar. Hover to pause. */}
+      {ticker && (
+        <div role="status" aria-label="What is happening now" className="eden-ticker flex min-w-0 flex-1 items-center self-stretch overflow-hidden rounded-lg border border-slate-200 bg-white text-base font-medium text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+          <div className="eden-ticker-track flex w-max gap-10 whitespace-nowrap px-4">
+            {[0, 1].map((copy) => (
+              <div key={copy} aria-hidden={copy === 1} className="flex gap-10">
+                {ticker.map((t) => (
+                  <span key={t}>• {t}</span>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <GoBox setActiveTab={setActiveTab} />
       <PickButton setActiveTab={setActiveTab} />
       {pauseSlot}

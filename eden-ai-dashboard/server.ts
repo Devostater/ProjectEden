@@ -1507,8 +1507,22 @@ Task:
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`NexusFlow AI Server running on http://localhost:${PORT}`);
+  });
+  // If the port is already taken, another copy of the hub is almost certainly running. This copy can never
+  // serve anything, so say so plainly and stop (code 64 tells the supervisor not to keep restarting it).
+  httpServer.on('error', (err: any) => {
+    if (err?.code === 'EADDRINUSE') {
+      const msg = `The hub could not start because port ${PORT} is already in use, most likely by another copy of the hub that is still running. Close the other Eden window (or restart the PC) and start the hub again.`;
+      console.error(msg);
+      try {
+        logActivity('error', msg);
+      } catch {}
+      setTimeout(() => process.exit(64), 500);
+      return;
+    }
+    stray('Server error', err);
   });
 }
 
