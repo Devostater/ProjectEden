@@ -6,17 +6,24 @@ import { api } from '../api.ts';
 
 // The picked elements, floating at the bottom of the screen while picking or while any are picked.
 // Say what should change and start a Code update for EDEN right here, or take the picks to Chief.
-export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onStarted: () => void; onChief?: () => void }> = ({ picking, onStop, onStarted, onChief }) => {
+// Option (saved on this device): jump to Code updates after sending. Off by default, so you keep working.
+const JUMP_KEY = 'eden_picker_jump';
+const readJump = () => { try { return localStorage.getItem(JUMP_KEY) === '1'; } catch { return false; } };
+
+export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onResume: () => void; onClose: () => void; onOpenUpdates: () => void; onChief?: () => void }> = ({ picking, onStop, onResume, onClose, onOpenUpdates, onChief }) => {
   const picks = usePicks();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  if (!picking && !picks.length) return null;
+  const [sent, setSent] = useState('');
+  const [jump, setJumpState] = useState(readJump);
+  const setJump = (v: boolean) => { setJumpState(v); try { localStorage.setItem(JUMP_KEY, v ? '1' : '0'); } catch {} };
 
   const start = async () => {
     if (!text.trim() || busy) return;
     setBusy(true);
     setError('');
+    setSent('');
     try {
       const t = getPickTarget();
       if (t.name && !t.codebaseId) throw new Error(`${t.name} has no code set yet. Choose its code in Project settings first.`);
@@ -24,7 +31,8 @@ export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onStar
       setText('');
       clearPicks();
       onStop();
-      onStarted();
+      if (jump) { onClose(); onOpenUpdates(); }
+      else setSent(`Started. It keeps working in Code updates while you carry on${t.name ? ` (${t.name})` : ''}.`);
     } catch (err: any) {
       setError(err.message || 'Could not start the update.');
     }
@@ -35,13 +43,23 @@ export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onStar
     <div data-eden-picker-ui="" className="fixed bottom-20 left-1/2 z-[2147483646] w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-indigo-400 bg-white/95 p-3 shadow-xl backdrop-blur dark:bg-slate-900/95">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Pencil className="h-4 w-4 text-indigo-500" />
-        <span className="font-medium text-slate-900 dark:text-white">{picking ? 'Click parts of the screen to pick them' : `${picks.length} picked${getPickTarget().name ? ` in ${getPickTarget().name}` : ' in EDEN'}`}</span>
-        <span className="text-xs text-slate-500">{picking ? 'Esc to stop' : 'Say what should change'}</span>
-        <span className="ml-auto flex gap-2">
-          {picking && <button onClick={onStop} className="rounded-lg border border-slate-300 px-2.5 py-1 dark:border-slate-600">Done</button>}
+        <span className="font-medium text-slate-900 dark:text-white">{picking ? 'Click parts of the screen to pick them' : picks.length ? `${picks.length} picked${getPickTarget().name ? ` in ${getPickTarget().name}` : ' in EDEN'}` : 'Picker'}</span>
+        <span className="text-xs text-slate-500">{picking ? 'Esc to stop' : picks.length ? 'Say what should change' : ''}</span>
+        <span className="ml-auto flex items-center gap-2">
+          {picking ? (
+            <button onClick={onStop} className="rounded-lg border border-slate-300 px-2.5 py-1 dark:border-slate-600">Done</button>
+          ) : (
+            <button onClick={() => { setSent(''); onResume(); }} className="rounded-lg border border-slate-300 px-2.5 py-1 dark:border-slate-600">Pick more</button>
+          )}
           {picks.length > 0 && <button onClick={clearPicks} className="text-xs text-slate-500 hover:underline">Clear</button>}
+          <button onClick={onClose} aria-label="Close the picker" title="Close (the pencil also closes it)" className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
         </span>
       </div>
+      {sent && (
+        <p role="status" className="mt-2 flex flex-wrap items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300">
+          {sent} <button onClick={onOpenUpdates} className="text-indigo-600 hover:underline dark:text-indigo-400">Open Code updates</button>
+        </p>
+      )}
       {picks.length > 0 && (
         <>
           <ul className="mt-2 flex flex-wrap gap-1.5">
@@ -67,7 +85,11 @@ export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onStar
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />} Start code update
             </button>
             {onChief && <button onClick={onChief} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1.5 dark:border-slate-600"><MessagesSquare className="h-4 w-4" /> Ask Chief instead</button>}
-            <span className="text-xs text-slate-500">Ctrl+Enter starts it. Nothing changes until you apply it in Code updates.</span>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300" title="Saved on this device">
+              <input type="checkbox" checked={jump} onChange={(e) => setJump(e.target.checked)} className="h-3.5 w-3.5 accent-indigo-600" />
+              Open Code updates after sending
+            </label>
+            <span className="text-xs text-slate-500">Ctrl+Enter starts it. Nothing changes until you apply it.</span>
           </div>
         </>
       )}

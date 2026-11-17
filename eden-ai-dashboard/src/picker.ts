@@ -16,6 +16,14 @@ let picks: Pick[] = [];
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 export const getPicks = () => picks;
+// Whether the picker tray is showing (the pencil opens and closes it; picking in the App tab opens it too).
+let trayOpen = false;
+export const setTrayOpen = (v: boolean) => { if (trayOpen !== v) { trayOpen = v; emit(); } };
+export function useTrayOpen(): boolean {
+  const [v, setV] = useState(trayOpen);
+  useEffect(() => { const l = () => setV(trayOpen); listeners.add(l); return () => { listeners.delete(l); }; }, []);
+  return v;
+}
 // Which code the picks are about: EDEN itself (empty) or a project's app (its codebase).
 let target: { codebaseId: string; name: string } = { codebaseId: '', name: '' };
 export const getPickTarget = () => target;

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Pencil, RefreshCw, ExternalLink, AppWindow } from 'lucide-react';
 import type { Project } from '../types/index.ts';
-import { addPick, setPickTarget } from '../picker.ts';
+import { addPick, setPickTarget, setTrayOpen } from '../picker.ts';
 
 // App tab: the project's running app inside EDEN (through EDEN's preview proxy, see previewProxy.ts), with a
 // pencil that picks elements inside it. Picks join the same tray as EDEN's own picker, aimed at this project's code.
@@ -32,6 +32,7 @@ export const LiveAppView: React.FC<{ project: Project; onOpenSettings?: () => vo
       if (d.type === 'eden-pick-ended') setPicking(false);
       if (d.type === 'eden-pick' && d.pick) {
         setPickTarget({ codebaseId: project.codebaseId || '', name: project.name });
+        setTrayOpen(true);
         addPick({ ...d.pick, where: [d.pick.where, d.pick.page && `page ${d.pick.page}`].filter(Boolean).join(' · ') });
       }
     };
