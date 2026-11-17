@@ -55,11 +55,11 @@ const Label: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 // How early the Notifications list warns you about a meeting: pick the time, then switch it on or off.
 // Same setting as the one in the Notifications list.
 const HeadsUpSetting: React.FC = () => {
-  const { time, on, setMinutes } = useMeetingHeadsUp();
+  const { time, on, setMinutes, setTime } = useMeetingHeadsUp();
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700">
       <span className="min-w-0 flex-1 text-slate-800 dark:text-slate-200">Heads up before a meeting</span>
-      <select value={time} onChange={(e) => setMinutes(Number(e.target.value))} aria-label="How early to warn you before a meeting" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+      <select value={time} onChange={(e) => setTime(Number(e.target.value))} aria-label="How early to warn you before a meeting" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
         {TIME_CHOICES.map((c) => <option key={c.minutes} value={c.minutes}>{c.label}</option>)}
       </select>
       <button role="switch" aria-checked={on} aria-label="Heads up before a meeting: on or off" title={on ? 'On: click to turn off' : 'Off: click to turn on'} onClick={() => setMinutes(on ? 0 : time)} className={`relative h-5 w-9 shrink-0 rounded-full transition ${on ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-700'}`}>

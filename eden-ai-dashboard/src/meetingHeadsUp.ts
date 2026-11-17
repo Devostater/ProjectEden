@@ -112,7 +112,7 @@ export const useMeetingHeadsUp = () => {
       // Only meetings with a real time of day; a date alone can't give a heads-up.
       if (!m.meeting || !m.meetingAt || m.meetingAt.length <= 10) continue;
       const at = new Date(m.meetingAt).getTime();
-      if (!Number.isNaN(at)) found.push({ key: `meeting:${m.projectId}`, title: m.meeting, project: m.name, color: m.color, at });
+      if (!Number.isNaN(at)) found.push({ key: `meeting:${m.projectId}`, title: `${m.name} meeting`, project: m.name, color: m.color, at });
     }
     for (const e of readEvents()) {
       if (!e || typeof e.when !== 'string' || e.when.length <= 10) continue;
@@ -134,5 +134,14 @@ export const useMeetingHeadsUp = () => {
   }, []);
 
   // time = how early you chose; on = whether it is switched on.
-  return { minutes, setMinutes, time, on: minutes > 0, headsUp: list, dismiss };
+  // Choose how early, without switching it on or off: while it is on, the new time is used right away.
+  const setTime = useCallback((m: number) => {
+    if (!(m > 0)) return;
+    if (minutes > 0) return setMinutes(m);
+    try { localStorage.setItem(TIME_KEY, String(m)); } catch {}
+    window.dispatchEvent(new Event(SYNC_EVENT));
+    setTimeState(m);
+  }, [minutes, setMinutes]);
+
+  return { minutes, setMinutes, setTime, time, on: minutes > 0, headsUp: list, dismiss };
 };

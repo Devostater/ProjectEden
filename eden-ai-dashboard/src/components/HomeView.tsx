@@ -629,7 +629,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     <div className="flex min-w-0 flex-1 flex-col">
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 p-4 sm:p-8 lg:flex-row lg:items-start">
       {/* Widgets sidebar on the left: just the bug radar. It stays in view as you scroll. Pop out floats it above the page (also stays put while you scroll). */}
-      <aside aria-label="Widgets sidebar" className="w-full shrink-0 lg:sticky lg:top-4 lg:w-72">
+      <aside aria-label="Widgets sidebar" className="order-last w-full shrink-0 lg:order-none lg:sticky lg:top-4 lg:w-72">
       <section aria-label="Widgets" className="rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/60">
         <div className="flex items-center gap-1 border-b border-slate-200 p-2 dark:border-slate-800">
           <span className="min-w-0 flex-1 truncate px-2 py-1 text-sm font-medium text-slate-700 dark:text-slate-200">🎯 Bug radar{radarOut && <span className="ml-1 text-xs text-slate-400">(popped out)</span>}</span>

@@ -40,7 +40,21 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [game, setGame] = useState<GameSave>(readGameSave);
+  // What is being typed in the Level and XP boxes. Nothing changes the game until Save is pressed.
+  const [levelDraft, setLevelDraft] = useState<string | null>(null);
+  const [xpDraft, setXpDraft] = useState<string | null>(null);
   useEffect(() => { if (saved && !p) setP(saved); }, [saved, p]);
+  // A device with no game save yet (new browser, cleared storage) starts from the level saved on the hub,
+  // so a level saved earlier is never lost or overwritten by a fresh 0.
+  useEffect(() => {
+    if (!saved || readGameSave().xp > 0) return;
+    const fromHub = xpAtLevel(Math.max(1, saved.playerLevel || 1)) + Math.max(0, saved.xp || 0);
+    if (fromHub > 0) {
+      writeGameSave({ ...readGameSave(), xp: fromHub });
+      setGame(readGameSave());
+      window.dispatchEvent(new Event('eden-game-mode'));
+    }
+  }, [saved]);
   // Level and XP come from the Eden game, so the card and the game always show the same numbers.
   useEffect(() => {
     const reread = () => setGame(readGameSave());
@@ -60,7 +74,7 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
   const set = (patch: Partial<ProfileData>) => { setP({ ...p, ...patch }); setMsg(null); };
   const initial = (name || 'You').trim().charAt(0).toUpperCase();
   const { level, into: xpInto, need: xpNeeded } = levelOf(game.xp);
-  // Typing a new level or XP changes the game too, so the two stay in step.
+  // Saving a new level or XP changes the game too, so the two stay in step.
   const setGameXp = (xp: number) => {
     const next = { ...readGameSave(), xp };
     writeGameSave(next);
@@ -68,13 +82,21 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
     window.dispatchEvent(new Event('eden-game-mode')); // the game picks up the new number
     setMsg(null);
   };
-  const changeLevel = (n: number) => { const l = Math.min(999, Math.max(1, n)); setGameXp(xpAtLevel(l) + Math.min(xpInto, xpForLevel(l) - 1)); };
-  const changeXp = (n: number) => setGameXp(xpAtLevel(level) + Math.min(xpNeeded - 1, Math.max(0, n)));
+  // The level and XP that Save will use: what was typed (if anything), kept in range.
+  const draftLevel = () => { const n = Math.floor(Number(levelDraft)); return levelDraft === null || !Number.isFinite(n) || levelDraft.trim() === '' ? level : Math.min(999, Math.max(1, n)); };
+  const draftXp = (l: number) => { const need = xpForLevel(l); const n = Math.floor(Number(xpDraft)); const v = xpDraft === null || !Number.isFinite(n) || xpDraft.trim() === '' ? xpInto : n; return Math.min(need - 1, Math.max(0, v)); };
 
   const save = async () => {
     setBusy(true);
     try {
-      const r = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...p, stats, playerLevel: level, xp: xpInto }) });
+      const newLevel = draftLevel();
+      const newXp = draftXp(newLevel);
+      if (levelDraft !== null || xpDraft !== null) {
+        if (newLevel !== level || newXp !== xpInto) setGameXp(xpAtLevel(newLevel) + newXp);
+        setLevelDraft(null);
+        setXpDraft(null);
+      }
+      const r = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...p, stats, playerLevel: newLevel, xp: newXp }) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'Could not save.');
       // Keep what was typed for any field an older hub leaves out of its reply.
@@ -152,7 +174,7 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
         <div className="mt-2 grid gap-3 sm:grid-cols-2">
           <div>
             <label htmlFor="pf-level" className="text-xs text-slate-500 dark:text-slate-400">Player level (same as the game)</label>
-            <input id="pf-level" type="number" min={1} max={999} value={level} onChange={(e) => changeLevel(Math.floor(Number(e.target.value)) || 1)} className={`${input} mt-1`} />
+            <input id="pf-level" type="number" min={1} max={999} value={levelDraft ?? String(level)} onChange={(e) => { setLevelDraft(e.target.value); setMsg(null); }} className={`${input} mt-1`} />
           </div>
           <div>
             <label htmlFor="pf-work" className="text-xs text-slate-500 dark:text-slate-400">Work title</label>
@@ -168,7 +190,7 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
           </div>
           <div>
             <label htmlFor="pf-xp" className="text-xs text-slate-500 dark:text-slate-400">Experience (XP) · {xpNeeded.toLocaleString()} needed for the next level</label>
-            <input id="pf-xp" type="number" min={0} max={xpNeeded - 1} value={xpInto} onChange={(e) => changeXp(Math.floor(Number(e.target.value)) || 0)} className={`${input} mt-1`} />
+            <input id="pf-xp" type="number" min={0} max={xpNeeded - 1} value={xpDraft ?? String(xpInto)} onChange={(e) => { setXpDraft(e.target.value); setMsg(null); }} className={`${input} mt-1`} />
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 sm:col-span-2">Creativity, Logic, Charm and Luck are earned by using Eden. Hover one above to see how, or open the Achievements page.</p>
           <div>

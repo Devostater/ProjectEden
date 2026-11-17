@@ -357,6 +357,17 @@ Rules:
 - You cannot run commands; the hub runs the checks after you finish.
 - Finish with a short summary in plain language: what you changed, which files, and anything the owner should check.`;
 
+// The codebase's own house rules (HOUSE_RULES.md in its folder), given to the AI before every update so changes reuse
+// what exists, keep saved data safe and flag risky parts. Read fresh each time, so editing the file takes effect at once.
+function houseRules(appDir: string): string {
+  try {
+    const text = fs.readFileSync(path.join(appDir, 'HOUSE_RULES.md'), 'utf8').trim();
+    return text ? `\n\nHouse rules for this codebase (follow them; your summary must use their format):\n${text.slice(0, 8000)}` : '';
+  } catch {
+    return '';
+  }
+}
+
 function describeTool(name: string, input: any): string {
   const file = input?.file_path || input?.path || input?.pattern || '';
   const short = String(file).replace(/\\/g, '/').split('/').slice(-2).join('/');
@@ -460,7 +471,7 @@ async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: st
       if (code === 0 && !errText) resolve();
       else reject(new Error(errText.trim().split('\n').slice(-2).join(' ') || `Claude Code exited with ${code}`));
     });
-    child.stdin.end(`${RULES(cb)}\n\nThe owner's request:\n${job.request}${extra ? `\n\n${extra}` : ''}`);
+    child.stdin.end(`${RULES(cb)}${houseRules(appDir)}\n\nThe owner's request:\n${job.request}${extra ? `\n\n${extra}` : ''}`);
   });
 }
 

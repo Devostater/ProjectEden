@@ -7,6 +7,8 @@ import { PAGES } from './pages.tsx';
 const ACTIVITY_KEY = 'eden_activity';
 const UNLOCKED_KEY = 'eden_unlocked';
 const NOTICE_KEY = 'eden_achievement_notices';
+// After 'Start again': the totals seen at that moment, counted from zero from then on (so a reset really resets).
+const BASELINE_KEY = 'eden_activity_baseline';
 export const ACTIVITY_EVENT = 'eden-activity';
 export const UNLOCK_EVENT = 'eden-unlocked';
 
@@ -127,18 +129,43 @@ export function setNotices(on: boolean) {
 
 // Called by the app with what it can see right now. Takes the higher of old and new for every count, remembers the
 // day and the pages, and announces any achievement that just unlocked.
+// No 'Achievement unlocked' pop-ups for a short while after the page opens: the first numbers arrive in pieces as
+// pages load, and every old achievement would otherwise be announced at once. Same on a brand-new device.
+const QUIET_UNTIL = Date.now() + 15_000;
+const FIRST_EVER = (() => { try { return localStorage.getItem(UNLOCKED_KEY) === null; } catch { return true; } })();
+
+type Baseline = { pending?: boolean } & Partial<Record<(typeof NUMBERS)[number], number>>;
+function readBaseline(): Baseline {
+  try {
+    const v = JSON.parse(localStorage.getItem(BASELINE_KEY) || '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+
 export function recordActivity(seen: Partial<Pick<Activity, (typeof NUMBERS)[number]>> & { page?: string[] }) {
+  // Right after a reset, the first full set of totals becomes the new zero.
+  let base = readBaseline();
+  if (base.pending && NUMBERS.some((k) => typeof seen[k] === 'number')) {
+    base = {};
+    for (const k of NUMBERS) if (typeof seen[k] === 'number' && isFinite(seen[k] as number)) base[k] = Math.floor(seen[k] as number);
+    try { localStorage.setItem(BASELINE_KEY, JSON.stringify(base)); } catch {}
+  }
   const old = readActivity();
   const next: Activity = { ...old, days: [...old.days], pages: [...old.pages] };
   for (const k of NUMBERS) {
-    const v = seen[k];
-    if (typeof v === 'number' && isFinite(v) && v > next[k]) next[k] = Math.floor(v);
+    const raw = seen[k];
+    if (base.pending || typeof raw !== 'number' || !isFinite(raw)) continue;
+    const v = Math.max(0, raw - (base[k] || 0));
+    if (v > next[k]) next[k] = Math.floor(v);
   }
   if (!next.days.includes(today())) next.days.push(today());
   for (const p of seen.page || []) if (p && !next.pages.includes(p)) next.pages.push(p);
 
   const changed = JSON.stringify(next) !== JSON.stringify(old);
-  const had = localStorage.getItem(UNLOCKED_KEY) !== null;
+  let had = true;
+  try { had = localStorage.getItem(UNLOCKED_KEY) !== null; } catch {}
   const unlocked = readUnlocked();
   const fresh = ACHIEVEMENTS.filter((x) => x.test(next) && !unlocked[x.id]);
   if (!changed && !fresh.length && had) return;
@@ -149,13 +176,14 @@ export function recordActivity(seen: Partial<Pick<Activity, (typeof NUMBERS)[num
   } catch {}
   window.dispatchEvent(new Event(ACTIVITY_EVENT));
   // Nothing is announced the first time (you would get every old achievement at once).
-  if (had && fresh.length && readNotices()) window.dispatchEvent(new CustomEvent(UNLOCK_EVENT, { detail: fresh.map((x) => x.title) }));
+  if (had && !FIRST_EVER && Date.now() > QUIET_UNTIL && fresh.length && readNotices()) window.dispatchEvent(new CustomEvent(UNLOCK_EVENT, { detail: fresh.map((x) => x.title) }));
 }
 
 export function resetActivity() {
   try {
     localStorage.removeItem(ACTIVITY_KEY);
-    localStorage.removeItem(UNLOCKED_KEY);
+    localStorage.setItem(UNLOCKED_KEY, '{}'); // empty, not missing: nothing old gets announced again
+    localStorage.setItem(BASELINE_KEY, JSON.stringify({ pending: true }));
   } catch {}
   window.dispatchEvent(new Event(ACTIVITY_EVENT));
 }
