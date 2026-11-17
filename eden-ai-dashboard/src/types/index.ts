@@ -152,6 +152,7 @@ export interface Project {
   status: 'active' | 'paused' | 'done';
   repo?: string; // "owner/name" on GitHub
   autoRun?: boolean; // AI picks up assigned cards in Ready (on unless set to false)
+  checkpoints?: boolean; // pause auto-run when a roadmap block is marked done (on unless set to false)
   codebaseId?: string; // the code this project changes (see Code updates), e.g. "lyra"
   branches?: Branch[]; // workstreams; every project has at least "Main"
   roadmap?: RoadmapGoal[]; // long-term goals made of building blocks (not AI tasks); progress is worked out from them

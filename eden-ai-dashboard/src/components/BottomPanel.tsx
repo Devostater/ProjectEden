@@ -28,6 +28,7 @@ export interface PanelProject {
   agents: Agent[];
   onOpenCard: (id: string) => void;
   onSaveRoadmap: (roadmap: RoadmapGoal[]) => Promise<void>;
+  onSaveProject: (p: Partial<Project>) => Promise<void>;
 }
 
 interface ActivityEntry {
@@ -293,7 +294,7 @@ export const BottomPanel: React.FC<{
   const [arrangingDock, setArrangingDock] = useState(false);
   // Tabs you hid with Customize (saved on this device). While the Projects side panel is open, its tools are
   // already there, so those tabs leave the bottom bar (Preview stays: the side panel has no Preview).
-  const [hiddenTabs, setHiddenTabs] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_dock_hidden') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
+  const [hiddenTabs, setHiddenTabs] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_dock_hidden') || '["toolbox"]'); return Array.isArray(v) ? v : []; } catch { return []; } });
   const toggleHidden = (id: string) => setHiddenTabs((h) => { const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id]; try { localStorage.setItem('eden_dock_hidden', JSON.stringify(next)); } catch {} return next; });
   const sidePanelOpen = !!useSideActionsTarget();
   const inSidePanel = (id: PanelTab) => sidePanelOpen && PROJECT_TABS.includes(id) && id !== 'preview';

@@ -1,18 +1,21 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, ChevronLeft } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Flag, Map } from 'lucide-react';
+import { MissionView, JourneyView } from './ProjectPages.tsx';
 import type { PanelProject } from './BottomPanel.tsx';
-import { FlowTab, WorkloadTab, ProgressTab } from './ProjectVisuals.tsx';
-import { Roadmap, roadmapProgress } from './Roadmap.tsx';
-import { Toolbox } from './Toolbox.tsx';
-import { WorkTrail } from './WorkTrail.tsx';
+import { WorkloadTab } from './ProjectVisuals.tsx';
+import { roadmapProgress } from './Roadmap.tsx';
 import { PROJECT_PANELS } from '../panelMeta.ts';
 
 // The Projects page's right-hand panel, shown when only one page is open on a wide screen.
 // Health summary, the project's buttons (moved here from the page header), then the project tools.
 // Drag its left edge to make it wider or narrower; the size is remembered.
-type SideTab = 'roadmap' | 'progress' | 'workload' | 'trail' | 'flow' | 'toolbox';
-const SIDE_TABS = PROJECT_PANELS.filter((p) => p.id !== 'preview') as { id: SideTab; label: string; icon: React.ElementType }[];
-const ORDER: SideTab[] = ['roadmap', 'progress', 'workload', 'trail', 'flow', 'toolbox'];
+type SideTab = 'mission' | 'journey' | 'workload';
+const SIDE_TABS: { id: SideTab; label: string; icon: React.ElementType }[] = [
+  { id: 'mission', label: 'Mission', icon: Flag },
+  { id: 'journey', label: 'Journey', icon: Map },
+  { id: 'workload', label: 'Workload', icon: PROJECT_PANELS.find((p) => p.id === 'workload')!.icon },
+];
+const ORDER: SideTab[] = ['mission', 'journey', 'workload'];
 const MIN_W = 320;
 const DEFAULT_W = 720; // "double wide"
 
@@ -44,7 +47,7 @@ const Label: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project }) => {
-  const [tab, setTabState] = useState<SideTab>(() => (ORDER.includes(read('eden_side_tab', 'roadmap') as SideTab) ? (read('eden_side_tab', 'roadmap') as SideTab) : 'roadmap'));
+  const [tab, setTabState] = useState<SideTab>(() => (ORDER.includes(read('eden_side_tab', 'mission') as SideTab) ? (read('eden_side_tab', 'mission') as SideTab) : 'mission'));
   const [closed, setClosed] = useState(() => read('eden_side_closed', '') === '1');
   const [width, setWidth] = useState(() => Math.max(MIN_W, Number(read('eden_side_width', String(DEFAULT_W))) || DEFAULT_W));
   const setTab = (t: SideTab) => { setTabState(t); write('eden_side_tab', t); };
@@ -150,18 +153,15 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
                 className={`${square} ${on ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-slate-200 text-slate-700 hover:border-indigo-400 dark:border-slate-700 dark:text-slate-200 dark:hover:border-indigo-500'}`}>
                 <Icon className="h-5 w-5" />
                 {t.label}
-                {id === 'roadmap' && rm && <span className="text-xs tabular-nums opacity-80">{rm.pct}%</span>}
+                {id === 'journey' && rm && <span className="text-xs tabular-nums opacity-80">{rm.pct}%</span>}
               </button>
             );
           })}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-3">
-          {tab === 'roadmap' && <div className="@container"><Roadmap key={project.project.id} project={project.project} onSave={project.onSaveRoadmap} embedded /></div>}
-          {tab === 'progress' && <ProgressTab {...project} />}
+          {tab === 'mission' && <div className="@container"><MissionView {...project} /></div>}
+          {tab === 'journey' && <JourneyView {...project} />}
           {tab === 'workload' && <WorkloadTab {...project} />}
-          {tab === 'trail' && <WorkTrail key={project.project.id} project={project.project} cards={project.cards} agents={project.agents} onOpenCard={project.onOpenCard} />}
-          {tab === 'flow' && <div className="h-[420px]"><FlowTab {...project} zoom="fit" /></div>}
-          {tab === 'toolbox' && <Toolbox key={project.project.id} project={project.project} embedded />}
         </div>
       </section>
       </div>

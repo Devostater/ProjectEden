@@ -21,6 +21,7 @@ interface ProjectsViewProps {
   agents: Agent[];
   onAsk: (text: string) => void; // open Chat with this text ready to send
   newProjectRequest?: number; // bumped by the sidebar's "New project"
+  below?: React.ReactNode; // pages of info and charts under the board
   aziProjectRequest?: { name: string; n: number } | null; // "new project <name>" from the mic or command box
   onOpenSource?: (card: Card) => void; // jump to the Nexus message a card came from
   onOpenBudgets?: () => void;
@@ -79,6 +80,7 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
   const [codebaseId, setCodebaseId] = useState(project?.codebaseId || '');
   const [choices, setChoices] = useState<{ value: string; name: string; dir: string }[]>([]);
   const [saveError, setSaveError] = useState('');
+  const [showTools, setShowTools] = useState(false);
   useEffect(() => {
     Promise.all([fetch('/api/updates').then((r) => (r.ok ? r.json() : null)).catch(() => null), fetch('/api/azi/repos').then((r) => (r.ok ? r.json() : null)).catch(() => null)]).then(([u, a]) => {
       const known: { id: string; name: string; dir: string }[] = (u?.codebases || []).filter((c: any) => c.ok);
@@ -113,6 +115,19 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
     await api.saveProject({ id: project?.id, name, goal, status, color, codebaseId: code });
     onClose();
   };
+
+  if (project && showTools)
+    return (
+      <div role="dialog" aria-modal="true" aria-label="Toolbox" className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setShowTools(false)}>
+        <div onClick={(e) => e.stopPropagation()} className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl bg-white shadow-xl dark:bg-slate-900">
+          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3 dark:border-slate-800">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">🧰 {project.name}: Toolbox</h2>
+            <button onClick={() => setShowTools(false)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm dark:border-slate-600">Back to settings</button>
+          </div>
+          <div className="overflow-y-auto p-4"><Toolbox key={project.id} project={project} embedded /></div>
+        </div>
+      </div>
+    );
 
   return (
     <Dialog
@@ -212,6 +227,12 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
             ))}
           </div>
         </div>
+        {project && (
+          <button type="button" onClick={() => setShowTools(true)} className="flex w-full items-center justify-between rounded-lg border border-slate-300 px-3 py-2 text-left text-sm hover:border-indigo-400 dark:border-slate-700">
+            <span>🧰 <b>Toolbox</b>: {project.toolbox?.tools.length || 0} tools · {project.toolbox?.links.length || 0} links{project.ai?.use ? ' · own AI' : ''}</span>
+            <span aria-hidden>→</span>
+          </button>
+        )}
       </div>
     </Dialog>
   );
@@ -1102,7 +1123,7 @@ const SyncButton: React.FC<{ project: Project }> = ({ project }) => {
 };
 
 // ---------------------------------------------------------------- page
-export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, newProjectRequest, aziProjectRequest, onOpenSource, onOpenBudgets }) => {
+export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, newProjectRequest, below, aziProjectRequest, onOpenSource, onOpenBudgets }) => {
   const sideActions = useSideActionsTarget();
   const { projects, active } = api;
   const [projectDialog, setProjectDialog] = useState<'new' | 'edit' | null>(null);
@@ -1187,7 +1208,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
   }
 
   return (
-    <div className="flex min-h-full flex-col p-4 md:h-full">
+    <div className="flex min-h-full flex-col p-4">
       {active && (
         <>
           {/* Project header. Projects are picked in the sidebar. */}
@@ -1279,12 +1300,6 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                     <span className="text-indigo-600 dark:text-indigo-400">Plan the building blocks →</span>
                   )}
                 </button>
-                <button onClick={() => openPanel('toolbox')} title="Open this project's tools, keys and links in the bottom bar" className={chip}>
-                  🧰 <span className="font-medium text-slate-900 dark:text-white">Toolbox</span>
-                  <span>
-                    {active.toolbox?.tools.length || 0} tools · {active.toolbox?.links.length || 0} links{active.ai?.use ? ' · own AI' : ''}
-                  </span>
-                </button>
               </div>
             );
           })()}
@@ -1332,7 +1347,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
 
           {/* Board */}
           {/* Phones: the board gets nearly a full screen and shows one column at a time (swipe; snaps). */}
-          <div className="mt-4 flex h-[calc(100dvh-11rem)] shrink-0 snap-x snap-mandatory gap-3 overflow-x-auto pb-2 md:h-auto md:min-h-0 md:flex-1 md:shrink md:snap-none">
+          <div className="mt-4 flex h-[calc(100dvh-11rem)] shrink-0 snap-x snap-mandatory gap-3 overflow-x-auto pb-2 md:h-[calc(100dvh-12rem)] md:min-h-[24rem] md:shrink-0 md:snap-none">
             {COLUMNS.map((col) => {
               const colCards = cards.filter((c) => c.column === col.id && (!whoFilter || c.assigneeId === whoFilter) && (!branchFilter || c.branchId === branchFilter)).sort((a, b) => a.order - b.order);
               return (
@@ -1486,6 +1501,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
               );
             })}
           </div>
+          {below}
         </>
       )}
 
