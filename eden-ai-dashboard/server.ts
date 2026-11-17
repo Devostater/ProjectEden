@@ -8,6 +8,7 @@ import { registerNewProjectRoutes } from './newproject';
 import { registerToolboxRoutes } from './toolbox';
 import { startCardRunner, askTeammate, runningCards } from './cardRunner';
 import { registerPlannerRoutes } from './planner';
+import { registerProjectChat } from './projectChat';
 import { registerActivityRoutes, logActivity } from './activity';
 import { registerTerminalRoutes } from './terminal';
 import { registerLyraRoutes } from './lyra';
@@ -523,6 +524,7 @@ async function startServer() {
   registerToolboxRoutes(app, () => store, () => saveStore(store)); // a project's own tools, keys and links
   registerProjectRoutes(app, () => store, () => saveStore(store));
   registerPlannerRoutes(app, () => store);
+  registerProjectChat(app, () => store); // ongoing project chat with Chief + to-discuss list
   registerActivityRoutes(app);
   registerTerminalRoutes(app);
   registerLyraRoutes(app);

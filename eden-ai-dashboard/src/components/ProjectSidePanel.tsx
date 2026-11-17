@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, ChevronLeft, Flag, Map } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Flag, Map, MessagesSquare } from 'lucide-react';
+import { ProjectChat } from './ProjectChat.tsx';
 import { MissionView, JourneyView } from './ProjectPages.tsx';
 import type { PanelProject } from './BottomPanel.tsx';
 import { WorkloadTab } from './ProjectVisuals.tsx';
@@ -9,13 +10,14 @@ import { PROJECT_PANELS } from '../panelMeta.ts';
 // The Projects page's right-hand panel, shown when only one page is open on a wide screen.
 // Health summary, the project's buttons (moved here from the page header), then the project tools.
 // Drag its left edge to make it wider or narrower; the size is remembered.
-type SideTab = 'mission' | 'journey' | 'workload';
+type SideTab = 'mission' | 'chief' | 'journey' | 'workload';
 const SIDE_TABS: { id: SideTab; label: string; icon: React.ElementType }[] = [
   { id: 'mission', label: 'Mission', icon: Flag },
+  { id: 'chief', label: 'Chief', icon: MessagesSquare },
   { id: 'journey', label: 'Journey', icon: Map },
   { id: 'workload', label: 'Workload', icon: PROJECT_PANELS.find((p) => p.id === 'workload')!.icon },
 ];
-const ORDER: SideTab[] = ['mission', 'journey', 'workload'];
+const ORDER: SideTab[] = ['mission', 'chief', 'journey', 'workload'];
 const MIN_W = 320;
 const DEFAULT_W = 720; // "double wide"
 
@@ -160,6 +162,7 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-3">
           {tab === 'mission' && <div className="@container"><MissionView {...project} /></div>}
+          {tab === 'chief' && <ProjectChat projectId={project.project.id} />}
           {tab === 'journey' && <JourneyView {...project} />}
           {tab === 'workload' && <WorkloadTab {...project} />}
         </div>
