@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { picksAsText, clearPicks } from '../picker.ts';
 import { ui } from '../ui.ts';
 import { Send, Loader2, Plus, X, CalendarClock, ListChecks } from 'lucide-react';
 
@@ -34,7 +35,8 @@ export const ProjectChat: React.FC<{ projectId: string }> = ({ projectId }) => {
     setBusy(true);
     setChat((c) => ({ ...c, messages: [...c.messages, { role: 'owner', text: t, at: new Date().toISOString() }] }));
     try {
-      const r = await fetch(`/api/projects/${projectId}/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: t }) });
+      const r = await fetch(`/api/projects/${projectId}/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: t + picksAsText() }) });
+      clearPicks();
       const d = await r.json();
       if (d.messages) setChat(d);
       if (!r.ok) setError(d.error || 'Chief could not answer.');

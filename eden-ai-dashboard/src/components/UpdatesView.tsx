@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { picksAsText, clearPicks } from '../picker.ts';
 import { api } from '../api.ts';
 import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, RefreshCw, Lock, Wrench, ArrowUp, ArrowDown, ChevronsUp } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
@@ -263,8 +264,9 @@ export const UpdatesView: React.FC = () => {
     setError('');
     setNote('');
     try {
-      const d = await post('/api/updates', { request, codebaseId: target, local: onThisPc });
+      const d = await post('/api/updates', { request: request + picksAsText(), codebaseId: target, local: onThisPc });
       setRequest('');
+      clearPicks();
       setOpenId(d.job.id);
       setTab('active');
       live.current = true;
