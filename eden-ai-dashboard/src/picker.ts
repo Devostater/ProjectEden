@@ -16,6 +16,11 @@ let picks: Pick[] = [];
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((l) => l());
 export const getPicks = () => picks;
+// Which code the picks are about: EDEN itself (empty) or a project's app (its codebase).
+let target: { codebaseId: string; name: string } = { codebaseId: '', name: '' };
+export const getPickTarget = () => target;
+export const setPickTarget = (t: { codebaseId: string; name: string }) => { if (!picks.length || t.codebaseId !== target.codebaseId) { if (t.codebaseId !== target.codebaseId) picks = []; } target = t; emit(); };
+export const addPick = (p: Omit<Pick, 'id'>) => { picks = [...picks, { id: `pk-${Date.now().toString(36)}-${picks.length}`, ...p }]; emit(); };
 export const removePick = (id: string) => { picks = picks.filter((p) => p.id !== id); emit(); };
 export const clearPicks = () => { picks = []; emit(); };
 export function usePicks(): Pick[] {
@@ -81,6 +86,7 @@ export function startPicking(doc: Document = document, onEnd?: () => void): () =
     if (skip(e.target)) return;
     e.preventDefault();
     e.stopPropagation();
+    if (target.codebaseId) { picks = []; target = { codebaseId: '', name: '' }; } // picking EDEN itself again
     picks = [...picks, { id: `pk-${Date.now().toString(36)}-${picks.length}`, ...describe(e.target as Element) }];
     emit();
   };

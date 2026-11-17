@@ -144,6 +144,7 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
         goal: b.goal !== undefined ? text(b.goal, 600) : existing.goal,
         color: b.color !== undefined ? text(b.color, 20) || existing.color : existing.color,
         repo: b.repo !== undefined ? text(b.repo, 200) : existing.repo,
+        previewUrl: b.previewUrl !== undefined ? text(b.previewUrl, 300) || undefined : existing.previewUrl,
         status,
         autoRun: typeof b.autoRun === 'boolean' ? b.autoRun : existing.autoRun,
         checkpoints: typeof b.checkpoints === 'boolean' ? b.checkpoints : existing.checkpoints,

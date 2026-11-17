@@ -78,6 +78,7 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
   // The code this project's cards may change. Choices: the codebases Eden already knows, plus every project folder
   // in C:\AZI (a folder not yet known is registered when you save). Value: a codebase id, or 'dir:<folder>'.
   const [codebaseId, setCodebaseId] = useState(project?.codebaseId || '');
+  const [previewUrl, setPreviewUrl] = useState(project?.previewUrl || '');
   const [choices, setChoices] = useState<{ value: string; name: string; dir: string }[]>([]);
   const [saveError, setSaveError] = useState('');
   const [showTools, setShowTools] = useState(false);
@@ -113,7 +114,7 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
     }
     // Keep a finished project finished unless it was switched on.
     const status: Project['status'] = on ? 'active' : project?.status === 'done' ? 'done' : 'paused';
-    await api.saveProject({ id: project?.id, name, goal, status, color, codebaseId: code, autoRun: autoRunOn });
+    await api.saveProject({ id: project?.id, name, goal, status, color, codebaseId: code, autoRun: autoRunOn, previewUrl: previewUrl.trim() });
     onClose();
   };
 
@@ -227,6 +228,10 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
               />
             ))}
           </div>
+        </div>
+        <div>
+          <label htmlFor="pd-preview" className={labelClass}>Live app address (optional)</label>
+          <input id="pd-preview" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} placeholder="http://localhost:5173: the app while it runs, shown in the App tab" className={inputClass} />
         </div>
         <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200" title="Cards in Ready with a teammate assigned are worked on automatically">
           <input type="checkbox" checked={autoRunOn} onChange={(e) => setAutoRunOn(e.target.checked)} className="h-4 w-4 accent-indigo-600" />

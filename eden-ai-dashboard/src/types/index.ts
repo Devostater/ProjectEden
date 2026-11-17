@@ -151,6 +151,7 @@ export interface Project {
   color: string;
   status: 'active' | 'paused' | 'done';
   repo?: string; // "owner/name" on GitHub
+  previewUrl?: string; // the running app on this PC (e.g. http://localhost:5173), shown in the App tab
   autoRun?: boolean; // AI picks up assigned cards in Ready (on unless set to false)
   checkpoints?: boolean; // pause auto-run when a roadmap block is marked done (on unless set to false)
   codebaseId?: string; // the code this project changes (see Code updates), e.g. "lyra"
