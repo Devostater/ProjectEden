@@ -108,7 +108,14 @@ export function setGameOn(on: boolean) {
   window.dispatchEvent(new Event(EVENT));
 }
 
+// Set once this device has its own game progress (or chose to start over), so the level saved on the hub is only
+// ever copied in once, on a device that never played: never on top of a deliberate "Start the game over".
+export const GAME_SEEDED_KEY = 'eden_game_seeded';
+export const markGameSeeded = () => { try { localStorage.setItem(GAME_SEEDED_KEY, '1'); } catch {} };
+export const gameSeeded = () => { try { return localStorage.getItem(GAME_SEEDED_KEY) === '1'; } catch { return true; } };
+
 export function resetGame() {
+  markGameSeeded();
   writeGameSave({ ...FRESH });
   window.dispatchEvent(new Event(EVENT));
 }

@@ -30,8 +30,8 @@ They are given to the AI before every update to this codebase.
 ## Server and safety
 - New server routes that change anything must use the existing checks (isLocal, mayManage / fromOwnPage).
 - Never build file paths or shell commands from request input without checking them.
-- Anything that touches git, deletes files, stops processes or changes saved stores: say so at the top of your
-  summary under "Needs a careful look", so the owner reviews it on its own.
+- Anything that touches git, deletes files, stops processes or changes saved stores: list it under
+  "Needs a careful look" (the first part of your summary), so the owner reviews it on its own.
 
 ## Screens
 - Keep it calm: no new always-visible chips, banners or counters unless the owner asked for one.
@@ -40,8 +40,8 @@ They are given to the AI before every update to this codebase.
 - Plain words for a non-technical owner.
 
 ## Summary format
-1. What changed (plain words).
-2. Files touched.
-3. Reused / replaced / removed.
-4. Needs a careful look: server, git, deleting, saved data (or "nothing").
+1. Needs a careful look: server, git, deleting, saved data (or "nothing").
+2. What changed (plain words).
+3. Files touched.
+4. Reused / replaced / removed.
 5. What the owner should try (including the awkward cases: clear a field, reset, reload, tablet).

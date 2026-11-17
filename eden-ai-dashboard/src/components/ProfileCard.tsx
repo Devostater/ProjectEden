@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Upload, Trash2, Plus, X, Save, Loader2, Sparkles, ExternalLink, Play, Star, Briefcase, Gamepad2, Trophy, Coins, Gem, Swords, Palette, Brain, Heart, Clover } from 'lucide-react';
 import { Avatar, FRAMES, PROFILE_EVENT, useProfile, normalizeProfile, type ProfileData } from './Avatar.tsx';
 import { STAT_RULES, earnedStats, statPoints, useActivity } from '../earned.ts';
-import { GAME_SAVE_EVENT, levelOf, readGameSave, writeGameSave, xpAtLevel, xpForLevel, type GameSave } from '../gameMode.ts';
+import { GAME_SAVE_EVENT, levelOf, readGameSave, writeGameSave, xpAtLevel, xpForLevel, gameSeeded, markGameSeeded, type GameSave } from '../gameMode.ts';
 
 // Picture, frame, bio, your links and your own quick commands (a command sends its text to Chat).
 const card = 'rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900';
@@ -47,7 +47,9 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
   // A device with no game save yet (new browser, cleared storage) starts from the level saved on the hub,
   // so a level saved earlier is never lost or overwritten by a fresh 0.
   useEffect(() => {
-    if (!saved || readGameSave().xp > 0) return;
+    if (!saved || gameSeeded()) return;
+    if (readGameSave().xp > 0) return markGameSeeded(); // this device already has its own progress
+    markGameSeeded();
     const fromHub = xpAtLevel(Math.max(1, saved.playerLevel || 1)) + Math.max(0, saved.xp || 0);
     if (fromHub > 0) {
       writeGameSave({ ...readGameSave(), xp: fromHub });
