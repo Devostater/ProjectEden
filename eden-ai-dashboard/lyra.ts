@@ -264,6 +264,18 @@ export function registerLyraRoutes(app: Express) {
     }
   });
 
+  // Auto-open LYRA on the tablet when Eden starts. Per PC, in .eden-lyra-autoopen.json (git-ignored), default Off.
+  // Read by scripts/hub-supervisor.mjs at start, so a change takes effect on the next start. This PC or a paired tablet can change it.
+  const AUTO_OPEN_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-lyra-autoopen.json');
+  const readAutoOpen = () => { try { return JSON.parse(fs.readFileSync(AUTO_OPEN_FILE, 'utf8')).autoOpen === true; } catch { return false; } };
+  app.get('/api/lyra/auto-open', (_req, res) => res.json({ autoOpen: readAutoOpen() }));
+  app.post('/api/lyra/auto-open', (req, res) => {
+    if (!mayManage(req)) return res.status(403).json({ error: 'Auto-open can only be changed on this computer or a paired tablet.' });
+    const autoOpen = req.body?.autoOpen === true;
+    fs.writeFileSync(AUTO_OPEN_FILE, JSON.stringify({ autoOpen }, null, 2));
+    res.json({ autoOpen });
+  });
+
   app.get('/api/lyra/status', async (_req, res) => {
     await pingLyra(); // check right now, so the page sees LYRA as soon as she is up
     res.json({ connected: lyraConnected() });

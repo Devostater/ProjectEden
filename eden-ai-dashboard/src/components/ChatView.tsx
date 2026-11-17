@@ -71,6 +71,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ agents, chat, draft, onDraft
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [providers, setProviders] = useState<Record<string, boolean>>({});
   const [input, setInput] = useState('');
+  // Model quickbar (hub-wide): Online, or one model on this PC.
+  const [chatModel, setChatModel] = useState<{ model: string; local: string[] }>({ model: 'online', local: [] });
+  const [modelError, setModelError] = useState('');
+  const loadChatModel = () => fetch('/api/chat-model').then((r) => r.json()).then(setChatModel).catch(() => {});
+  useEffect(() => { loadChatModel(); }, []);
+  const pickModel = (model: string) => {
+    setModelError('');
+    fetch('/api/chat-model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }) })
+      .then(async (r) => { const d = await r.json(); if (!r.ok) throw new Error(d.error); loadChatModel(); })
+      .catch((e) => setModelError(e.message || 'Could not change the model.'));
+  };
+  const shortName = (id: string) => id.replace(/^x:[^:]+:/, '');
   const [busy, setBusy] = useState(false);
   const [summarise, setSummarise] = useState(() => {
     try {
@@ -358,6 +370,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ agents, chat, draft, onDraft
               ))}
             </div>
           )}
+          <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs" role="group" aria-label="Chat model">
+            <span className="text-slate-500">Online</span>
+            <button onClick={() => pickModel('online')} aria-pressed={chatModel.model === 'online'} className={`rounded-full border px-2 py-0.5 ${chatModel.model === 'online' ? 'border-indigo-400 bg-indigo-50 text-indigo-800 dark:border-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-200' : 'border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800'}`}>🌐 Usual AIs</button>
+            <span className="ml-2 text-slate-500">Local</span>
+            {chatModel.local.map((id) => (
+              <button key={id} onClick={() => pickModel(id)} aria-pressed={chatModel.model === id} className={`rounded-full border px-2 py-0.5 ${chatModel.model === id ? 'border-emerald-400 bg-emerald-50 text-emerald-800 dark:border-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-200' : 'border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800'}`}>💻 {shortName(id)}</button>
+            ))}
+            {!chatModel.local.length && <span className="text-slate-400" title="Start Ollama to use models on this PC">none running</span>}
+            {chatModel.model !== 'online' && !chatModel.local.includes(chatModel.model) && <span role="alert" className="text-amber-600">⚠ {shortName(chatModel.model)} isn't running. Start Ollama or pick Online.</span>}
+            {modelError && <span role="alert" className="text-red-600">{modelError}</span>}
+          </div>
           <div className="flex gap-2">
             <textarea
               ref={inputRef}

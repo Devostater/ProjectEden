@@ -130,3 +130,12 @@ export function usePanes() {
     back,
   };
 }
+
+export type KeepPage = 'focused' | 'left' | 'right';
+const KEEP_KEY = 'eden-split-keep';
+export const readKeep = (): KeepPage => {
+  try { const v = localStorage.getItem(KEEP_KEY); return v === 'left' || v === 'right' ? v : 'focused'; } catch { return 'focused'; }
+};
+export const saveKeep = (v: KeepPage) => { try { localStorage.setItem(KEEP_KEY, v); } catch {} };
+// The pane to close so the chosen page stays.
+export const paneToClose = (keep: KeepPage, focus: 0 | 1): 0 | 1 => (keep === 'left' ? 1 : keep === 'right' ? 0 : ((1 - focus) as 0 | 1));

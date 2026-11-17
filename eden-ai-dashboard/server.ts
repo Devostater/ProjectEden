@@ -2,7 +2,7 @@ import express from 'express';
 import { GoogleGenAI } from '@google/genai';
 import { canUseWeb, generate, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel, costByProvider } from './providers';
 import { registerSettingsRoutes } from './settings';
-import { registerPairing } from './pairing';
+import { registerPairing, mayManage } from './pairing';
 import { registerProjectRoutes, ensureProjects, noteOnCard } from './projects';
 import { registerNewProjectRoutes } from './newproject';
 import { registerToolboxRoutes } from './toolbox';
@@ -448,7 +448,22 @@ async function startServer() {
 
   // Chat. With no agent named, the client sends Chief. Each agent answers with its own AI; if that AI
   // can't answer (not signed in, plan used up), the reply comes from another connected AI, with a note.
+  // Chat model quickbar: hub-wide choice of Online (the usual AIs) or one model on this PC.
+  // Kept in .eden-chat-model.json (git-ignored), default Online. A local choice never falls back to online.
+  const CHAT_MODEL_FILE = path.join(__dirname, '.eden-chat-model.json');
+  const readChatModel = (): string => { try { const v = JSON.parse(fs.readFileSync(CHAT_MODEL_FILE, 'utf8')).model; return typeof v === 'string' && v ? v : 'online'; } catch { return 'online'; } };
+  app.get('/api/chat-model', (_req, res) => res.json({ model: readChatModel(), local: localModels() }));
+  app.post('/api/chat-model', (req, res) => {
+    if (!mayManage(req)) return res.status(403).json({ error: 'Only this computer or a paired tablet can change the chat model.' });
+    const m = req.body?.model;
+    const model = m === 'online' || (typeof m === 'string' && localModels().includes(m)) ? m : null;
+    if (!model) return res.status(400).json({ error: 'That model is not available on this PC.' });
+    fs.writeFileSync(CHAT_MODEL_FILE, JSON.stringify({ model }, null, 2));
+    res.json({ model });
+  });
+
   app.post('/api/chat', async (req, res) => {
+    const chatModel = readChatModel();
     const { messages, model, agentIds } = req.body || {};
     if (!Array.isArray(messages) || !messages.length) {
       return res.status(400).json({ error: 'messages required' });
@@ -482,7 +497,13 @@ async function startServer() {
       const wantedProvider = providerFor(wanted);
       // Skip an AI we already know can't answer right now, then try the others in turn.
       const offlineFirst = (agent?.localModel && localModels().includes(agent.localModel) && fitsNow(agent.localModel) ? agent.localModel : null) || localModelFor(kindFor(wanted, agent?.role));
-      const queue = isOffline()
+      const pinnedLocal = chatModel !== 'online' ? chatModel : null;
+      if (pinnedLocal && !localModels().includes(pinnedLocal)) {
+        return { author: agent?.name || 'Assistant', agentId: agent?.id, content: '', error: `The local model ${pinnedLocal.replace(/^x:[^:]+:/, '')} isn't running. Start Ollama, or switch the chat to Online.` };
+      }
+      const queue = pinnedLocal
+        ? [pinnedLocal]
+        : isOffline()
         ? [...new Set([offlineFirst, ...localModels()].filter(Boolean) as string[])]
         : [...(providerUnavailable(wantedProvider) ? [] : [wanted]), ...fallbackModels(wantedProvider)];
       let lastError = isOffline()
