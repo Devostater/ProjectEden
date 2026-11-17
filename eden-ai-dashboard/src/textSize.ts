@@ -1,13 +1,16 @@
 // Text size for people who need bigger text. The whole app is sized in rem, so changing the root font size scales
-// text, buttons, icons and spacing together. Four steps; the first run starts at Large. Saved per device.
+// text, buttons, icons and spacing together. Five steps; the first run starts at Large. Saved per device.
+// "Maximum" is the biggest: 175% on a computer. Phones and small windows get a gentler step (see index.css) so
+// nothing runs off the screen; the percent here is the computer size.
 import { useEffect, useState } from 'react';
 
-export type TextSize = 'normal' | 'large' | 'larger' | 'largest';
+export type TextSize = 'normal' | 'large' | 'larger' | 'largest' | 'maximum';
 export const TEXT_SIZES: { id: TextSize; label: string; percent: number }[] = [
   { id: 'normal', label: 'Normal', percent: 100 },
   { id: 'large', label: 'Large', percent: 112.5 },
   { id: 'larger', label: 'Larger', percent: 125 },
   { id: 'largest', label: 'Largest', percent: 150 },
+  { id: 'maximum', label: 'Maximum', percent: 175 },
 ];
 const KEY = 'eden_text_size';
 const DEFAULT: TextSize = 'large';

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, ChevronsDownUp, ChevronsUpDown, GitBranch, FileText, GripVertical, Plus, Send, SlidersHorizontal, Eye, EyeOff } from 'lucide-react';
+import { AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, ChevronsDownUp, ChevronsUpDown, GitBranch, FileText, GripVertical, Plus, Send, SlidersHorizontal, Eye, EyeOff, ExternalLink } from 'lucide-react';
 import type { Agent, Card, DAGPipeline, HostedFile, Project } from '../types/index.ts';
 import { newlineOnCtrlEnter } from '../textbox.ts';
 import { UsageBar, useProviderUsage, RefreshUsageButton } from './UsageBars.tsx';
@@ -8,6 +8,8 @@ import { roadmapProgress, progressOf } from './Roadmap.tsx';
 import { diagnose, applyFix, canFix, limitStillOn, type FixableJob } from '../updateFixes.ts';
 import { useFolded, FoldHeader } from './Foldable.tsx';
 import { setTickerItems } from '../ticker.ts';
+import RadarWidget from './RadarWidget.tsx';
+import { FloatingWidget } from './FloatingWidget.tsx';
 
 // A JSON POST to the hub that throws with the hub's own message when it says no.
 const postJson = async (url: string, body?: unknown) => {
@@ -74,6 +76,12 @@ type PanelId = 'roadmaps' | 'projects' | 'health' | 'team' | 'lyra' | 'ai' | 'wo
 const DEFAULT_ORDER: PanelId[] = ['roadmaps', 'projects', 'health', 'team', 'lyra', 'ai', 'workflows', 'files'];
 const ORDER_KEY = 'eden_dashboard_order';
 const COLLAPSED_KEY = 'eden_dashboard_collapsed';
+// Each panel is "default" (full width) or "x1" (half width, so two x1 panels sit side by side).
+const SIZE_KEY = 'eden_dashboard_sizes';
+
+// The widget sidebar holds just the bug radar. It can pop out into a floating window that stays on screen while you scroll.
+const WIDGET_POPPED_KEY = 'eden_widget_popped';
+const WIDGET_POS_KEY = 'eden_widget_pos';
 
 function load<T>(key: string, fallback: T): T {
   try {
@@ -105,9 +113,20 @@ function loadOrder(): PanelId[] {
 
 export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, projects, cards, onOpenProject, ownerName, onAsk, onTalkTo, onOpen, onRetryCard }) => {
   const [text, setText] = useState('');
+  // Bug radar: whether it is popped out, and where the floating window sits.
+  const [radarOut, setRadarOut] = useState<boolean>(() => { const saved = load<unknown>(WIDGET_POPPED_KEY, false); return saved === true || (Array.isArray(saved) && saved.includes('radar')); });
+  const [radarPos, setRadarPos] = useState<{ x: number; y: number } | null>(() => { const saved = load<Record<string, { x: number; y: number }>>(WIDGET_POS_KEY, {}); return saved.radar ?? null; });
+  const setRadarOutSaved = (next: boolean) => { setRadarOut(next); save(WIDGET_POPPED_KEY, next); };
+  const moveRadar = (x: number, y: number) => { setRadarPos({ x, y }); save(WIDGET_POS_KEY, { radar: { x, y } }); };
   const [order, setOrder] = useState<PanelId[]>(loadOrder);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => load(COLLAPSED_KEY, {}));
   const [dragging, setDragging] = useState<PanelId | null>(null);
+  const [sizes, setSizes] = useState<Record<string, 'x1' | 'default'>>(() => load(SIZE_KEY, {}));
+  const toggleSize = (id: PanelId) => {
+    const next = { ...sizes, [id]: sizes[id] === 'x1' ? 'default' : 'x1' } as Record<string, 'x1' | 'default'>;
+    setSizes(next);
+    save(SIZE_KEY, next);
+  };
   // Your dashboard layout (saved on this device): which panels show and the top cards. Panels sit in one centered column.
   const [prefs, setPrefsState] = useState(() => ({ hidden: [] as string[], needsYou: true, ask: true, quickLinks: true, ticker: true, hiddenLinks: [] as string[], ...load('eden_dashboard_prefs', {}) }));
   const setPrefs = (patch: Partial<typeof prefs>) => setPrefsState((p) => { const next = { ...p, ...patch }; save('eden_dashboard_prefs', next); return next; });
@@ -601,22 +620,84 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     },
   };
 
-  return (
-    <div className="flex min-h-full flex-col lg:flex-row">
-    {/* Left panel: what goes here is still to be decided (TBD) */}
-    <aside aria-label="Left panel (to be decided)" className="shrink-0 border-b border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60 lg:w-64 lg:border-b-0 lg:border-r lg:p-5">
-      <div className="lg:sticky lg:top-5">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Left panel</h2>
-        <div className="mt-3 rounded-lg border border-dashed border-slate-300 p-4 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-          <p className="font-semibold text-slate-700 dark:text-slate-200">TBD</p>
-          <p className="mt-1">Still to be decided. Tell me what you want here.</p>
-        </div>
-      </div>
-    </aside>
+  // Widgets: just the bug radar (a just-for-fun game where your ship shoots bugs).
+  const radarPos0 = radarPos ?? { x: Math.max(8, window.innerWidth - 368), y: 80 };
 
-    {/* Main area on the right: like a media player, the content sits in the big stage and a status bar runs along the bottom */}
+  return (
+    <div className="flex min-h-full flex-col">
+    {/* The content sits in the big stage and a status bar runs along the bottom, like a media player */}
     <div className="flex min-w-0 flex-1 flex-col">
-    <div className="mx-auto w-full max-w-4xl flex-1 space-y-6 p-4 sm:p-8">
+    <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 p-4 sm:p-8 lg:flex-row lg:items-start">
+      {/* Widgets sidebar on the left: just the bug radar. It stays in view as you scroll. Pop out floats it above the page (also stays put while you scroll). */}
+      <aside aria-label="Widgets sidebar" className="order-last w-full shrink-0 lg:order-none lg:sticky lg:top-4 lg:w-72">
+      <section aria-label="Widgets" className="rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/60">
+        <div className="flex items-center gap-1 border-b border-slate-200 p-2 dark:border-slate-800">
+          <span className="min-w-0 flex-1 truncate px-2 py-1 text-sm font-medium text-slate-700 dark:text-slate-200">🎯 Bug radar{radarOut && <span className="ml-1 text-xs text-slate-400">(popped out)</span>}</span>
+          <button
+            onClick={() => setRadarOutSaved(!radarOut)}
+            aria-pressed={radarOut}
+            aria-label={`${radarOut ? 'Dock' : 'Pop out'} Bug radar`}
+            title={radarOut ? 'Dock back into the sidebar' : 'Pop out into a floating window'}
+            className={`rounded-lg px-1.5 py-1.5 ${radarOut ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="flex justify-center p-3">
+          {radarOut ? (
+            <div className="py-6 text-center text-sm text-slate-500 dark:text-slate-400">
+              <p>Bug radar is popped out.</p>
+              <button onClick={() => setRadarOutSaved(false)} className="mt-2 rounded-lg border border-slate-300 px-3 py-1.5 text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">
+                Dock it back here
+              </button>
+            </div>
+          ) : (
+            <div className="mx-auto w-full max-w-[320px]"><RadarWidget maxWidth={320} /></div>
+          )}
+        </div>
+      </section>
+      </aside>
+
+      <div className="min-w-0 flex-1 space-y-6">
+      {/* Ask box (at the top) */}
+      {prefs.ask && <div>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">What are we working on{ownerName ? `, ${ownerName.split(' ')[0]}` : ''}?</h1>
+        <div className="mt-4 rounded-xl border border-slate-300 bg-white p-3 focus-within:border-indigo-500 dark:border-slate-700 dark:bg-slate-900">
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (newlineOnCtrlEnter(e, setText)) return;
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            rows={3}
+            placeholder="Ask Chief anything, or use @name to bring in someone from your team"
+            className="w-full resize-none bg-transparent text-slate-900 placeholder-slate-400 focus:outline-none dark:text-slate-100"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            {STARTERS.map((s) => (
+              <button
+                key={s.label}
+                onClick={() => setText(s.text)}
+                className="rounded-full border border-slate-300 px-3 py-1 text-sm text-slate-600 hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-300 dark:hover:text-indigo-400"
+              >
+                {s.label}
+              </button>
+            ))}
+            <button
+              onClick={submit}
+              disabled={!text.trim()}
+              className="ml-auto flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
+            >
+              <Send className="h-4 w-4" /> Send
+            </button>
+          </div>
+        </div>
+      </div>}
+
       {/* Quick links: one click to the places you use most */}
       {prefs.quickLinks && (
         <nav aria-label="Quick links" className="flex flex-wrap gap-2">
@@ -766,49 +847,11 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
         </section>
       )}
 
-      {/* Ask box */}
-      {prefs.ask && <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">What are we working on{ownerName ? `, ${ownerName.split(' ')[0]}` : ''}?</h1>
-        <div className="mt-4 rounded-xl border border-slate-300 bg-white p-3 focus-within:border-indigo-500 dark:border-slate-700 dark:bg-slate-900">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (newlineOnCtrlEnter(e, setText)) return;
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            rows={3}
-            placeholder="Ask Chief anything, or use @name to bring in someone from your team"
-            className="w-full resize-none bg-transparent text-slate-900 placeholder-slate-400 focus:outline-none dark:text-slate-100"
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            {STARTERS.map((s) => (
-              <button
-                key={s.label}
-                onClick={() => setText(s.text)}
-                className="rounded-full border border-slate-300 px-3 py-1 text-sm text-slate-600 hover:border-indigo-400 hover:text-indigo-600 dark:border-slate-700 dark:text-slate-300 dark:hover:text-indigo-400"
-              >
-                {s.label}
-              </button>
-            ))}
-            <button
-              onClick={submit}
-              disabled={!text.trim()}
-              className="ml-auto flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
-            >
-              <Send className="h-4 w-4" /> Send
-            </button>
-          </div>
-        </div>
-      </div>}
-
-      <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {order.filter((id) => !prefs.hidden.includes(id)).map((id) => {
           const p = panels[id];
           const isCollapsed = !!collapsed[id];
+          const isX1 = sizes[id] === 'x1';
           return (
             <section
               key={id}
@@ -821,7 +864,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                 e.preventDefault();
                 setDragging(null);
               }}
-              className={`flex flex-col rounded-xl border bg-white p-5 transition-shadow dark:bg-slate-900 ${
+              className={`flex min-w-0 flex-col rounded-xl border bg-white p-5 transition-shadow dark:bg-slate-900 ${isX1 ? '' : 'sm:col-span-2'} ${
                 dragging === id ? 'border-indigo-500 opacity-60 shadow-lg' : 'border-slate-200 dark:border-slate-800'
               }`}
             >
@@ -856,6 +899,14 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                   <h2 className="truncate font-semibold text-slate-900 dark:text-white">{p.title}</h2>
                   {p.count !== undefined && <span className="text-sm text-slate-500">{p.count}</span>}
                 </button>
+                <button
+                  onClick={() => toggleSize(id)}
+                  aria-pressed={isX1}
+                  title={isX1 ? 'Half width (x1). Click for the default full width.' : 'Full width (default). Click for half width (x1).'}
+                  className={`hidden shrink-0 rounded border px-1.5 py-0.5 text-xs sm:block ${isX1 ? 'border-indigo-500 text-indigo-700 dark:text-indigo-300' : 'border-slate-300 text-slate-500 dark:border-slate-700 dark:text-slate-400'}`}
+                >
+                  {isX1 ? 'x1' : 'Default'}
+                </button>
                 <button onClick={p.onAction} className="flex shrink-0 items-center gap-1 text-sm text-indigo-600 hover:underline dark:text-indigo-400">
                   {p.action} <ArrowRight className="h-3.5 w-3.5" />
                 </button>
@@ -865,27 +916,17 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
           );
         })}
       </div>
+      </div>
     </div>
 
-    {/* Bottom bar, like a player's control strip: a quick summary and the places you jump to most */}
-    <div role="status" className="sticky bottom-0 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-200 bg-white/95 px-4 py-3 text-sm backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 sm:px-8">
-      <span className={`flex items-center gap-1.5 font-medium ${allClear ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'}`}>
-        {allClear ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
-        {!checked ? 'Checking…' : allClear ? 'All clear' : 'Needs you'}
-      </span>
-      <span className="text-slate-500 dark:text-slate-400">
-        {agents.length} on your team · {projects.length} {projects.length === 1 ? 'project' : 'projects'}
-      </span>
-      <span className="ml-auto flex gap-2">
-        <button onClick={() => openPanel('review')} className="rounded-lg border border-slate-300 px-3 py-1 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
-          Review{reviewCount > 0 ? ` (${reviewCount})` : ''}
-        </button>
-        <button onClick={() => onOpen('updates')} className="rounded-lg border border-slate-300 px-3 py-1 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
-          Code updates{readyUpdates > 0 ? ` (${readyUpdates})` : ''}
-        </button>
-      </span>
     </div>
-    </div>
+
+    {/* The popped-out radar floats above the page and stays put while you scroll */}
+    {radarOut && (
+      <FloatingWidget title="🎯 Bug radar" x={radarPos0.x} y={radarPos0.y} onMove={moveRadar} onDock={() => setRadarOutSaved(false)}>
+        <RadarWidget maxWidth={240} />
+      </FloatingWidget>
+    )}
     </div>
   );
 };

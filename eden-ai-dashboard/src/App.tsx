@@ -42,6 +42,8 @@ import { useChatThreads } from './chatThreads.ts';
 import { useProjects } from './projectsStore.ts';
 import { ProjectsView } from './components/ProjectsView.tsx';
 import { GameHud } from './components/GameHud.tsx';
+import { AchievementsView, AchievementToasts } from './components/AchievementsView.tsx';
+import { recordActivity } from './earned.ts';
 import './gameMode.ts'; // sets the saved video game look (off unless turned on in Preferences) before anything paints
 
 // Once per device: open the bottom dock taller than the old 256px so it can be read (about 22rem at the chosen
@@ -136,9 +138,18 @@ export default function App() {
     reveal('settings');
   };
   const projectsApi = useProjects();
+  // Team, workflows and files have arrived from the hub (so achievement totals are real, not startup zeros).
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
 
   // The number of cards waiting for your review, shown in the browser tab title.
   const reviewCount = projectsApi.cards.filter((c) => c.column === 'review').length;
+  // Points and achievements come from what you do here (see earned.ts). Counts only go up.
+  const chatMessages = chat.threads.reduce((n, t) => n + t.messages.filter((m) => m.role === 'user').length, 0);
+  const doneCards = projectsApi.cards.filter((c) => c.column === 'done').length;
+  useEffect(() => {
+    recordActivity({ projects: projectsApi.projects.length, cards: projectsApi.cards.length, doneCards, workflows: pipelines.length, teammates: agents.length, rooms: nexusRooms.rooms.length, files: files.length, chatMessages, page: panes, loaded: projectsApi.loaded && workspaceLoaded && nexusRooms.loaded });
+  }, [projectsApi.loaded, workspaceLoaded, nexusRooms.loaded, projectsApi.projects.length, projectsApi.cards.length, doneCards, pipelines.length, agents.length, nexusRooms.rooms.length, files.length, chatMessages, panes.join('|')]);
+
   useEffect(() => {
     document.title = reviewCount > 0 ? `(${reviewCount}) Eden AI Hub` : 'Eden AI Hub';
   }, [reviewCount]);
@@ -159,6 +170,7 @@ export default function App() {
       const res = await fetch('/api/workspace');
       if (!res.ok) return;
       const d = await res.json();
+      setWorkspaceLoaded(true);
       if (d.agents) setAgents(d.agents);
       if (d.pipelines) setPipelines(d.pipelines);
       if (d.files) setFiles(d.files);
@@ -241,6 +253,7 @@ export default function App() {
       projectsApi.setOpenCardId(card.id);
       setActiveTab('projects');
     },
+    onOpenUpdates: () => setActiveTab('updates'),
   };
 
 
@@ -365,10 +378,12 @@ export default function App() {
             {activeTab === 'updates' && <UpdatesView />}
   
             {activeTab === 'repos' && <ReposView />}
-            {activeTab === 'meetings' && <MeetingsView onOpenProject={(id) => { projectsApi.setActiveId(id); setActiveTab('projects'); }} />}
+            {activeTab === 'meetings' && <MeetingsView onOpenProject={(id) => { projectsApi.setActiveId(id); setActiveTab('projects'); }} rooms={nexusRooms.rooms} activeRoomId={nexusRooms.activeId} onOpenRoom={(id) => { nexusRooms.setActiveId(id); setActiveTab('nexus'); }} />}
             {activeTab === 'devices' && <DevicesView />}
   
             {activeTab === 'remote' && <RemoteView />}
+
+            {activeTab === 'achievements' && <AchievementsView />}
   
             {activeTab === 'settings' && (
               <AccountView
@@ -408,7 +423,7 @@ export default function App() {
         activePipelineId={pipelineId}
         agents={agents}
         onNewRoom={() => setNewRoomRequest((n) => n + 1)}
-        onRequest={(r) => setRequest({ ...r, n: (request?.n || 0) + 1 })} profile={profile} mobileOpen={drawer} onCloseMobile={() => setDrawer(false)} />
+        onRequest={(r) => setRequest({ ...r, n: (request?.n || 0) + 1 })} mobileOpen={drawer} onCloseMobile={() => setDrawer(false)} />
 
       <div className="relative flex h-[100dvh] min-w-0 flex-1 flex-col overflow-hidden">
         <div className="eden-bg" aria-hidden="true">
@@ -427,7 +442,7 @@ export default function App() {
           </div>
         )}
 
-        <StatusBar keepPage={keepPage} onKeepPage={(v) => { saveKeep(v); setKeepPage(v); }} title={split && wide ? '' : TITLES[activeTab] || ''} split={split || picking} onToggleSplit={() => (split ? close(paneToClose(keepPage, focus)) : picking ? cancelPicking() : startPicking())} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} actions={commandActions} />
+        <StatusBar profileName={profile.name || profile.studio} studioName={profile.studio}keepPage={keepPage} onKeepPage={(v) => { saveKeep(v); setKeepPage(v); }} title={split && wide ? '' : TITLES[activeTab] || ''} split={split || picking} onToggleSplit={() => (split ? close(paneToClose(keepPage, focus)) : picking ? cancelPicking() : startPicking())} setActiveTab={setActiveTab} darkMode={darkMode} setDarkMode={setDarkMode} reviewCount={reviewCount} review={review} actions={commandActions} />
 
         <main ref={mainRef} className="relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden">
           <div className="shrink-0">
@@ -458,7 +473,7 @@ export default function App() {
                 </PaneFrame>
               );
             })}
-            {!split && !picking && panelProject && <ProjectSidePanel project={panelProject} showActions={activeTab === 'projects'} />}
+            {!split && !picking && panelProject && <ProjectSidePanel project={panelProject} showActions={activeTab === 'projects'} showMeeting={activeTab === 'meetings'} />}
             {split && wide && <SplitHandle ratio={ratio} setRatio={setRatio} containerRef={paneRowRef} />}
             {picking && wide && <div style={{ order: 1 }} className="w-3 shrink-0 bg-slate-200 dark:bg-slate-800" aria-hidden />}
             {picking && (
@@ -521,6 +536,7 @@ export default function App() {
         />
 
         <GameHud />
+        <AchievementToasts />
 
         <div className="eden-dock contents">
         <BottomPanel

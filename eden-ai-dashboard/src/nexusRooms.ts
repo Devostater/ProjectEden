@@ -6,6 +6,7 @@ const ROOM_KEY = 'eden_nexus_room';
 
 export function useNexusRooms() {
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
+  const [loaded, setLoaded] = useState(false); // the first answer from the hub has arrived
   const [activeId, setActive] = useState(() => {
     try {
       return localStorage.getItem(ROOM_KEY) || '';
@@ -23,6 +24,7 @@ export function useNexusRooms() {
       if (snapshot !== lastSeen.current) {
         lastSeen.current = snapshot;
         setRooms(d.rooms);
+        setLoaded(true);
       }
       // Keep the open room if it still exists, else open the first.
       if (!d.rooms.some((r: RoomSummary) => r.id === activeRef.current) && d.rooms.length) setActiveId(sortRooms(d.rooms)[0].id);
@@ -43,7 +45,7 @@ export function useNexusRooms() {
     return () => clearInterval(timer);
   }, [refresh]);
 
-  return { rooms, activeId, setActiveId, refresh };
+  return { rooms, loaded, activeId, setActiveId, refresh };
 }
 
 export type NexusRoomsApi = ReturnType<typeof useNexusRooms>;

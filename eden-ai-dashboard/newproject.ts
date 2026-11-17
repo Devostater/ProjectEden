@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
 import type { Project } from './src/types/index';
 import { githubToken } from './github';
-import { addCodebase } from './updates';
+import { addCodebase, findCodebase } from './updates';
 import { logActivity } from './activity';
 
 export const AZI_ROOT = process.env.AZI_ROOT || 'C:\\AZI';
@@ -1004,6 +1004,32 @@ export function registerNewProjectRoutes(app: Express, getStore: () => Store, sa
     try {
       const result = commitPushProject(dir, { dryRun, projectName: p.name });
       if (!dryRun) logActivity(result.ok ? 'done' : 'info', `Save and push ${p.name}: ${result.message}`);
+      res.json({ ...result, folder: dir });
+    } catch (err: any) {
+      res.status(500).json({ error: `Save and push failed: ${err.message}` });
+    } finally {
+      if (!dryRun) commitPushBusy.delete(key);
+    }
+  });
+
+  // The same "Save and push", started from the Code updates page for one codebase (the "Save to GitHub now" button
+  // next to the unsaved-files note). Same checks, same refusals; { dryRun: true } only counts the files first.
+  app.post('/api/codebases/:id/commit-push', (req, res) => {
+    if (!isLocal(req)) return res.status(403).json({ error: 'Only available on this computer.' });
+    const cb = findCodebase(req.params.id);
+    if (!cb || !fs.existsSync(cb.dir)) return res.status(404).json({ error: 'That codebase was not found on this PC.' });
+    const top = git(['rev-parse', '--show-toplevel'], cb.dir);
+    if (!top.ok || !top.out) return res.status(404).json({ error: `${cb.name} is not in a git folder, so there is nothing to push.` });
+    const dir = path.resolve(top.out);
+    const dryRun = req.body?.dryRun === true;
+    const key = dir.toLowerCase();
+    if (!dryRun) {
+      if (syncBusy || commitPushBusy.has(key)) return res.status(409).json({ error: `${cb.name} is already being synced or saved. Try again in a moment.` });
+      commitPushBusy.add(key);
+    }
+    try {
+      const result = commitPushProject(dir, { dryRun, projectName: cb.name });
+      if (!dryRun) logActivity(result.ok ? 'done' : 'info', `Save and push ${cb.name}: ${result.message}`);
       res.json({ ...result, folder: dir });
     } catch (err: any) {
       res.status(500).json({ error: `Save and push failed: ${err.message}` });

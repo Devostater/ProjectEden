@@ -1,14 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.ts';
 import { useFolded, FoldHeader } from './Foldable.tsx';
-import { Wand2, Loader2, ListPlus, Lightbulb, RefreshCw, X, Pencil, AlertTriangle } from 'lucide-react';
+import { Wand2, Loader2, ChevronDown, ListPlus, Lightbulb, RefreshCw, X, Pencil, AlertTriangle } from 'lucide-react';
 
 // The "Update" card: everything for asking for the next change lives here, in small pieces.
 // Each piece below does one job, so a later patch only has to touch the piece it is about:
 //   CodebasePicker  – which codebase to change (and adding a new one)
 //   RequestBox      – the box where you describe the change
 //   UnsavedWarning  – the note when many files aren't saved to GitHub yet
-//   StartRow        – "Run on this PC" and the Make this change button
+//   StartRow        – "Next idea", "Run on this PC" and the Make this change button
 //   SuggestedIdeas  – ideas the AI suggests for this codebase
 //   NextUpdate      – puts the pieces together in one card
 
@@ -33,6 +33,7 @@ export const CodebasePicker: React.FC<{
   onAdded: (id: string) => Promise<void> | void;
   onError: (message: string) => void;
 }> = ({ codebases, target, onPick, canAdd, onAdded, onError }) => {
+  const [minimized, toggleMin] = useFolded('eden_update_picker_minimized');
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDir, setNewDir] = useState('');
@@ -53,8 +54,17 @@ export const CodebasePicker: React.FC<{
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Change:</span>
-        {codebases.filter((c) => c.ok).map((c) => (
+        <button onClick={toggleMin} aria-expanded={!minimized} title={minimized ? 'Show all codebases' : 'Minimize to just the chosen codebase'} className="flex items-center gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
+          <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${minimized ? '-rotate-90' : ''}`} />
+          Change:
+          <span className="sr-only">{minimized ? '(minimized, press to show all codebases)' : '(press to minimize)'}</span>
+        </button>
+        {minimized && (
+          <span className="rounded-lg border border-indigo-500 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300">
+            {codebases.find((c) => c.id === target)?.name ?? 'Pick a codebase'}
+          </span>
+        )}
+        {!minimized && codebases.filter((c) => c.ok).map((c) => (
           <button
             key={c.id}
             onClick={() => onPick(c.id)}
@@ -65,9 +75,9 @@ export const CodebasePicker: React.FC<{
             {c.name}
           </button>
         ))}
-        {canAdd && <button onClick={() => setAdding(!adding)} className="text-sm text-slate-500 hover:underline">+ Add a codebase</button>}
+        {!minimized && canAdd && <button onClick={() => setAdding(!adding)} className="text-sm text-slate-500 hover:underline">+ Add a codebase</button>}
       </div>
-      {adding && (
+      {adding && !minimized && (
         <div className="mb-3 flex flex-wrap gap-2 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
           <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name, e.g. Project Nova" className="min-w-[10rem] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
           <input value={newDir} onChange={(e) => setNewDir(e.target.value)} placeholder="Folder, e.g. C:\Users\you\Documents\GITHUB\Project-Nova" className="min-w-[16rem] flex-[2] rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-mono text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
@@ -97,15 +107,75 @@ export const RequestBox: React.FC<{ codebaseName: string; value: string; onChang
 );
 
 // Piece: a gentle note when any files aren't saved to GitHub yet. Shows nothing at zero. It never blocks an update.
-export const UnsavedWarning: React.FC<{ count?: number }> = ({ count }) => {
-  if (count === undefined || count < 1) return null;
+// "Save to GitHub now" checks first (nothing is saved yet), asks you to confirm, then saves and pushes. The hub refuses
+// anything that looks like a secret and never forces a push.
+export const UnsavedWarning: React.FC<{ count?: number; codebaseId?: string }> = ({ count, codebaseId }) => {
+  const [step, setStep] = useState<'idle' | 'checking' | 'confirm' | 'saving'>('idle');
+  const [plan, setPlan] = useState<{ files: number; target: string } | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    setStep('idle');
+    setPlan(null);
+    setResult(null);
+  }, [codebaseId]);
+
+  const url = `/api/codebases/${encodeURIComponent(codebaseId || '')}/commit-push`;
+  const check = async () => {
+    setStep('checking');
+    setResult(null);
+    try {
+      const d = await post(url, { dryRun: true });
+      if (d.ok) {
+        setPlan({ files: d.files || 0, target: d.remote && d.branch ? `${d.remote}/${d.branch}` : 'GitHub' });
+        setStep('confirm');
+      } else {
+        setResult({ ok: false, text: d.message || 'Could not check these files.' });
+        setStep('idle');
+      }
+    } catch (err: any) {
+      setResult({ ok: false, text: err.message });
+      setStep('idle');
+    }
+  };
+  const save = async () => {
+    setStep('saving');
+    try {
+      const d = await post(url, {});
+      setResult({ ok: !!d.ok, text: d.ok ? `Saved ✓ ${d.message || ''}`.trim() : d.message || 'Could not save and push.' });
+    } catch (err: any) {
+      setResult({ ok: false, text: err.message });
+    }
+    setPlan(null);
+    setStep('idle');
+  };
+
+  const unsaved = count !== undefined && count >= 1;
+  if (!unsaved && !result) return null;
   return (
-    <p role="status" className="mt-2 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-      <span>
-        {count} {count === 1 ? 'file' : 'files'} changed here {count === 1 ? "isn't" : "aren't"} saved to GitHub yet. The AI's copy is made from your last saved version (HEAD), then your unsaved changes are added on top, so it starts from them as they are. Very large new files are left out. You can still make this change now.
-      </span>
-    </p>
+    <div role="status" className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+      {unsaved && (
+        <p className="flex items-start gap-2">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {count} {count === 1 ? 'file' : 'files'} changed here {count === 1 ? "isn't" : "aren't"} saved to GitHub yet. The AI's copy is made from your last saved version (HEAD), then your unsaved changes are added on top, so it starts from them as they are. Very large new files are left out. You can still make this change now.
+          </span>
+        </p>
+      )}
+      {unsaved && codebaseId && step !== 'confirm' && (
+        <button onClick={check} disabled={step !== 'idle'} className="mt-2 flex items-center gap-1.5 rounded-lg border border-amber-400 px-2.5 py-1 text-xs font-medium hover:bg-amber-100 disabled:opacity-50 dark:border-amber-700 dark:hover:bg-amber-950/60">
+          {step === 'idle' ? <Wand2 className="h-3.5 w-3.5" /> : <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          {step === 'checking' ? 'Checking…' : step === 'saving' ? 'Saving…' : 'Save to GitHub now'}
+        </button>
+      )}
+      {step === 'confirm' && plan && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span>Save {plan.files} {plan.files === 1 ? 'file' : 'files'} and push {plan.files === 1 ? 'it' : 'them'} to {plan.target}?</span>
+          <button onClick={save} className="rounded-lg bg-amber-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-500">Yes, save and push</button>
+          <button onClick={() => { setPlan(null); setStep('idle'); }} className="rounded-lg border border-amber-400 px-2.5 py-1 text-xs font-medium hover:bg-amber-100 dark:border-amber-700 dark:hover:bg-amber-950/60">Cancel</button>
+        </div>
+      )}
+      {result && <p role={result.ok ? 'status' : 'alert'} className={`mt-2 ${result.ok ? '' : 'text-red-700 dark:text-red-400'}`}>{result.text}</p>}
+    </div>
   );
 };
 
@@ -116,8 +186,19 @@ export const StartRow: React.FC<{
   busy: boolean;
   canStart: boolean;
   onStart: () => void;
-}> = ({ onThisPc, onOnThisPc, busy, canStart, onStart }) => (
+  ideaCount: number; // how many suggested ideas there are to cycle through
+  ideaPosition: number; // which one is in the box now (1-based), or 0 if none yet
+  onNextIdea: () => void;
+}> = ({ onThisPc, onOnThisPc, busy, canStart, onStart, ideaCount, ideaPosition, onNextIdea }) => (
   <>
+    <button
+      onClick={onNextIdea}
+      disabled={ideaCount < 1}
+      title={ideaCount < 1 ? 'No suggested ideas yet. Click "New ideas" below.' : 'Put the next suggested idea in the box above'}
+      className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+    >
+      <Lightbulb className="h-4 w-4 text-amber-500" /> Next idea{ideaCount > 0 && ideaPosition > 0 ? ` (${ideaPosition}/${ideaCount})` : ''}
+    </button>
     <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-sm text-slate-600 dark:text-slate-300" title="Claude Code runs on gpt-oss on this PC (like 'ollama launch claude'): free and works offline, but slower and less reliable than Claude.">
       <input type="checkbox" checked={onThisPc} onChange={(e) => onOnThisPc(e.target.checked)} className="h-4 w-4 accent-emerald-600" />
       Run on this PC (free)
@@ -128,7 +209,7 @@ export const StartRow: React.FC<{
   </>
 );
 
-interface Idea {
+export interface Idea {
   title: string;
   why: string;
   request: string;
@@ -137,12 +218,13 @@ interface Idea {
 
 // Piece – "Suggested for you": Claude reads the codebase (without changing it) plus recent errors and past
 // updates, and suggests a few changes. One click queues an idea; the pencil puts it in the box to edit first.
-export const SuggestedIdeas: React.FC<{ codebaseId: string; codebaseName: string; claudeReady: boolean; onEdit: (request: string) => void; onStarted: (jobId: string) => void }> = ({
+export const SuggestedIdeas: React.FC<{ codebaseId: string; codebaseName: string; claudeReady: boolean; onEdit: (request: string) => void; onStarted: (jobId: string) => void; onIdeasChange?: (ideas: Idea[]) => void }> = ({
   codebaseId,
   codebaseName,
   claudeReady,
   onEdit,
   onStarted,
+  onIdeasChange,
 }) => {
   const [data, setData] = useState<{ ideas: Idea[]; at?: string; running?: boolean; error?: string } | null>(null);
   const [acting, setActing] = useState('');
@@ -158,6 +240,10 @@ export const SuggestedIdeas: React.FC<{ codebaseId: string; codebaseName: string
     setData(null);
     load(true);
   }, [codebaseId]);
+  // Tell the card which ideas are showing, so its "Next idea" button can cycle through them.
+  useEffect(() => {
+    onIdeasChange?.(data?.ideas ?? []);
+  }, [data?.ideas]);
   useEffect(() => {
     if (!data?.running) return;
     const t = setInterval(() => load(), 4000);
@@ -263,6 +349,17 @@ export const NextUpdate: React.FC<{
   const current = p.codebases.find((c) => c.id === p.target);
   const name = current?.name || 'the hub';
   const [folded, toggle] = useFolded('eden_update_panel_folded');
+  const [ideas, setIdeas] = useState<Idea[]>([]);
+  const [ideaIndex, setIdeaIndex] = useState(-1); // which idea the "Next idea" button last put in the box
+  useEffect(() => setIdeaIndex(-1), [p.target]);
+  // Keep the position valid when the list of ideas changes (new ideas, or one dismissed).
+  useEffect(() => setIdeaIndex((i) => (i >= ideas.length ? -1 : i)), [ideas]);
+  const nextIdea = () => {
+    if (!ideas.length) return;
+    const next = (ideaIndex + 1) % ideas.length;
+    setIdeaIndex(next);
+    p.onRequestChange(ideas[next].request);
+  };
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
       <h2 className={folded ? '' : 'mb-3'}>
@@ -272,10 +369,10 @@ export const NextUpdate: React.FC<{
       <CodebasePicker codebases={p.codebases} target={p.target} onPick={p.onPickTarget} canAdd={!p.remote} onAdded={p.onAdded} onError={p.onError} />
       <RequestBox codebaseName={name} value={p.request} onChange={p.onRequestChange} />
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <StartRow onThisPc={p.onThisPc} onOnThisPc={p.onOnThisPc} busy={p.busy} canStart={!!p.request.trim() && (p.claudeReady || p.onThisPc)} onStart={p.onStart} />
+        <StartRow onThisPc={p.onThisPc} onOnThisPc={p.onOnThisPc} busy={p.busy} canStart={!!p.request.trim() && (p.claudeReady || p.onThisPc)} onStart={p.onStart} ideaCount={ideas.length} ideaPosition={ideaIndex + 1} onNextIdea={nextIdea} />
       </div>
       {!p.claudeReady && <p className="mt-2 text-sm text-amber-600 dark:text-amber-400">App updates use Claude Code. Sign in to Claude in Account → Connections first.</p>}
-      <UnsavedWarning count={current?.uncommitted} />
+      <UnsavedWarning count={current?.uncommitted} codebaseId={p.remote ? undefined : p.target} />
       <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
         Uses your Claude plan. A change usually takes a few minutes and several messages' worth of usage.
         {p.busy && ' One change runs at a time: anything you add now waits in the queue and starts by itself.'}
@@ -290,6 +387,7 @@ export const NextUpdate: React.FC<{
             document.getElementById('upd-req')?.focus();
           }}
           onStarted={p.onIdeaStarted}
+          onIdeasChange={setIdeas}
         />
       </div>
       </>}

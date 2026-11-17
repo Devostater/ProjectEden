@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TextSizePicker } from './TextSizePicker.tsx';
-import { Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Inbox, Columns2, Square, Search, Pencil } from 'lucide-react';
+import { Avatar, useProfile } from './Avatar.tsx';
+import { Bell, Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Columns2, Square, Search, Pencil, User, X } from 'lucide-react';
 import { startPicking, setTrayOpen, useTrayOpen, usePicks } from '../picker.ts';
 import { PickerTray } from './PickerTray.tsx';
 import type { AppTab } from './Sidebar.tsx';
@@ -8,7 +9,11 @@ import { VoiceCommands, type CommandActions } from './VoiceCommands.tsx';
 import { openPanel } from '../panel.ts';
 import type { KeepPage } from '../panes.ts';
 import { TITLES } from './Header.tsx';
+import { ReviewTab, type ReviewProps } from './ReviewTab.tsx';
 import { useTickerItems } from '../ticker.ts';
+import { useUpdatesFeed } from '../readyUpdates.ts';
+import { NotificationsPanel, countNotifications } from './NotificationsPanel.tsx';
+import { useMeetingHeadsUp } from '../meetingHeadsUp.ts';
 
 interface Status {
   offline?: { offline: boolean; mode: string; localFirst: boolean; week: { localPercent: number; local: number; cloud: number } };
@@ -21,8 +26,10 @@ interface Status {
 const get = (url: string) => fetch(url).then((r) => (r.ok ? r.json() : null)).catch(() => null);
 
 // Slim bar across the top: where things stand at a glance, each part a shortcut to where it's set.
-export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => void; darkMode: boolean; setDarkMode: (v: boolean) => void; reviewCount?: number; actions: CommandActions; split?: boolean; onToggleSplit?: () => void; keepPage?: KeepPage; onKeepPage?: (v: KeepPage) => void; pauseSlot?: React.ReactNode }> = ({ split = false, onToggleSplit, keepPage = 'focused', onKeepPage, pauseSlot, title, setActiveTab, darkMode, setDarkMode, reviewCount = 0, actions }) => {
+export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => void; darkMode: boolean; setDarkMode: (v: boolean) => void; reviewCount?: number; review?: ReviewProps; actions: CommandActions; split?: boolean; onToggleSplit?: () => void; keepPage?: KeepPage; onKeepPage?: (v: KeepPage) => void; pauseSlot?: React.ReactNode; profileName?: string; studioName?: string }> = ({ profileName = '', studioName = '', split = false, onToggleSplit, keepPage = 'focused', onKeepPage, pauseSlot, title, setActiveTab, darkMode, setDarkMode, reviewCount = 0, review, actions }) => {
   const [s, setS] = useState<Status>({});
+  const myProfile = useProfile();
+  const initial = (profileName || 'You').trim().charAt(0).toUpperCase();
   const ticker = useTickerItems();
   useEffect(() => {
     const load = async () => {
@@ -55,6 +62,26 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
     };
   }, [aaOpen]);
 
+  // Review drop-down: the same list as the Review tab (approve, send back, open), right under the top button.
+  // Esc or a click outside closes it.
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const reviewBtnRef = useRef<HTMLButtonElement>(null);
+  const reviewPanelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!reviewOpen) return;
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && setReviewOpen(false);
+    const away = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!reviewBtnRef.current?.contains(t) && !reviewPanelRef.current?.contains(t)) setReviewOpen(false);
+    };
+    window.addEventListener('keydown', key);
+    document.addEventListener('pointerdown', away);
+    return () => {
+      window.removeEventListener('keydown', key);
+      document.removeEventListener('pointerdown', away);
+    };
+  }, [reviewOpen]);
+
   // Attention chips always show; calm ones ('Online', 'n devices'…) only on bigger screens so a phone bar isn't crowded.
   const chip = 'h-8 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium transition-colors';
   const calm = 'border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800';
@@ -62,15 +89,38 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
   const [more, setMore] = useState(false);
   const o = s.offline;
   const b = s.busy;
+  // One button for Notifications and Review: finished tasks and code updates count as "needs you" and open from its list.
+  const feed = useUpdatesFeed();
+  // Notifications: "needs you" waits for a click; "news" only needs to be seen (it clears when you open Code updates).
+  const { minutes: headsUpMinutes, setMinutes: setHeadsUpMinutes, headsUp, dismiss: dismissHeadsUp } = useMeetingHeadsUp();
+  const { needs, news } = countNotifications(feed, reviewCount, headsUp.length);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const notesBtnRef = useRef<HTMLButtonElement>(null);
+  const notesPanelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!notesOpen) return;
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && setNotesOpen(false);
+    const away = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!notesBtnRef.current?.contains(t) && !notesPanelRef.current?.contains(t)) setNotesOpen(false);
+    };
+    window.addEventListener('keydown', key);
+    document.addEventListener('pointerdown', away);
+    return () => {
+      window.removeEventListener('keydown', key);
+      document.removeEventListener('pointerdown', away);
+    };
+  }, [notesOpen]);
+  const notesTitle = needs > 0 ? `${needs} ${needs === 1 ? 'thing needs' : 'things need'} you${news > 0 ? `, ${news} more to know` : ''}: open Notifications` : news > 0 ? `${news} to know about (nothing needs you): open Notifications` : 'Notifications and review: all clear, nothing waiting for you';
   return (
     <div className="relative z-20 flex min-h-[5.5rem] items-center gap-2 border-b border-slate-200 bg-white/90 px-3 py-1.5 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
       {title && <span className="mr-1 max-w-[40vw] shrink-0 truncate text-base font-bold text-slate-900 dark:text-white">{title}</span>}
       <div className={`flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] ${ticker ? 'max-w-[45%] shrink-0' : 'flex-1'}`}>
-        {reviewCount > 0 && (
-          <button onClick={() => openPanel('review')} title="Finished work waiting for you: open Review" className={`${chip} flex border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200`}>
-            <Inbox className="h-3.5 w-3.5" /> {reviewCount} to review
-          </button>
-        )}
+        <button ref={notesBtnRef} onClick={() => { setReviewOpen(false); setNotesOpen((v) => !v); }} aria-expanded={notesOpen} title={notesTitle} aria-label={notesTitle} className={`${chip} flex ${needs > 0 ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200' : news > 0 ? 'border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200' : calm}`}>
+          <Bell className="h-3.5 w-3.5" />
+          {needs > 0 ? `${needs} need${needs === 1 ? 's' : ''} you` : news > 0 ? `${news} new` : 'Notifications'}
+          {needs > 0 && news > 0 && <span className="rounded-full bg-sky-500 px-1.5 text-[10px] font-semibold leading-4 text-white">{news}</span>}
+        </button>
         {o && (
           <button onClick={() => setActiveTab('settings')} title="Offline mode (Account → Connections)" className={`${chip} ${o.offline ? 'flex border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200' : `${more ? 'hidden md:flex' : 'hidden'} ${calm}`}`}>
             {o.offline ? <WifiOff className="h-3.5 w-3.5" /> : <Wifi className="h-3.5 w-3.5 text-emerald-500" />}
@@ -101,6 +151,39 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           {more ? 'Less' : 'Status'}
         </button>
       </div>
+      {notesOpen && (
+        <NotificationsPanel
+          ref={notesPanelRef}
+          feed={feed}
+          reviewCount={reviewCount}
+          headsUp={headsUp}
+          headsUpMinutes={headsUpMinutes}
+          onHeadsUpMinutes={setHeadsUpMinutes}
+          onDismissHeadsUp={dismissHeadsUp}
+          onOpenMeetings={() => setActiveTab('meetings')}
+          onClose={() => setNotesOpen(false)}
+          onReview={() => (review ? setReviewOpen(true) : openPanel('review'))}
+          onOpenUpdates={() => { try { sessionStorage.setItem('eden_updates_open', 'active'); } catch {} setActiveTab('updates'); }}
+        />
+      )}
+      {review && reviewOpen && (
+        <div ref={reviewPanelRef} className="absolute left-2 top-full z-30 mt-1 flex max-h-[70vh] w-[42rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border border-slate-300 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
+          <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2 dark:border-slate-800">
+            <span className="text-sm font-semibold text-slate-900 dark:text-white">Review</span>
+            <div className="flex items-center gap-1">
+              <button onClick={() => { setReviewOpen(false); openPanel('review'); }} className="rounded-lg px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+                Open in the bottom panel
+              </button>
+              <button onClick={() => setReviewOpen(false)} aria-label="Close Review" className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <ReviewTab {...review} onOpen={(card) => { setReviewOpen(false); review.onOpen(card); }} onOpenUpdates={() => { setReviewOpen(false); review.onOpenUpdates?.(); }} />
+          </div>
+        </div>
+      )}
       {/* News ticker: what is happening right now. Fills the height of the bar. Hover to pause. */}
       {ticker && (
         <div role="status" aria-label="What is happening now" className="eden-ticker flex min-w-0 flex-1 items-center self-stretch overflow-hidden rounded-lg border border-slate-200 bg-white text-base font-medium text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
@@ -152,6 +235,15 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           </div>
         )}
       </div>
+      <button
+        onClick={() => setActiveTab('settings')}
+        aria-label="Profile and settings"
+        title={[profileName, studioName && studioName !== profileName ? studioName : ''].filter(Boolean).join(' · ') || 'Profile and settings'}
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${myProfile ? 'hover:opacity-80' : 'border border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800'}`}
+      >
+        {/* Same picture and frame (including the animated ones) as in your profile. */}
+        {myProfile ? <Avatar src={myProfile.avatar} initial={initial} frame={myProfile.frame} size={32} /> : <User className="h-4 w-4" />}
+      </button>
     </div>
   );
 };
@@ -161,8 +253,8 @@ const GoBox: React.FC<{ setActiveTab: (t: AppTab) => void }> = ({ setActiveTab }
   const [q, setQ] = useState('');
   const [miss, setMiss] = useState(false);
   const pages = Object.entries(TITLES) as [AppTab, string][];
-  const go = () => {
-    const t = q.trim().toLowerCase();
+  const go = (text: string = q) => {
+    const t = text.trim().toLowerCase();
     if (!t) return;
     const hit = pages.find(([, n]) => n.toLowerCase() === t) || pages.find(([, n]) => n.toLowerCase().startsWith(t)) || pages.find(([id, n]) => n.toLowerCase().includes(t) || id.includes(t));
     if (!hit) return setMiss(true);
@@ -173,7 +265,16 @@ const GoBox: React.FC<{ setActiveTab: (t: AppTab) => void }> = ({ setActiveTab }
     <form onSubmit={(e) => { e.preventDefault(); go(); }} role="search" className="hidden shrink-0 items-center md:flex">
       <label className={`flex h-8 items-center gap-1.5 rounded-lg border px-2 text-sm ${miss ? 'border-amber-400' : 'border-slate-300 dark:border-slate-600'}`}>
         <Search className="h-4 w-4 text-slate-400" />
-        <input value={q} onChange={(e) => { setQ(e.target.value); setMiss(false); }} list="eden-go-pages" placeholder="Search / go to…" aria-label="Go to a page" title={miss ? 'No page with that name' : 'Type a page name, then Enter'} className="w-36 bg-transparent text-slate-800 placeholder-slate-400 focus:outline-none lg:w-48 dark:text-slate-100" />
+        <input value={q} onChange={(e) => {
+          const v = e.target.value;
+          setQ(v);
+          setMiss(false);
+          // Picking a page from the dropdown goes straight there (typing still waits for Enter).
+          // Browsers mark a dropdown pick as a "replacement" (Chrome/Edge) or send a plain event with no typing info (Firefox).
+          const ne = e.nativeEvent as InputEvent;
+          const fromList = ne.inputType === 'insertReplacementText' || (typeof InputEvent !== 'undefined' && !(ne instanceof InputEvent));
+          if (fromList && pages.some(([, n]) => n === v)) go(v);
+        }} list="eden-go-pages" placeholder="Search / go to…" aria-label="Go to a page" title={miss ? 'No page with that name' : 'Type a page name, then Enter'} className="w-36 bg-transparent text-slate-800 placeholder-slate-400 focus:outline-none lg:w-48 dark:text-slate-100" />
       </label>
       <datalist id="eden-go-pages">{[...new Set(pages.map(([, n]) => n).filter(Boolean))].map((n) => <option key={n} value={n} />)}</datalist>
     </form>

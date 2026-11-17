@@ -1,7 +1,7 @@
 // Every page of the app, in sidebar order, with its icon. Used by the phone's "All pages" menu, the two-pages view
 // and anywhere a page is picked from a list. Big tiles that stay readable at every text size.
 import React from 'react';
-import { LayoutDashboard, KanbanSquare, Network, MessagesSquare, Users, GitBranch, FolderGit2, Wand2, GitFork, Tablet, Wifi, Settings, type LucideIcon } from 'lucide-react';
+import { LayoutDashboard, KanbanSquare, Network, MessagesSquare, Users, GitBranch, FolderGit2, Wand2, GitFork, Tablet, Wifi, Trophy, Settings, type LucideIcon } from 'lucide-react';
 import type { AppTab } from './components/Sidebar.tsx';
 
 export const PAGES: { id: AppTab; label: string; icon: LucideIcon }[] = [
@@ -16,6 +16,7 @@ export const PAGES: { id: AppTab; label: string; icon: LucideIcon }[] = [
   { id: 'repos', label: 'GitHub', icon: GitFork },
   { id: 'devices', label: 'Devices', icon: Tablet },
   { id: 'remote', label: 'Remote', icon: Wifi },
+  { id: 'achievements', label: 'Achievements', icon: Trophy },
   { id: 'settings', label: 'Account', icon: Settings },
 ];
 export const PAGE_IDS = PAGES.map((p) => p.id);

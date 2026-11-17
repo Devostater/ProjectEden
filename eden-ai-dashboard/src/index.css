@@ -26,8 +26,19 @@
 html[data-text-size='large'] { font-size: 112.5%; }
 html[data-text-size='larger'] { font-size: 125%; }
 html[data-text-size='largest'] { font-size: 150%; }
+html[data-text-size='maximum'] { font-size: 175%; }
+/* Careful scaling: smaller screens get a smaller step so the top bar, buttons and two-page layout still fit.
+   Maximum is always at least one step bigger than Largest, on every screen. */
+@media (max-width: 1023px) {
+  html[data-text-size='maximum'] { font-size: 162.5%; }
+}
 @media (max-width: 767px) {
   html[data-text-size='largest'] { font-size: 137.5%; }
+  html[data-text-size='maximum'] { font-size: 150%; }
+}
+@media (max-width: 380px) {
+  html[data-text-size='largest'] { font-size: 131.25%; }
+  html[data-text-size='maximum'] { font-size: 137.5%; }
 }
 /* Smallest text: 13px at Normal instead of 12px. */
 @theme {

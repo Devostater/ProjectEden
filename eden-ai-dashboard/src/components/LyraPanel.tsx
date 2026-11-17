@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Play, Send, Trash2 } from 'lucide-react';
+import { Play, Send, Settings, Square, Trash2 } from 'lucide-react';
 
 interface Turn {
   role: 'user' | 'assistant';
@@ -239,6 +239,8 @@ export const LyraPanel: React.FC = () => {
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState('');
   const [autoOpen, setAutoOpen] = useState<boolean | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
   useEffect(() => { fetch('/api/lyra/auto-open').then((r) => r.json()).then((d) => setAutoOpen(!!d.autoOpen)).catch(() => {}); }, []);
   const toggleAutoOpen = () => {
     const next = !autoOpen;
@@ -355,6 +357,22 @@ export const LyraPanel: React.FC = () => {
     }
   };
 
+  const stop = async () => {
+    if (stopping || !window.confirm('Stop LYRA? She will close until you press Start LYRA again.')) return;
+    setStopping(true);
+    setStartError('');
+    try {
+      const res = await fetch('/api/lyra/stop', { method: 'POST' });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || 'LYRA could not be stopped.');
+      setConnected(false);
+    } catch (err: any) {
+      setStartError(err.message);
+    } finally {
+      setStopping(false);
+    }
+  };
+
   const status = connected === null ? 'Checking…' : connected ? 'Connected' : starting ? 'Starting…' : 'Not running';
 
   return (
@@ -364,14 +382,14 @@ export const LyraPanel: React.FC = () => {
           <LyraChibi connected={!!connected} thinking={working}className="h-20 w-20" />
         </div>
         <div className="text-sm font-semibold text-slate-900 dark:text-white">LYRA</div>
-        {autoOpen !== null && (
-          <button onClick={toggleAutoOpen} aria-pressed={autoOpen} title="Open LYRA on the tablet when Eden starts. Takes effect on the next start." className="mt-1 rounded-full border border-slate-300 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
-            Auto-open: {autoOpen ? 'On' : 'Off'}
-          </button>
-        )}
         <div className={`flex items-center gap-1.5 text-sm ${connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'}`}>
           <span className={`h-2 w-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-slate-400'}`} /> {status}
         </div>
+        {connected && (
+          <button onClick={stop} disabled={stopping} className="mt-1 flex items-center gap-1.5 rounded-lg border border-red-300 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10">
+            <Square className="h-4 w-4" /> {stopping ? 'Stopping…' : 'Stop LYRA'}
+          </button>
+        )}
         {connected === false && (
           <button onClick={start} disabled={starting} className="mt-1 flex items-center gap-1.5 rounded-lg bg-fuchsia-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-fuchsia-500 disabled:opacity-50">
             <Play className="h-4 w-4" /> {starting ? 'Starting…' : 'Start LYRA'}
@@ -383,6 +401,25 @@ export const LyraPanel: React.FC = () => {
             <Trash2 className="h-3.5 w-3.5" /> Clear
           </button>
         )}
+        <div className="relative mt-1">
+          <button onClick={() => setShowOptions((v) => !v)} aria-expanded={showOptions} className="flex items-center gap-1 rounded-full border border-slate-300 px-2 py-0.5 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800">
+            <Settings className="h-3.5 w-3.5" /> Options
+          </button>
+          {showOptions && (
+            <div className="absolute bottom-full left-1/2 z-20 mb-1 w-48 -translate-x-1/2 space-y-1 rounded-lg border border-slate-200 bg-white p-2 text-left text-xs shadow-lg dark:border-slate-700 dark:bg-slate-900">
+              <div className="font-semibold text-slate-900 dark:text-white">LYRA options</div>
+              {autoOpen !== null && (
+                <button onClick={toggleAutoOpen} aria-pressed={autoOpen} title="Open LYRA on the tablet when Eden starts. Takes effect on the next start." className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800">
+                  <span>Auto-open</span>
+                  <span className={autoOpen ? 'font-medium text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'}>{autoOpen ? 'On' : 'Off'}</span>
+                </button>
+              )}
+              <a href={`${location.protocol}//${location.hostname}:4777/`} target="_blank" rel="noreferrer" className="block rounded-md px-2 py-1.5 text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800">
+                Open LYRA's page ↗
+              </a>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col">

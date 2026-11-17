@@ -6,6 +6,7 @@ import type { ApproveResult } from '../projectsStore.ts';
 import { Formatted } from './ChatView.tsx';
 import { ResultActions } from './ResultActions.tsx';
 import { SendBackBox } from './SendBackBox.tsx';
+import { useReadyUpdates } from '../readyUpdates.ts';
 
 export interface ReviewProps {
   cards: Card[]; // cards in Review
@@ -14,9 +15,11 @@ export interface ReviewProps {
   onApprove: (ids: string[]) => Promise<ApproveResult | undefined>; // approving also saves each result to its Deliverables folder
   onSendBack: (cardId: string, note: string) => Promise<unknown>; // back to the same teammate, with your feedback
   onOpen: (card: Card) => void; // open the card on its board
+  onOpenUpdates?: () => void; // open Code updates, where a ready update is checked and applied
 }
 
-export const ReviewTab: React.FC<ReviewProps> = ({ cards, projects, agents, onApprove, onSendBack, onOpen }) => {
+export const ReviewTab: React.FC<ReviewProps> = ({ cards, projects, agents, onApprove, onSendBack, onOpen, onOpenUpdates }) => {
+  const readyUpdates = useReadyUpdates();
   const [expanded, setExpanded] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // a card id, or 'all'
   const [confirmAll, setConfirmAll] = useState(false);
@@ -52,11 +55,38 @@ export const ReviewTab: React.FC<ReviewProps> = ({ cards, projects, agents, onAp
     </div>
   );
 
+  // Code updates the AI has finished: you check them and apply them in Code updates.
+  const updatesList = readyUpdates.length > 0 && (
+    <div className="border-b border-slate-100 dark:border-slate-800">
+      <h3 className="px-3 pt-2.5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        Code updates ready to apply ({readyUpdates.length})
+      </h3>
+      <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+        {readyUpdates.map((u) => (
+          <li key={u.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
+            <span className="min-w-[12rem] flex-1">
+              <span className="block truncate text-sm font-medium text-slate-900 dark:text-white">{u.request}</span>
+              <span className="block truncate text-xs text-slate-500 dark:text-slate-400">
+                {[u.codebaseName, u.files?.length ? `${u.files.length} ${u.files.length === 1 ? 'file' : 'files'} changed` : ''].filter(Boolean).join(' · ') || 'Ready to check and apply'}
+              </span>
+            </span>
+            {onOpenUpdates && (
+              <button onClick={onOpenUpdates} title="Check the change and apply it in Code updates" className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500">
+                <ExternalLink className="h-3.5 w-3.5" /> Check and apply
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+
   if (!sorted.length) {
     return (
       <div className="h-full overflow-y-auto">
         {notice}
-        <p className="p-4 text-sm text-slate-500 dark:text-slate-400">Nothing waiting for your review.</p>
+        {updatesList}
+        {readyUpdates.length === 0 && <p className="p-4 text-sm text-slate-500 dark:text-slate-400">Nothing waiting for your review.</p>}
       </div>
     );
   }
@@ -64,6 +94,7 @@ export const ReviewTab: React.FC<ReviewProps> = ({ cards, projects, agents, onAp
   return (
     <div className="h-full overflow-y-auto">
       {notice}
+      {updatesList}
       {sorted.length > 1 && (
         <div className="flex flex-wrap items-center justify-end gap-2 border-b border-slate-100 px-3 py-2 dark:border-slate-800">
           {confirmAll ? (

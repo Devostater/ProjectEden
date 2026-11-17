@@ -16,7 +16,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { pcBusy } from './busy';
 import { fileProblem } from './activity';
-import { isOffline } from './offline';
+import { isOffline, fitsNow } from './offline';
 import { tabletAIs, ensureTabletRoute } from './deviceHub';
 
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-ai.json');
@@ -89,7 +89,11 @@ function upsert(p: ExtraProvider) {
   else providers.push(p);
 }
 
-const errorOf = (data: any) => (Array.isArray(data) ? data[0]?.error : data?.error) || null;
+// Cloud services send { error: { message } }; Ollama sends { error: "text" }. Always give back { message }.
+const errorOf = (data: any) => {
+  const e = (Array.isArray(data) ? data[0]?.error : data?.error) || null;
+  return typeof e === 'string' ? { message: e } : e;
+};
 // The service says this model can't be used at all (as opposed to "busy, try later").
 const permanent = (status: number, msg: string) => status === 404 || (status === 400 && /only supports|not supported|no longer available|does not exist/i.test(msg));
 
@@ -246,7 +250,8 @@ export function freeFallbacks(max = 6): string[] {
   const tablet = extraModels().filter((m) => m.device);
   // Models on this PC need 3+ GB of free memory to load; skip them when memory is short so the PC doesn't lag.
   // Offline, models on this PC are the only option, so they are used even when memory is tight.
-  const local = isOffline() || (!pcBusy() && os.freemem() > 3 * 1024 ** 3) ? extraModels().filter((m) => m.free && m.local) : [];
+  // Big models (like gpt-oss:20b) are left out unless there is room for them, or Ollama just answers "Internal Server Error".
+  const local = isOffline() || (!pcBusy() && os.freemem() > 3 * 1024 ** 3) ? extraModels().filter((m) => m.free && m.local && fitsNow(m.id)) : [];
   // Prefer general chat models over code-only ones, and bigger "flash/pro/gemma" families on AI Studio.
   // Models that answered a test go first; newest versions before older ones; code-only and previews last.
   const version = (id: string) => Number(id.match(/(\d+(?:\.\d+)?)/)?.[1] || 0);
@@ -264,6 +269,10 @@ export async function callExtra(id: string, req: { system?: string; messages: { 
   const messages = [...(req.system ? [{ role: 'system', content: req.system }] : []), ...req.messages];
   const isOllama = provider.id === 'ollama' || provider.baseUrl.includes('11434') || !!provider.device;
   const restDuration = provider.local || provider.device ? 15 * 1000 : REST_MS;
+  // Don't even ask Ollama for a big model when the PC has no room: it would only fail with "Internal Server Error".
+  if (provider.local && !fitsNow(id)) {
+    throw new Error(`${provider.name} (${model}) needs about 9 GB of free memory and this PC doesn't have that right now. Close other heavy programs and try again, pick a smaller model (Account → Connections), or switch the chat to Online.`);
+  }
   let res: Response;
   if (provider.device) await ensureTabletRoute(provider.baseUrl).catch(() => {});
   try {
@@ -284,12 +293,19 @@ export async function callExtra(id: string, req: { system?: string; messages: { 
           ...(provider.local ? { reasoning_effort: 'none' } : {}),
         });
 
-    res = await fetch(url, {
+    const send = () => fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(keyOf(provider) ? { authorization: `Bearer ${keyOf(provider)}` } : {}) },
       body,
       signal: AbortSignal.timeout(provider.local || provider.device ? 10 * 60 * 1000 : 3 * 60 * 1000),
     });
+    res = await send();
+    // A model on this PC often fails the first time while it is still loading into memory. Give it one more go.
+    // Not for a big model when memory has run out: a second try only fails the same way and makes the owner wait longer.
+    if (res.status >= 500 && (provider.local || provider.device) && !(provider.local && !fitsNow(id))) {
+      await new Promise((r) => setTimeout(r, 4000));
+      res = await send();
+    }
   } catch (err: any) {
     resting.set(id, Date.now() + restDuration);
     throw new Error(`${provider.name} couldn't be reached: ${err?.cause?.code || err.message}`);
@@ -300,7 +316,19 @@ export async function callExtra(id: string, req: { system?: string; messages: { 
     if (permanent(res.status, msg)) {
       provider.tested = { ...provider.tested, [model]: msg.slice(0, 120) };
       save();
-    } else resting.set(id, Date.now() + restDuration);
+    } else resting.set(id, Date.now() + (res.status >= 500 && (provider.local || isOllama) && /^\s*(internal server error|server error|\d{3})?\s*$|memory|unable to allocate|cudamalloc|runner process has terminated|unexpectedly stopped|exit status/i.test(msg) ? 2 * 60 * 1000 : restDuration)); // a model that could not start is left alone for 2 minutes, so the next chat goes straight to another AI
+    // Ollama says plainly when the model needs more memory than the PC has free.
+    // A model that crashes while loading ("runner process has terminated", "unexpectedly stopped") is almost always short of memory too.
+    if (res.status >= 500 && (provider.local || provider.device) && /more system memory|out of memory|insufficient memory|not enough memory|memory layout|cudamalloc|unable to allocate|runner process has terminated|unexpectedly stopped|exit status/i.test(msg)) {
+      throw new Error(`${provider.name} (${model}) needs more free memory than this PC has right now. Close other heavy programs, or pick a smaller model (Account → Connections), or switch the chat to Online. (Ollama said: ${msg.slice(0, 160)})`);
+    }
+    // Ollama answers a bare "Internal Server Error" when the model could not start, usually because the PC is out of memory.
+    if (res.status >= 500 && (provider.local || provider.device || isOllama) && /^\s*(internal server error|server error|\d{3})?\s*$/i.test(msg)) {
+      throw new Error(`${provider.name} (${model}) could not start the model, most likely because the PC is low on memory. Close other heavy programs or pick a smaller model (Account → Connections), or switch the chat to Online. If it keeps happening, restart Ollama.`);
+    }
+    if (res.status >= 500 && (provider.local || isOllama)) {
+      throw new Error(`${provider.name} (${model}) had a problem: ${msg.slice(0, 160)}. Restart Ollama on this PC, or switch the chat to Online.`);
+    }
     throw new Error(`${provider.name} (${model}): ${msg.slice(0, 200)}`);
   }
   // Extract text, handling Ollama native format, OpenAI format, and thinking models

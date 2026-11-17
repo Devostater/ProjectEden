@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Wand2, MessagesSquare, Pencil, Loader2 } from 'lucide-react';
 import { usePicks, removePick, clearPicks, picksAsText, getPickTarget } from '../picker.ts';
@@ -39,8 +39,66 @@ export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onResu
     setBusy(false);
   };
 
+  // Where the tray sits, so it never covers what you're picking:
+  // - above the bottom panel, when the tray (its real height) fits there;
+  // - otherwise at the top of the screen, under the top bar (tall or full-screen panel, e.g. picking in the App tab);
+  // - with no bottom panel (phone), the usual spot near the bottom.
+  // While picking, only a small bar shows (top right, under the top bar), so it never covers what you point at.
+  const trayRef = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<{ bottom: number } | { top: number } | null>(null);
+  const [topLimit, setTopLimit] = useState(96);
+  useEffect(() => {
+    const panel = document.querySelector('[data-eden-bottom-panel]') as HTMLElement | null;
+    // The bottom edge of the top bar (measured, it can grow with a notice above it).
+    const barBottom = () => {
+      const pencil = document.querySelector('[aria-label="Pick elements"]') as HTMLElement | null;
+      const bar = (pencil?.closest('.border-b') as HTMLElement | null) || pencil;
+      const b = bar?.getBoundingClientRect();
+      return b && b.height > 0 ? Math.round(b.bottom + 8) : 96;
+    };
+    const measure = () => {
+      const top = barBottom();
+      setTopLimit(top);
+      const r = panel?.getBoundingClientRect();
+      const gap = r && r.width > 0 && r.height > 0 ? Math.min(window.innerHeight, window.innerHeight - r.top) : 0;
+      if (gap <= 0) return setPlace(null);
+      const natural = trayRef.current ? trayRef.current.scrollHeight + 2 : 200; // full height (plus its 1 px borders), even if capped
+      const room = window.innerHeight - gap - 12 - top;
+      setPlace(room >= natural ? { bottom: Math.round(gap + 12) } : { top });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    const watch = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    if (panel) watch?.observe(panel);
+    // The top bar can change height (a notice appears above it, text size changes): follow it.
+    const bar = document.querySelector('[aria-label="Pick elements"]')?.closest('.border-b');
+    if (bar) watch?.observe(bar);
+    if (trayRef.current) watch?.observe(trayRef.current);
+    return () => {
+      window.removeEventListener('resize', measure);
+      watch?.disconnect();
+    };
+  }, [picking]); // re-measure when the full tray appears (it is not shown while picking)
+  const placeStyle: React.CSSProperties | undefined = !place
+    ? undefined
+    : 'bottom' in place
+      ? { bottom: place.bottom, maxHeight: `calc(100dvh - ${place.bottom + topLimit}px)` }
+      : { top: place.top, maxHeight: `calc(100dvh - ${place.top + 16}px)` };
+
+  if (picking)
+    // The small bar lets clicks through everywhere except its two buttons, so what sits under it can still be picked.
+    return createPortal(
+      <div data-eden-picker-ui="" role="status" style={{ top: topLimit }} className={`pointer-events-none fixed right-4 z-[2147483646] flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-full border border-indigo-400 bg-white/95 py-1 pl-3 pr-1 text-sm shadow-lg backdrop-blur dark:bg-slate-900/95`}>
+        <Pencil className="h-4 w-4 shrink-0 text-indigo-500" />
+        <span className="truncate text-slate-800 dark:text-slate-100">{picks.length ? `${picks.length} picked: click more, or Done` : 'Click what you want to change'}</span>
+        <button onClick={onStop} className="pointer-events-auto shrink-0 rounded-full bg-indigo-600 px-3 py-1 font-medium text-white hover:bg-indigo-500">Done</button>
+        <button onClick={onClose} aria-label="Close the picker" title="Close (Esc stops picking)" className="pointer-events-auto shrink-0 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"><X className="h-4 w-4" /></button>
+      </div>,
+      document.body,
+    );
+
   return createPortal(
-    <div data-eden-picker-ui="" className="fixed bottom-20 left-1/2 z-[2147483646] w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-indigo-400 bg-white/95 p-3 shadow-xl backdrop-blur dark:bg-slate-900/95">
+    <div ref={trayRef} data-eden-picker-ui="" style={placeStyle} className={`fixed ${place ? '' : 'bottom-20'} left-1/2 z-[2147483646] max-h-[calc(100dvh-6rem)] w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 overflow-y-auto rounded-xl border border-indigo-400 bg-white/95 p-3 shadow-xl backdrop-blur dark:bg-slate-900/95`}>
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Pencil className="h-4 w-4 text-indigo-500" />
         <span className="font-medium text-slate-900 dark:text-white">{picking ? 'Click parts of the screen to pick them' : picks.length ? `${picks.length} picked${getPickTarget().name ? ` in ${getPickTarget().name}` : ' in EDEN'}` : 'Picker'}</span>

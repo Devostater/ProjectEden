@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { picksAsText, clearPicks } from '../picker.ts';
 import { api } from '../api.ts';
-import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, RefreshCw, Lock, Wrench, ArrowUp, ArrowDown, ChevronsUp } from 'lucide-react';
+import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, RefreshCw, Lock, Wrench, ArrowUp, ArrowDown, ChevronsUp, RotateCw } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
 import { NextUpdate, type CodebaseInfo } from './NextUpdate.tsx';
 import { diagnose, applyFix, canFix, planFixAll, type Fix } from '../updateFixes.ts';
+import { markUpdatesSeen, refreshUpdatesFeed } from '../readyUpdates.ts';
 
 interface Job {
   id: string;
@@ -181,6 +182,9 @@ export const UpdatesView: React.FC = () => {
       setRemote(!!d.remote);
       setRestartPending(!!d.restartPending);
       live.current = d.busy;
+      // You are looking at the page, so finished and failed updates are no longer news in the top bar.
+      markUpdatesSeen();
+      refreshUpdatesFeed();
     } catch {}
   };
 
@@ -302,7 +306,7 @@ export const UpdatesView: React.FC = () => {
     }
   };
 
-  // Updates that "Apply all" will apply: ready, with their changes, and their checks did not fail. Oldest first.
+  // Updates that "Approve all" will apply: ready, with their changes, and their checks did not fail. Oldest first.
   const applyable = jobs.filter((j) => j.status === 'ready' && j.hasDiff && j.check?.ok !== false).reverse();
   const skippedFailed = jobs.filter((j) => j.status === 'ready' && j.hasDiff && j.check?.ok === false).length;
 
@@ -454,13 +458,24 @@ export const UpdatesView: React.FC = () => {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-4 sm:p-8">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
-          <Wand2 className="h-6 w-6 text-indigo-500" /> Code updates
-        </h1>
-        <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-          Ask the AI for a change. Nothing is applied until you press Apply.
-        </p>
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+            <Wand2 className="h-6 w-6 text-indigo-500" /> Code updates
+          </h1>
+          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+            Ask the AI for a change. Nothing is applied until you press Apply.
+          </p>
+        </div>
+        <button
+          onClick={() => { if (window.confirm('Restart the hub now? It takes a few seconds, and this page reloads by itself.')) restartHub(); }}
+          disabled={restarting}
+          aria-label="Restart the hub"
+          title="Restart the hub"
+          className="shrink-0 rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          <RotateCw className={`h-5 w-5 ${restarting ? 'animate-spin' : ''}`} />
+        </button>
       </div>
 
 
@@ -501,7 +516,7 @@ export const UpdatesView: React.FC = () => {
                 className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm ${selected ? 'border-indigo-500 font-medium text-indigo-600 dark:text-indigo-300' : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'}`}
               >
                 {t.label}
-                {count >= 0 && <span className={`rounded-full px-1.5 text-xs tabular-nums ${t.id === 'error' && count > 0 ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{count}</span>}
+                {count >= 0 && <span className={`rounded-full px-1.5 text-xs tabular-nums ${t.id === 'error' && count > 0 ? 'bg-red-500 text-white' : t.id === 'active' && jobs.some((j) => j.status === 'ready') ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{count}</span>}
               </button>
             );
           })}
@@ -509,7 +524,7 @@ export const UpdatesView: React.FC = () => {
         {tab === 'active' && applyable.length > 1 && (
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
             <span className="min-w-0 flex-1">
-              {applyable.length} updates are ready to apply.
+              {applyable.length} updates are ready to approve.
               {skippedFailed > 0 && ` ${skippedFailed} whose checks failed will be left for you to look at.`}
             </span>
             <button
@@ -517,7 +532,7 @@ export const UpdatesView: React.FC = () => {
               disabled={applyingAll || !!acting}
               className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
             >
-              {applyingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {applyingAll ? 'Applying…' : 'Apply all'}
+              {applyingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {applyingAll ? 'Approving…' : 'Approve all'}
             </button>
           </div>
         )}
@@ -894,7 +909,7 @@ export const UpdatesView: React.FC = () => {
             className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-slate-900"
           >
             <h2 id="apply-all-title" className="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-white">
-              <Check className="h-5 w-5 text-emerald-500" /> Apply all {applyable.length} updates?
+              <Check className="h-5 w-5 text-emerald-500" /> Approve all {applyable.length} updates?
             </h2>
             <ul className="mt-2 max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-sm text-slate-700 dark:text-slate-300">
               {applyable.map((j) => (
@@ -910,7 +925,7 @@ export const UpdatesView: React.FC = () => {
                 Not yet
               </button>
               <button onClick={applyAll} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
-                <Check className="h-4 w-4" /> Yes, apply them all
+                <Check className="h-4 w-4" /> Yes, approve them all
               </button>
             </div>
           </div>

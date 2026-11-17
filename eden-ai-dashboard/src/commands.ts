@@ -40,6 +40,7 @@ const PLACES: { to: Target; words: string[] }[] = [
   { to: { kind: 'page', tab: 'updates' }, words: ['code updates', 'code update', 'updates', 'update', 'code'] },
   { to: { kind: 'page', tab: 'devices' }, words: ['devices', 'device', 'tablet', 'phone', 'phones', 'this pc', 'my pc', 'computer'] },
   { to: { kind: 'page', tab: 'remote' }, words: ['remote', 'remote connection', 'pairing', 'pair', 'qr code'] },
+  { to: { kind: 'page', tab: 'achievements' }, words: ['achievements', 'achievement', 'trophies', 'special thanks', 'dev panel', 'earned points'] },
   { to: { kind: 'account', tab: 'account' }, words: ['account', 'my account', 'profile'] },
   { to: { kind: 'account', tab: 'connections' }, words: ['connections', 'connection', 'connect', 'keys', 'api keys', 'offline mode', 'knowledge base', 'backups'] },
   { to: { kind: 'account', tab: 'preferences' }, words: ['preferences', 'settings', 'options'] },

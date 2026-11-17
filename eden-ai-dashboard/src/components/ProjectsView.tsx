@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSideActionsTarget } from './ProjectSidePanel.tsx';
-import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, Eye, EyeOff, Bot, AlertTriangle, Sparkles, Link2, Network, Clock, Code2, ChevronsDownUp, ChevronsUpDown, ChevronDown } from 'lucide-react';
+import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, Eye, EyeOff, Bot, AlertTriangle, Sparkles, Link2, Network, Clock, Code2, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
 import { ResultActions } from './ResultActions.tsx';
 import { SendBackBox } from './SendBackBox.tsx';
@@ -1159,6 +1159,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
   const toggleHeader = () => setHeaderOpen((v) => { try { localStorage.setItem('eden_project_header', v ? 'folded' : 'open'); } catch {} return !v; });
   // Board columns whose cards are collapsed to one-line titles (saved on this device).
   const [compactCols, setCompactCols] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_board_compact') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
+  const [foldedCols, setFoldedCols] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_board_folded') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
+  const toggleFolded = (id: string) => setFoldedCols((c) => { const next = c.includes(id) ? c.filter((x) => x !== id) : [...c, id]; try { localStorage.setItem('eden_board_folded', JSON.stringify(next)); } catch {} return next; });
   const toggleCompact = (id: string) => setCompactCols((c) => { const next = c.includes(id) ? c.filter((x) => x !== id) : [...c, id]; try { localStorage.setItem('eden_board_compact', JSON.stringify(next)); } catch {} return next; });
   const { projects, active } = api;
   const [projectDialog, setProjectDialog] = useState<'new' | 'edit' | null>(null);
@@ -1351,7 +1353,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
 
           {/* Board */}
           {/* Phones: the board gets nearly a full screen and shows one column at a time (swipe; snaps). */}
-          <div className="mt-4 flex h-[calc(100dvh-11rem)] shrink-0 snap-x snap-mandatory gap-3 overflow-x-auto pb-2 md:h-[calc(100dvh-12rem)] md:min-h-[24rem] md:shrink-0 md:snap-none">
+          {/* Columns are only as tall as their cards (up to a screen), and each one can be folded to a thin strip. */}
+          <div className="mt-4 flex shrink-0 snap-x snap-mandatory items-start gap-3 overflow-x-auto pb-2 md:snap-none">
             {COLUMNS.map((col) => {
               const colCards = cards.filter((c) => c.column === col.id && (!whoFilter || c.assigneeId === whoFilter) && (!branchFilter || c.branchId === branchFilter)).sort((a, b) => a.order - b.order);
               return (
@@ -1371,15 +1374,27 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                     setDragId(null);
                     setOverColumn(null);
                   }}
-                  className={`flex min-w-[85vw] snap-center flex-1 basis-0 flex-col rounded-xl border p-2 md:min-w-[15rem] ${
+                  className={`flex snap-center flex-col rounded-xl border p-2 max-h-[calc(100dvh-11rem)] md:max-h-[calc(100dvh-12rem)] ${
+                    foldedCols.includes(col.id) ? 'w-14 shrink-0' : 'min-w-[85vw] flex-1 basis-0 md:min-w-[15rem]'
+                  } ${
                     overColumn === col.id ? 'border-indigo-400 bg-indigo-50/60 dark:bg-indigo-950/30' : 'border-slate-200 bg-white/70 dark:border-slate-800 dark:bg-slate-900/70'
                   }`}
                 >
+                  {foldedCols.includes(col.id) ? (
+                    <button onClick={() => toggleFolded(col.id)} aria-label={`Open ${col.label} (${colCards.length} cards)`} title={`Open ${col.label}`} className="flex flex-col items-center gap-2 rounded px-1 py-2 text-slate-600 hover:text-indigo-600 dark:text-slate-300">
+                      <ChevronRight className="h-4 w-4" />
+                      <span className="text-xs font-normal tabular-nums text-slate-400">{colCards.length}</span>
+                      <span className="text-sm font-semibold [writing-mode:vertical-rl]">{col.label}</span>
+                    </button>
+                  ) : (<>
                   <div className="flex items-center justify-between px-2 py-1.5" title={col.hint}>
                     <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
                       {col.label} <span className="font-normal text-slate-400">{colCards.length}</span>
                     </h2>
-                    <button onClick={() => toggleCompact(col.id)} aria-pressed={compactCols.includes(col.id)} aria-label={compactCols.includes(col.id) ? `Show card details in ${col.label}` : `Collapse cards in ${col.label}`} title={compactCols.includes(col.id) ? 'Show details' : 'Collapse cards to titles'} className="ml-auto rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800">
+                    <button onClick={() => toggleFolded(col.id)} aria-label={`Fold ${col.label} to a thin strip`} title="Fold this column" className="ml-auto rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800">
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <button onClick={() => toggleCompact(col.id)} aria-pressed={compactCols.includes(col.id)} aria-label={compactCols.includes(col.id) ? `Show card details in ${col.label}` : `Collapse cards in ${col.label}`} title={compactCols.includes(col.id) ? 'Show details' : 'Collapse cards to titles'} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800">
                       {compactCols.includes(col.id) ? <ChevronsUpDown className="h-4 w-4" /> : <ChevronsDownUp className="h-4 w-4" />}
                     </button>
                     <button
@@ -1394,7 +1409,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                     </button>
                   </div>
 
-                  <div className="flex-1 space-y-1.5 overflow-y-auto px-1 pb-1">
+                  {/* Cards scroll inside the column; the list stops at about 5½ cards tall (24rem), so a long column shows a half card as a hint to scroll. */}
+                  <div className="min-h-[6rem] max-h-[24rem] flex-1 space-y-1.5 overflow-y-auto px-1 pb-1">
                     {addingIn === col.id && (
                       <input
                         autoFocus
@@ -1505,6 +1521,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                       <p className="px-2 py-3 text-xs text-slate-400">{col.id === 'ready' && autoRun ? 'Put a card here with a teammate assigned and they start on it' : col.hint}</p>
                     )}
                   </div>
+                  </>)}
                 </div>
               );
             })}

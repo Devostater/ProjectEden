@@ -22,7 +22,99 @@ interface NexusState {
   running: boolean;
   speaking: string;
   turnsLeft: number;
+  turnsTotal?: number;
+  turnsDone?: number;
+  avgTurnMs?: number; // average time one AI message has taken so far
+  tokens?: number;
 }
+
+const timeLeft = (ms: number) => {
+  const s = Math.max(1, Math.round(ms / 1000));
+  if (s < 60) return `${s} sec`;
+  const m = Math.round(s / 60);
+  return `${m} min`;
+};
+
+const Meter: React.FC<{ label: string; percent: number | null; detail: string }> = ({ label, percent, detail }) => (
+  <div>
+    <div className="flex justify-between gap-2">
+      <span>{label}</span>
+      <span className="tabular-nums">{percent === null ? detail : `${percent}% · ${detail}`}</span>
+    </div>
+    <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+      <div className="h-full rounded-full bg-indigo-500 transition-all" style={{ width: `${percent ?? 0}%` }} />
+    </div>
+  </div>
+);
+
+// A small drop-down (closed to start with) under "is thinking…": what the team is on, time left, and how much it is using.
+const WorkingDetails: React.FC<{ topic: string; state: NexusState }> = ({ topic, state }) => {
+  const [open, setOpen] = useState(false);
+  const [pc, setPc] = useState<{ cpu: number; memUsedGb: number; memTotalGb: number } | null | undefined>(undefined); // undefined = still loading, null = not available here
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      try {
+        const res = await fetch('/api/perf');
+        if (!res.ok) throw new Error('unavailable');
+        const d = await res.json();
+        const last = d.history?.[d.history.length - 1];
+        const cores: number[] = d.cores || [];
+        const cpu = last ? last.cpu : cores.length ? cores.reduce((a, b) => a + b, 0) / cores.length : 0;
+        if (alive) setPc({ cpu: Math.round(cpu), memUsedGb: d.memUsedGb, memTotalGb: d.memTotalGb });
+      } catch {
+        if (alive) setPc(null);
+      }
+      if (alive) timer = setTimeout(tick, 3000);
+    };
+    tick();
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [open]);
+
+  const total = state.turnsTotal || 0;
+  const done = state.turnsDone || 0;
+  const percentDone = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  const estimate = state.avgTurnMs && state.turnsLeft > 0 ? timeLeft(state.avgTurnMs * state.turnsLeft) : '';
+  const tokens = state.tokens || 0;
+  const tokensTotal = done ? Math.round((tokens / done) * total) : 0;
+
+  return (
+    <div className="text-xs">
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="rounded px-1 py-0.5 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800">
+        {open ? '▾' : '▸'} Details
+      </button>
+      {open && (
+        <div className="mt-1 w-72 max-w-full space-y-2 rounded-lg border border-slate-200 bg-white p-3 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+          <p>
+            <span className="font-medium text-slate-800 dark:text-slate-100">Working on:</span> {topic ? (topic.length > 140 ? `${topic.slice(0, 140)}…` : topic) : 'the room’s question'}
+          </p>
+          <p>
+            <span className="font-medium text-slate-800 dark:text-slate-100">Time left:</span>{' '}
+            {estimate ? `up to about ${estimate} (it may finish sooner)` : state.turnsLeft > 0 ? 'working it out after the first reply' : 'almost done'}
+          </p>
+          <Meter label="Progress" percent={percentDone} detail={`${done} of ${total} messages`} />
+          <Meter label="Tokens" percent={tokensTotal ? Math.min(100, Math.round((tokens / tokensTotal) * 100)) : null} detail={tokens ? `${tokens.toLocaleString()}${tokensTotal ? ` of about ${tokensTotal.toLocaleString()}` : ''}` : 'none yet'} />
+          {pc === undefined ? (
+            <p>Checking this computer…</p>
+          ) : pc === null ? (
+            <p>Computer use (CPU and memory) is only shown on the hub computer.</p>
+          ) : (
+            <>
+              <Meter label="CPU (whole computer)" percent={pc.cpu} detail="in use" />
+              <Meter label="Memory (whole computer)" percent={pc.memTotalGb ? Math.round((pc.memUsedGb / pc.memTotalGb) * 100) : 0} detail={`${pc.memUsedGb} of ${pc.memTotalGb} GB`} />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 interface NexusViewProps {
   agents: Agent[];
@@ -365,14 +457,19 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
           })}
 
           {state.running && (
-            <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white" style={{ backgroundColor: speaker?.color || '#64748b' }}>
-                {speaker ? speaker.avatar || speaker.name.slice(0, 2).toUpperCase() : <Loader2 className="h-4 w-4 animate-spin" />}
-              </span>
-              <span className="flex items-center gap-2">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                {state.speaking ? `${state.speaking} is thinking…` : 'The team is talking…'}
-              </span>
+            <div>
+              <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white" style={{ backgroundColor: speaker?.color || '#64748b' }}>
+                  {speaker ? speaker.avatar || speaker.name.slice(0, 2).toUpperCase() : <Loader2 className="h-4 w-4 animate-spin" />}
+                </span>
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {state.speaking ? `${state.speaking} is thinking…` : 'The team is talking…'}
+                </span>
+              </div>
+              <div className="ml-11 mt-1">
+                <WorkingDetails topic={[...messages].reverse().find((m) => m.role === 'user')?.text || ''} state={state} />
+              </div>
             </div>
           )}
           <div ref={endRef} />

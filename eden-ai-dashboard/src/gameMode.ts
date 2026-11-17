@@ -78,10 +78,21 @@ export function readGameSave(): GameSave {
   }
 }
 
+// Total XP you need to reach the start of a level.
+export function xpAtLevel(level: number) {
+  let total = 0;
+  for (let l = 1; l < level; l++) total += xpForLevel(l);
+  return total;
+}
+
+// Announced whenever the game save changes, so the Account profile card can show the same level and XP.
+export const GAME_SAVE_EVENT = 'eden-game-save';
+
 export function writeGameSave(save: GameSave) {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify(save));
   } catch {}
+  window.dispatchEvent(new Event(GAME_SAVE_EVENT));
 }
 
 export function applyGameMode(on: boolean) {
@@ -97,7 +108,14 @@ export function setGameOn(on: boolean) {
   window.dispatchEvent(new Event(EVENT));
 }
 
+// Set once this device has its own game progress (or chose to start over), so the level saved on the hub is only
+// ever copied in once, on a device that never played: never on top of a deliberate "Start the game over".
+export const GAME_SEEDED_KEY = 'eden_game_seeded';
+export const markGameSeeded = () => { try { localStorage.setItem(GAME_SEEDED_KEY, '1'); } catch {} };
+export const gameSeeded = () => { try { return localStorage.getItem(GAME_SEEDED_KEY) === '1'; } catch { return true; } };
+
 export function resetGame() {
+  markGameSeeded();
   writeGameSave({ ...FRESH });
   window.dispatchEvent(new Event(EVENT));
 }

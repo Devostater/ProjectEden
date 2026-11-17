@@ -110,6 +110,10 @@ export const MobilePanel: React.FC<{ review: ReviewProps; project?: PanelProject
           setTab(null);
           review.onOpen(card);
         }}
+        onOpenUpdates={() => {
+          setTab(null);
+          review.onOpenUpdates?.();
+        }}
       />
     );
   else if (tab === 'activity') body = <ActivityList />;

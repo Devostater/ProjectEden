@@ -70,6 +70,18 @@ export function useArrangedOrder(key: string, ids: string[]) {
     },
     [order, save],
   );
+  // Used by hold-and-drag: drop on a neighbour and take its place (after it when moving right/down, before it when moving left/up).
+  const moveNear = useCallback(
+    (id: string, target: string) => {
+      const from = order.indexOf(id);
+      const to = order.indexOf(target);
+      if (id === target || from < 0 || to < 0) return;
+      const next = order.filter((x) => x !== id);
+      next.splice(next.indexOf(target) + (from < to ? 1 : 0), 0, id);
+      save(next);
+    },
+    [order, save],
+  );
   const reset = useCallback(() => {
     try {
       localStorage.removeItem(key);
@@ -79,7 +91,7 @@ export function useArrangedOrder(key: string, ids: string[]) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, idsKey]);
   const pos = useCallback((id: string) => Math.max(0, order.indexOf(id)), [order]);
-  return { order, pos, move, moveTo, reset, neighbour };
+  return { order, pos, move, moveTo, moveNear, reset, neighbour, listKey: key };
 }
 
 // One item of an arranged list. Outside Arrange mode it only sets the item's place; in Arrange mode it adds the
@@ -96,9 +108,79 @@ export const Arrangeable: React.FC<{
   hidden?: boolean; // hidden by you: not shown outside Arrange mode
   onToggleHidden?: () => void; // shows a Show/Hide eye while arranging
   onRemove?: () => void; // shows a Remove (X) while arranging, for tabs you added
+  holdDrag?: string; // a list name: outside Arrange mode, press and hold an item, then drag it to a new place in that list
   children: React.ReactNode;
-}> = ({ id, label, arr, arranging, horizontal = false, showing, className = '', hidden = false, onToggleHidden, onRemove, children }) => {
+}> = ({ id, label, arr, arranging, horizontal = false, showing, className = '', hidden = false, onToggleHidden, onRemove, holdDrag: holdDragProp, children }) => {
+  const [lifted, setLifted] = useState(false);
+  // Every arranged list (side bar, bottom bar, ...) can be re-ordered by a short press-and-drag.
+  const holdDrag = holdDragProp ?? arr.listKey;
   const i = arr.pos(id);
+  // Press and hold (about a third of a second), then drag onto another item of the same list and let go.
+  const startHold = (e: React.PointerEvent) => {
+    if (!holdDrag || arranging || e.button !== 0) return;
+    // Fingers wobble more than a mouse: use a bigger "this is a drag" distance for touch and pen, beyond the
+    // browser's own tap tolerance, so a slow tap stays a tap.
+    const slop = e.pointerType === 'mouse' ? 6 : 16;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let isLifted = false;
+    let moved = false; // dragged after lifting; a hold that is let go in place is still a normal click
+    let target: HTMLElement | null = null;
+    const mark = (el: HTMLElement | null) => {
+      if (target === el) return;
+      if (target) target.style.outline = '';
+      target = el;
+      if (target) target.style.outline = '2px solid rgb(99 102 241)';
+    };
+    const timer = window.setTimeout(() => {
+      // Ready to drag, but nothing changes on screen until the pointer actually moves: growing the item now would
+      // shift what is under a still pointer and send a slow click to the wrong button.
+      isLifted = true;
+    }, 300);
+    const pid = e.pointerId; // follow only the pointer that started the hold (not a second finger or the mouse)
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== pid) return;
+      if (!isLifted) {
+        // Moved before the hold finished: this is a normal press or scroll, not a drag.
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > slop) finish(false);
+        return;
+      }
+      if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) > slop) {
+        moved = true;
+        setLifted(true);
+      }
+      if (!moved) return;
+      const under = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(`[data-arrange-list="${holdDrag}"]`) ?? null;
+      mark(under && under.dataset.arrangeId !== id ? under : null);
+    };
+    const finish = (drop: boolean) => {
+      window.clearTimeout(timer);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+      const to = target?.dataset.arrangeId;
+      mark(null);
+      if (isLifted) {
+        setLifted(false);
+        // The let-go after a real drag must not also press the button underneath. A slow click that never moved
+        // is still a click, so it goes through.
+        if (moved) {
+          const swallow = (ev: Event) => {
+            ev.stopPropagation();
+            ev.preventDefault();
+          };
+          window.addEventListener('click', swallow, true);
+          window.setTimeout(() => window.removeEventListener('click', swallow, true), 0);
+        }
+        if (drop && moved && to) arr.moveNear(id, to);
+      }
+    };
+    const up = (ev: PointerEvent) => { if (ev.pointerId === pid) finish(true); };
+    const cancel = (ev: PointerEvent) => { if (ev.pointerId === pid) finish(false); };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+  };
   const canPrev = arr.neighbour(id, -1, showing) >= 0;
   const canNext = arr.neighbour(id, 1, showing) >= 0;
   const btn = 'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white text-slate-800 hover:border-indigo-500 disabled:opacity-30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100';
@@ -108,7 +190,11 @@ export const Arrangeable: React.FC<{
   return (
     <div
       style={{ order: i }}
-      className={`${arranging ? "" : className} ${arranging ? `flex flex-row items-center gap-0.5 rounded-lg ring-2 ring-dashed ring-indigo-400/60 ${horizontal ? 'px-1' : 'p-1'}` : ''}`}
+      data-arrange-list={holdDrag && !arranging ? holdDrag : undefined}
+      data-arrange-id={id}
+      onPointerDown={startHold}
+      title={holdDrag && !arranging ? 'Press and hold, then drag to move' : undefined}
+      className={`${arranging ? "" : className} ${arranging ? `flex flex-row items-center gap-0.5 rounded-lg ring-2 ring-dashed ring-indigo-400/60 ${horizontal ? 'px-1' : 'p-1'}` : ''} ${lifted ? 'z-10 cursor-grabbing select-none opacity-70 shadow-lg' : ''}`}
       draggable={arranging}
       onDragStart={(e) => {
         e.dataTransfer.setData('text/x-eden-arrange', id);

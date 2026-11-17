@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.ts';
+import { Sections } from './Sections.tsx';
 import { FolderGit2, RefreshCw, ArrowDown, ArrowUp, Loader2, Save, ExternalLink, Link2, Download, CheckCircle2, AlertTriangle, ChevronDown } from 'lucide-react';
 
 interface Repo {
@@ -219,20 +220,34 @@ export function ReposView() {
         </p>
       )}
       {repos && !repos.length && <p className="text-sm text-slate-500">No git projects found in {root}.</p>}
-      {repos?.map((r) => <RepoCard key={r.name} repo={r} onChange={(n) => setRepos((rs) => rs!.map((x) => (x.name === n.name ? n : x)))} />)}
-
-      <form onSubmit={doClone} className="space-y-2 rounded-xl border border-dashed border-slate-300 p-4 dark:border-slate-700">
-        <label htmlFor="clone-repo" className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
-          <Download className="h-4 w-4" /> Bring a GitHub repo onto this PC
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <input id="clone-repo" value={clone} onChange={(e) => setClone(e.target.value)} placeholder="owner/name or GitHub link" className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
-          <button type="submit" disabled={cloning || !clone.trim()} className={btn}>
-            {cloning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Clone
-          </button>
-        </div>
-        {cloneMsg && <p className="text-sm text-amber-700 dark:text-amber-300">{cloneMsg}</p>}
-      </form>
+      <Sections
+        storageKey="github"
+        items={[
+          ...(repos || []).map((r) => ({
+            id: `repo:${r.name}`,
+            title: r.name,
+            body: <RepoCard repo={r} onChange={(n) => setRepos((rs) => rs!.map((x) => (x.name === n.name ? n : x)))} />,
+          })),
+          {
+            id: 'clone',
+            title: 'Bring a GitHub repo onto this PC',
+            body: (
+              <form onSubmit={doClone} className="space-y-2 rounded-xl border border-dashed border-slate-300 p-4 dark:border-slate-700">
+                <label htmlFor="clone-repo" className="flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+                  <Download className="h-4 w-4" /> Bring a GitHub repo onto this PC
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <input id="clone-repo" value={clone} onChange={(e) => setClone(e.target.value)} placeholder="owner/name or GitHub link" className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-950" />
+                  <button type="submit" disabled={cloning || !clone.trim()} className={btn}>
+                    {cloning ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Clone
+                  </button>
+                </div>
+                {cloneMsg && <p className="text-sm text-amber-700 dark:text-amber-300">{cloneMsg}</p>}
+              </form>
+            ),
+          },
+        ]}
+      />
     </div>
   );
 }

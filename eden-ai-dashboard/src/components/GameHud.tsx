@@ -31,7 +31,11 @@ export const GameHud: React.FC = () => {
   useEffect(() => {
     const reread = () => setSave(readGameSave());
     window.addEventListener('eden-game-mode', reread);
-    return () => window.removeEventListener('eden-game-mode', reread);
+    window.addEventListener('storage', reread); // a reset or change in another tab or window
+    return () => {
+      window.removeEventListener('eden-game-mode', reread);
+      window.removeEventListener('storage', reread);
+    };
   }, []);
 
   // Helpers fight for you once a second.

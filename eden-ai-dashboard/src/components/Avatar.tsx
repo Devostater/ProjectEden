@@ -53,11 +53,33 @@ export const Avatar: React.FC<{ src?: string; initial: string; frame?: string; s
 
 // The profile, shared by the left bar and the Account tab. Changes are announced with an event.
 export const PROFILE_EVENT = 'eden-profile-changed';
-export interface ProfileData { avatar: string; frame: string; bio: string; links: { label: string; url: string }[]; commands: { label: string; text: string }[]; playerLevel: number; workTitle: string; gameTitle: string; prestige: number; credits: number; diamonds: number }
+export interface ProfileData { avatar: string; frame: string; bio: string; links: { label: string; url: string }[]; commands: { label: string; text: string }[]; playerLevel: number; workTitle: string; gameTitle: string; prestige: number; credits: number; diamonds: number; playerClass: string; xp: number; stats: { creativity: number; logic: number; charm: number; luck: number } }
+// Fill in anything an older hub doesn't send yet (fields added by later updates, before the hub restarts), so the
+// profile card never reads a missing field and crashes. Used for both loading and saving.
+export function normalizeProfile(d: any): ProfileData | null {
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return null;
+  const num = (v: unknown, dflt: number) => (typeof v === 'number' && Number.isFinite(v) ? v : dflt);
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  const st = d.stats && typeof d.stats === 'object' ? d.stats : {};
+  return {
+    ...d,
+    avatar: str(d.avatar), frame: str(d.frame) || 'none', bio: str(d.bio),
+    workTitle: str(d.workTitle), gameTitle: str(d.gameTitle), playerClass: str(d.playerClass),
+    playerLevel: Math.max(1, num(d.playerLevel, 1)),
+    prestige: num(d.prestige, 0), credits: num(d.credits, 0), diamonds: num(d.diamonds, 0), xp: num(d.xp, 0),
+    links: Array.isArray(d.links) ? d.links.filter((l: any) => l && typeof l.label === 'string' && typeof l.url === 'string') : [],
+    commands: Array.isArray(d.commands) ? d.commands.filter((c: any) => c && typeof c.label === 'string' && typeof c.text === 'string') : [],
+    stats: { creativity: num(st.creativity, 10), logic: num(st.logic, 10), charm: num(st.charm, 10), luck: num(st.luck, 10) },
+  };
+}
 export function useProfile(): ProfileData | null {
   const [p, setP] = useState<ProfileData | null>(null);
   useEffect(() => {
-    const load = () => fetch('/api/profile').then((r) => r.json()).then(setP).catch(() => {});
+    const load = () =>
+      fetch('/api/profile')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { const p = normalizeProfile(d); if (p) setP(p); })
+        .catch(() => {});
     load();
     window.addEventListener(PROFILE_EVENT, load);
     return () => window.removeEventListener(PROFILE_EVENT, load);

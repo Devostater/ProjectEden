@@ -1,5 +1,6 @@
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import { ErrorBoundary } from './ErrorBoundary.tsx';
 import './index.css';
 import { setupInstall } from './installApp.ts';
 
@@ -15,4 +16,8 @@ document.addEventListener('click', (e) => {
   setTimeout(() => button.classList.remove('refresh-spin'), 750);
 });
 
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>,
+);

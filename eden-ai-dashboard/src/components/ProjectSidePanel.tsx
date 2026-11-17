@@ -1,24 +1,27 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, ChevronLeft, Flag, Map, MessagesSquare } from 'lucide-react';
+import { CalendarClock, ChevronRight, ChevronLeft, Flag, Map, MessagesSquare } from 'lucide-react';
+import { setMeetingNote, useMeetingSelection } from '../meetingSelection.ts';
 import { ProjectChat } from './ProjectChat.tsx';
 import { MissionView, JourneyView } from './ProjectPages.tsx';
 import type { PanelProject } from './BottomPanel.tsx';
 import { WorkloadTab } from './ProjectVisuals.tsx';
 import { roadmapProgress } from './Roadmap.tsx';
 import { PROJECT_PANELS } from '../panelMeta.ts';
+import { TIME_CHOICES, useMeetingHeadsUp } from '../meetingHeadsUp.ts';
 
 // The right-hand panel, shown on every page when only one page is open on a wide screen. It always follows the
 // project you have open on the Projects page.
 // Health summary, the project's buttons (moved here from the page header, Projects page only), then the project tools.
 // Drag its left edge to make it wider or narrower; the size is remembered.
-type SideTab = 'mission' | 'chief' | 'journey' | 'workload';
+type SideTab = 'meeting' | 'mission' | 'chief' | 'journey' | 'workload';
 const SIDE_TABS: { id: SideTab; label: string; icon: React.ElementType }[] = [
+  { id: 'meeting', label: 'Meeting', icon: CalendarClock },
   { id: 'mission', label: 'Mission', icon: Flag },
   { id: 'chief', label: 'Chief', icon: MessagesSquare },
   { id: 'journey', label: 'Journey', icon: Map },
   { id: 'workload', label: 'Workload', icon: PROJECT_PANELS.find((p) => p.id === 'workload')!.icon },
 ];
-const ORDER: SideTab[] = ['mission', 'chief', 'journey', 'workload'];
+const ORDER: SideTab[] = ['mission', 'chief', 'journey', 'workload']; // the Meeting tab is added in front of these only on the Meetings page
 const MIN_W = 320;
 const DEFAULT_W = 720; // "double wide"
 
@@ -49,11 +52,78 @@ const Label: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   </h3>
 );
 
-export const ProjectSidePanel: React.FC<{ project: PanelProject; showActions?: boolean }> = ({ project, showActions = true }) => {
+// How early the Notifications list warns you about a meeting: pick the time, then switch it on or off.
+// Same setting as the one in the Notifications list.
+const HeadsUpSetting: React.FC = () => {
+  const { time, on, setMinutes, setTime } = useMeetingHeadsUp();
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-slate-200 px-3 py-2 text-sm dark:border-slate-700">
+      <span className="min-w-0 flex-1 text-slate-800 dark:text-slate-200">Heads up before a meeting</span>
+      <select value={time} onChange={(e) => setTime(Number(e.target.value))} aria-label="How early to warn you before a meeting" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+        {TIME_CHOICES.map((c) => <option key={c.minutes} value={c.minutes}>{c.label}</option>)}
+      </select>
+      <button role="switch" aria-checked={on} aria-label="Heads up before a meeting: on or off" title={on ? 'On: click to turn off' : 'Off: click to turn on'} onClick={() => setMinutes(on ? 0 : time)} className={`relative h-5 w-9 shrink-0 rounded-full transition ${on ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-700'}`}>
+        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${on ? 'left-[18px]' : 'left-0.5'}`} />
+      </button>
+      <span className="w-full text-[11px] text-slate-500 dark:text-slate-400">Saved on this device. Meetings with a day but no time can't give a heads-up.</span>
+    </div>
+  );
+};
+
+// What you picked on the Meetings page: when it is, its topics, and a place for notes (shared with the middle).
+const MeetingTab: React.FC = () => {
+  const { selection: s, notes } = useMeetingSelection();
+  if (!s) return (
+    <div className="space-y-3">
+      <HeadsUpSetting />
+      <p className="text-sm text-slate-500 dark:text-slate-400">Pick a meeting on the left to see its details here.</p>
+    </div>
+  );
+  return (
+    <div className="space-y-3">
+      <HeadsUpSetting />
+      <div className="flex items-start gap-2">
+        {s.color ? <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: s.color }} /> : <CalendarClock className="mt-0.5 h-5 w-5 shrink-0 text-indigo-500" />}
+        <div className="min-w-0 flex-1">
+          <h4 className="break-words text-base font-semibold text-slate-900 dark:text-white">{s.title}</h4>
+          <p className="text-sm text-slate-500 dark:text-slate-400">{s.sub || 'No time set'}{s.kind === 'event' ? ' · your own event, saved on this device' : ''}</p>
+        </div>
+      </div>
+      {s.kind === 'project' && (
+        <div>
+          <Label>Topics to discuss</Label>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-800 dark:text-slate-100">
+            {s.open.map((t, i) => <li key={`${i}:${t}`}>{t}</li>)}
+          </ul>
+          {!s.open.length && <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">No topics yet. Add them in the middle.</p>}
+          {s.discussed > 0 && <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{s.discussed} already discussed</p>}
+        </div>
+      )}
+      <div>
+        <Label>Notes</Label>
+        <textarea
+          value={notes[s.noteKey] || ''}
+          onChange={(e) => setMeetingNote(s.noteKey, e.target.value)}
+          rows={6}
+          placeholder="Add notes for this meeting. Saved on this device only."
+          aria-label={`Notes for ${s.title}`}
+          className="mt-2 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+        />
+      </div>
+    </div>
+  );
+};
+
+export const ProjectSidePanel: React.FC<{ project: PanelProject; showActions?: boolean; showMeeting?: boolean }> = ({ project, showActions = true, showMeeting = false }) => {
   const [tab, setTabState] = useState<SideTab>(() => (ORDER.includes(read('eden_side_tab', 'mission') as SideTab) ? (read('eden_side_tab', 'mission') as SideTab) : 'mission'));
   const [closed, setClosed] = useState(() => read('eden_side_closed', '') === '1');
   const [width, setWidth] = useState(() => Math.max(MIN_W, Number(read('eden_side_width', String(DEFAULT_W))) || DEFAULT_W));
-  const setTab = (t: SideTab) => { setTabState(t); write('eden_side_tab', t); };
+  const setTab = (t: SideTab) => { setTabState(t); if (t !== 'meeting') write('eden_side_tab', t); };
+  // Picking a different meeting brings the Meeting tab forward.
+  const pickedKey = useMeetingSelection().selection?.key || '';
+  useEffect(() => { if (showMeeting && pickedKey) setTabState('meeting'); }, [showMeeting, pickedKey]);
+  const tabs: SideTab[] = showMeeting ? ['meeting', ...ORDER] : ORDER;
+  const shownTab: SideTab = tabs.includes(tab) ? tab : 'mission';
   const toggle = () => { setClosed((c) => { write('eden_side_closed', c ? '' : '1'); return !c; }); };
   const boxRef = useCallback((el: HTMLDivElement | null) => setActionsBox(el), []);
   useEffect(() => () => setActionsBox(null), []);
@@ -150,10 +220,10 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject; showActions?: b
 
       <section className="flex shrink-0 flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div role="tablist" aria-label="Project tools" className="grid grid-cols-[repeat(auto-fit,minmax(5rem,1fr))] gap-2 border-b border-slate-200 p-3 dark:border-slate-800">
-          {ORDER.map((id) => {
+          {tabs.map((id) => {
             const t = SIDE_TABS.find((x) => x.id === id)!;
             const Icon = t.icon;
-            const on = tab === id;
+            const on = shownTab === id;
             return (
               <button key={id} role="tab" aria-selected={on} onClick={() => setTab(id)} title={t.label}
                 className={`${square} ${on ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-slate-200 text-slate-700 hover:border-indigo-400 dark:border-slate-700 dark:text-slate-200 dark:hover:border-indigo-500'}`}>
@@ -165,10 +235,11 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject; showActions?: b
           })}
         </div>
         <div className="overflow-x-hidden p-3">
-          {tab === 'mission' && <div className="@container"><MissionView {...project} /></div>}
-          {tab === 'chief' && <ProjectChat projectId={project.project.id} />}
-          {tab === 'journey' && <JourneyView {...project} />}
-          {tab === 'workload' && <WorkloadTab {...project} />}
+          {shownTab === 'meeting' && <MeetingTab />}
+          {shownTab === 'mission' && <div className="@container"><MissionView {...project} /></div>}
+          {shownTab === 'chief' && <ProjectChat projectId={project.project.id} />}
+          {shownTab === 'journey' && <JourneyView {...project} />}
+          {shownTab === 'workload' && <WorkloadTab {...project} />}
         </div>
       </section>
       </div>
