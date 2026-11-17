@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight, Copy, Check, SlidersHorizontal, EyeOff, Map as MapIcon, MessagesSquare, AppWindow } from 'lucide-react';
+import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight, Copy, Check, SlidersHorizontal, EyeOff, Map as MapIcon, MessagesSquare, AppWindow, Settings } from 'lucide-react';
 import { LiveAppView } from './LiveAppView.tsx';
 import { JourneyView } from './ProjectPages.tsx';
 import { ProjectChat } from './ProjectChat.tsx';
@@ -13,7 +13,7 @@ import { Arrangeable, useArrangedOrder } from '../arrange.tsx';
 import { ReviewTab, type ReviewProps } from './ReviewTab.tsx';
 import { LyraPanel, LyraChibi } from './LyraPanel.tsx';
 import { OPEN_PANEL_EVENT } from '../panel.ts';
-import { UsagePanel } from './UsageBars.tsx';
+import { UsagePanel, useProviderUsage, usagePercent } from './UsageBars.tsx';
 import { useSideActionsTarget } from './ProjectSidePanel.tsx';
 import { PauseAI } from './PauseAI.tsx';
 
@@ -75,6 +75,31 @@ const KIND_STYLE: Record<ActivityEntry['kind'], string> = {
   work: 'text-indigo-600 dark:text-indigo-400',
   done: 'text-emerald-600 dark:text-emerald-400',
   error: 'text-red-600 dark:text-red-400',
+};
+
+// A small circle showing how much of the busiest AI's limit is used. Press it to see the details.
+const UsageRing: React.FC<{ onClick: () => void }> = ({ onClick }) => {
+  const usage = useProviderUsage().filter((u) => u.mode !== 'off');
+  const pct = usage.length ? Math.max(...usage.map(usagePercent)) : 0;
+  const r = 12;
+  const c = 2 * Math.PI * r;
+  const color = pct >= 90 ? 'stroke-red-500' : pct >= 70 ? 'stroke-amber-500' : 'stroke-emerald-500';
+  return (
+    <button
+      onClick={onClick}
+      aria-label={`AI usage: ${pct}% of the limit used`}
+      title={usage.length ? `AI usage: ${pct}% of the busiest AI's limit used. Press for details.` : 'AI usage'}
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+    >
+      <span className="relative flex h-7 w-7 items-center justify-center">
+        <svg viewBox="0 0 28 28" className="absolute inset-0 h-7 w-7 -rotate-90">
+          <circle cx="14" cy="14" r={r} fill="none" strokeWidth="3" className="stroke-slate-200 dark:stroke-slate-700" />
+          <circle cx="14" cy="14" r={r} fill="none" strokeWidth="3" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct / 100)} className={`${color} transition-all`} />
+        </svg>
+        <span className="relative text-[9px] font-semibold tabular-nums text-slate-700 dark:text-slate-200">{pct}</span>
+      </span>
+    </button>
+  );
 };
 
 const folderName = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() || p;
@@ -317,12 +342,34 @@ export const BottomPanel: React.FC<{
     }
   });
   const toggleHidden = (id: string) => setHiddenTabs((h) => { const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id]; try { localStorage.setItem('eden_dock_hidden', JSON.stringify(next)); } catch {} return next; });
+  // The settings menu: every panel tool lives in this one drop-up (it drops down on the large screen, where the bar is at the top).
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setMenuOpen(false);
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+  const menuItem =
+    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800';
+  const menuAct = (fn: () => void) => () => {
+    fn();
+    setMenuOpen(false);
+  };
   const sidePanelOpen = !!useSideActionsTarget();
   const inSidePanel = (id: PanelTab) => sidePanelOpen && PROJECT_TABS.includes(id) && id !== 'preview' && id !== 'chief' && id !== 'app';
   const tabButton = (id: PanelTab, label: React.ReactNode, Icon: React.ElementType, dot = false) => inSidePanel(id) ? null : (
     <Arrangeable key={id} id={id} label={typeof label === 'string' ? label : id.charAt(0).toUpperCase() + id.slice(1)} arr={dockOrder} arranging={arrangingDock} horizontal showing={project ? ALL_TABS : ALL_TABS.filter((t) => !PROJECT_TABS.includes(t))} className="flex shrink-0" hidden={hiddenTabs.includes(id)} onToggleHidden={() => toggleHidden(id)}>
       <button
-        onClick={() => pick(id)}
+        onClick={() => (open && tab === id ? toggle() : pick(id))}
         aria-pressed={open && tab === id}
         className={`relative flex shrink-0 items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors ${
           open && tab === id
@@ -402,53 +449,90 @@ export const BottomPanel: React.FC<{
               Reset
             </button>
           )}
+          {arrangingDock && (
+            <button onClick={() => setArrangingDock(false)} aria-label="Done customizing" title="Done" className={`${toolClass} gap-1.5 bg-indigo-600 px-2.5 text-sm text-white hover:bg-indigo-500 hover:text-white dark:text-white`}>
+              <SlidersHorizontal className="h-4 w-4" /> Done
+            </button>
+          )}
+          <div ref={menuRef} className="relative">
+            <button
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              aria-label="Settings for this panel"
+              title="Settings: customize, zoom, size, large screen, collapse"
+              className={`${toolClass} ${menuOpen ? 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-white' : ''}`}
+            >
+              <Settings className="h-5 w-5" />
+            </button>
+            {menuOpen && (
+              <div
+                role="menu"
+                aria-label="Panel settings"
+                className={`absolute right-0 z-50 w-64 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:bg-slate-900 ${open && fullScreen ? 'top-full mt-2' : 'bottom-full mb-2'}`}
+              >
+                <button role="menuitem" onClick={menuAct(() => setArrangingDock((v) => !v))} title="Move tabs around, show or hide them" className={menuItem}>
+                  <SlidersHorizontal className="h-4 w-4" /> {arrangingDock ? 'Done customizing' : 'Customize the tabs'}
+                </button>
+                {arrangingDock && (
+                  <button role="menuitem" onClick={menuAct(dockOrder.reset)} title="Put the tabs back in their usual order" className={menuItem}>
+                    <ArrowLeftRight className="h-4 w-4" /> Reset the tab order
+                  </button>
+                )}
+                {open && tab === 'flow' && (
+                  <div className="flex items-center gap-1 px-1 py-1" role="group" aria-label="Zoom the graph">
+                    <button onClick={() => zoomBy(-0.2)} aria-label="Zoom out" title="Zoom out" className={toolClass}>
+                      <ZoomOut className="h-4 w-4" />
+                    </button>
+                    <span className="w-12 text-center text-xs tabular-nums text-slate-500 dark:text-slate-400">{zoom === 'fit' ? 'Fit' : `${Math.round(zoom * 100)}%`}</span>
+                    <button onClick={() => zoomBy(0.2)} aria-label="Zoom in" title="Zoom in" className={toolClass}>
+                      <ZoomIn className="h-4 w-4" />
+                    </button>
+                    <button onClick={() => setZoom('fit')} aria-pressed={zoom === 'fit'} title="Fit the whole graph" className={`${toolClass} gap-1.5 px-2.5 text-sm`}>
+                      <Scan className="h-4 w-4" /> Fit
+                    </button>
+                  </div>
+                )}
+                {open && tab === 'activity' && entries.length > 0 && (
+                  <button role="menuitem" onClick={menuAct(() => setEntries([]))} title="Clear the log on this screen" className={menuItem}>
+                    <Trash2 className="h-4 w-4" /> Clear the log
+                  </button>
+                )}
+                {open && tab === 'terminal' && lines.length > 0 && (
+                  <button role="menuitem" onClick={menuAct(() => setLines([]))} title="Clear the terminal" className={menuItem}>
+                    <Trash2 className="h-4 w-4" /> Clear the terminal
+                  </button>
+                )}
+                {open && !fullScreen && (
+                  <button role="menuitem" onClick={menuAct(() => setMaximized(!maximized))} title={maximized ? 'Restore size' : 'Make bigger'} className={menuItem}>
+                    {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />} {maximized ? 'Restore panel size' : 'Make panel bigger'}
+                  </button>
+                )}
+                {open && (
+                  <button role="menuitem" onClick={menuAct(() => setFullScreen(!fullScreen))} title={fullScreen ? 'Back to the panel (Esc)' : 'Large screen: fill the window'} className={menuItem}>
+                    {fullScreen ? <Shrink className="h-4 w-4" /> : <Expand className="h-4 w-4" />} {fullScreen ? 'Close large screen' : 'Large screen'}
+                  </button>
+                )}
+                <button role="menuitem" onClick={menuAct(toggle)} title={open ? 'Collapse' : 'Expand'} className={menuItem}>
+                  {open ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />} {open ? 'Collapse the panel' : 'Expand the panel'}
+                </button>
+              </div>
+            )}
+          </div>
           <button
-            onClick={() => setArrangingDock((v) => !v)}
-            aria-pressed={arrangingDock}
-            aria-label={arrangingDock ? 'Done customizing' : 'Customize the bottom bar'}
-            title={arrangingDock ? 'Done' : 'Customize: move tabs, show or hide them'}
-            className={`${toolClass} gap-1.5 px-2.5 text-sm ${arrangingDock ? 'bg-indigo-600 text-white hover:bg-indigo-500 hover:text-white dark:text-white' : ''}`}
+            onClick={toggle}
+            aria-label={open ? 'Minimize the panel' : 'Open the panel'}
+            title={open ? 'Minimize the panel' : 'Open the panel'}
+            className={toolClass}
           >
-            <SlidersHorizontal className="h-4 w-4" /> {arrangingDock ? 'Done' : 'Customize'}
-          </button>
-          {open && tab === 'flow' && (
-            <>
-              <button onClick={() => zoomBy(-0.2)} aria-label="Zoom out" title="Zoom out" className={toolClass}>
-                <ZoomOut className="h-4 w-4" />
-              </button>
-              <span className="w-12 text-center text-xs tabular-nums text-slate-500 dark:text-slate-400">{zoom === 'fit' ? 'Fit' : `${Math.round(zoom * 100)}%`}</span>
-              <button onClick={() => zoomBy(0.2)} aria-label="Zoom in" title="Zoom in" className={toolClass}>
-                <ZoomIn className="h-4 w-4" />
-              </button>
-              <button onClick={() => setZoom('fit')} aria-pressed={zoom === 'fit'} title="Fit the whole graph" className={`${toolClass} gap-1.5 px-2.5 text-sm`}>
-                <Scan className="h-4 w-4" /> Fit
-              </button>
-              <span className="mx-1 h-6 w-px bg-slate-200 dark:bg-slate-700" />
-            </>
-          )}
-          {open && tab === 'activity' && entries.length > 0 && (
-            <button onClick={() => setEntries([])} title="Clear the log on this screen" className={`${toolClass} gap-1.5 px-2.5 text-sm`}>
-              <Trash2 className="h-4 w-4" /> Clear
-            </button>
-          )}
-          {open && tab === 'terminal' && lines.length > 0 && (
-            <button onClick={() => setLines([])} title="Clear the terminal" className={`${toolClass} gap-1.5 px-2.5 text-sm`}>
-              <Trash2 className="h-4 w-4" /> Clear
-            </button>
-          )}
-          {open && !fullScreen && (
-            <button onClick={() => setMaximized(!maximized)} aria-pressed={maximized} aria-label={maximized ? 'Restore panel size' : 'Make panel bigger'} title={maximized ? 'Restore size' : 'Make bigger'} className={toolClass}>
-              {maximized ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-            </button>
-          )}
-          {open && (
-            <button onClick={() => setFullScreen(!fullScreen)} aria-pressed={fullScreen} aria-label={fullScreen ? 'Leave the large screen' : 'Open on the large screen'} title={fullScreen ? 'Back to the panel (Esc)' : 'Large screen: fill the window'} className={`${toolClass} gap-1.5 px-2.5 text-sm`}>
-              {fullScreen ? <Shrink className="h-4 w-4" /> : <Expand className="h-4 w-4" />} {fullScreen ? 'Close large screen' : 'Large screen'}
-            </button>
-          )}
-          <button onClick={toggle} aria-expanded={open} aria-label={open ? 'Collapse panel' : 'Expand panel'} title={open ? 'Collapse' : 'Expand'} className={toolClass}>
             {open ? <ChevronDown className="h-5 w-5" /> : <ChevronUp className="h-5 w-5" />}
           </button>
+          <UsageRing
+            onClick={() => {
+              setActSub('usage');
+              pick('activity');
+            }}
+          />
         </div>
       </div>
 

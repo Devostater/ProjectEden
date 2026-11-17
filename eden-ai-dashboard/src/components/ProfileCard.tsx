@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Upload, Trash2, Plus, X, Save, Loader2, Sparkles, ExternalLink, Play } from 'lucide-react';
+import { Upload, Trash2, Plus, X, Save, Loader2, Sparkles, ExternalLink, Play, Star, Briefcase, Gamepad2, Trophy, Coins, Gem } from 'lucide-react';
 import { Avatar, FRAMES, PROFILE_EVENT, useProfile, type ProfileData } from './Avatar.tsx';
 
 // Picture, frame, bio, your links and your own quick commands (a command sends its text to Chat).
@@ -55,6 +55,16 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
         <Avatar src={p.avatar} initial={initial} frame={p.frame} size={96} />
         <div className="space-y-2">
           <p className="text-lg font-semibold text-slate-900 dark:text-white">{name || 'Your profile'}</p>
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-600 dark:text-slate-300">
+            <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300"><Star className="h-3.5 w-3.5" aria-hidden /> Level {p.playerLevel}</span>
+            {p.workTitle && <span className="inline-flex items-center gap-1"><Briefcase className="h-4 w-4 text-slate-400" aria-hidden /> {p.workTitle}</span>}
+            {p.gameTitle && <span className="inline-flex items-center gap-1"><Gamepad2 className="h-4 w-4 text-slate-400" aria-hidden /> {p.gameTitle}</span>}
+          </p>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm font-medium text-slate-800 dark:text-slate-100">
+            <span title="Prestige points" className="inline-flex items-center gap-1.5"><Trophy className="h-4 w-4 text-amber-500" aria-hidden /> {p.prestige.toLocaleString()} <span className="font-normal text-slate-500 dark:text-slate-400">prestige</span></span>
+            <span title="Current credits" className="inline-flex items-center gap-1.5"><Coins className="h-4 w-4 text-yellow-500" aria-hidden /> {p.credits.toLocaleString()} <span className="font-normal text-slate-500 dark:text-slate-400">credits</span></span>
+            <span title="Diamonds" className="inline-flex items-center gap-1.5"><Gem className="h-4 w-4 text-cyan-500" aria-hidden /> {p.diamonds.toLocaleString()} <span className="font-normal text-slate-500 dark:text-slate-400">diamonds</span></span>
+          </div>
           <div className="flex flex-wrap gap-2">
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
               <Upload className="h-4 w-4" /> Change picture
@@ -70,6 +80,36 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
                 <Trash2 className="h-4 w-4" /> Remove
               </button>
             )}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h3 className={h}>Your details</h3>
+        <div className="mt-2 grid gap-3 sm:grid-cols-2">
+          <div>
+            <label htmlFor="pf-level" className="text-xs text-slate-500 dark:text-slate-400">Player level</label>
+            <input id="pf-level" type="number" min={1} value={p.playerLevel} onChange={(e) => set({ playerLevel: Math.max(1, Math.floor(Number(e.target.value)) || 1) })} className={`${input} mt-1`} />
+          </div>
+          <div>
+            <label htmlFor="pf-work" className="text-xs text-slate-500 dark:text-slate-400">Work title</label>
+            <input id="pf-work" value={p.workTitle} onChange={(e) => set({ workTitle: e.target.value })} maxLength={60} placeholder="e.g. Lead Designer" className={`${input} mt-1`} />
+          </div>
+          <div className="sm:col-span-2">
+            <label htmlFor="pf-game" className="text-xs text-slate-500 dark:text-slate-400">Video game title</label>
+            <input id="pf-game" value={p.gameTitle} onChange={(e) => set({ gameTitle: e.target.value })} maxLength={80} placeholder="The game you are making" className={`${input} mt-1`} />
+          </div>
+          <div>
+            <label htmlFor="pf-prestige" className="text-xs text-slate-500 dark:text-slate-400">Prestige points</label>
+            <input id="pf-prestige" type="number" min={0} value={p.prestige} onChange={(e) => set({ prestige: Math.max(0, Math.floor(Number(e.target.value)) || 0) })} className={`${input} mt-1`} />
+          </div>
+          <div>
+            <label htmlFor="pf-credits" className="text-xs text-slate-500 dark:text-slate-400">Current credits</label>
+            <input id="pf-credits" type="number" min={0} value={p.credits} onChange={(e) => set({ credits: Math.max(0, Math.floor(Number(e.target.value)) || 0) })} className={`${input} mt-1`} />
+          </div>
+          <div>
+            <label htmlFor="pf-diamonds" className="text-xs text-slate-500 dark:text-slate-400">Diamonds</label>
+            <input id="pf-diamonds" type="number" min={0} value={p.diamonds} onChange={(e) => set({ diamonds: Math.max(0, Math.floor(Number(e.target.value)) || 0) })} className={`${input} mt-1`} />
           </div>
         </div>
       </div>

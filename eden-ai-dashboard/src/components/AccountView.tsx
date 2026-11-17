@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { THEMES } from '../themes.ts';
+import { useGameOn, resetGame } from '../gameMode.ts';
 import { User, Plug, Bot, GitBranch, SlidersHorizontal, Sun, Moon, Save, Loader2 } from 'lucide-react';
 import { SettingsView } from './SettingsView.tsx';
 import { ReposView } from './ReposView.tsx';
@@ -87,6 +88,8 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
   const [name, setName] = useState('');
   const [studio, setStudio] = useState('');
   const [terminalOn, setTerminalOn] = useState(false);
+  const [gameOn, setGameOn] = useGameOn();
+  const [resetAsk, setResetAsk] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -217,6 +220,40 @@ export const AccountView: React.FC<AccountViewProps> = ({ tab, setTab, darkMode,
                 );
               })}
             </div>
+          </section>
+
+          <section className={cardClass}>
+            <h2 className="font-semibold text-slate-900 dark:text-white">Options</h2>
+            <div className="mt-3 flex items-start gap-4">
+              <div className="flex-1">
+                <h3 className="text-sm font-medium text-slate-800 dark:text-slate-200">Video game mode</h3>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  Just for fun. Gives the hub a retro game look and adds a small game in the corner: a character, levels and XP, enemies to beat, and gold to spend on upgrades. It saves on this device only and does not change how the hub works.
+                </p>
+              </div>
+              <button
+                onClick={() => setGameOn(!gameOn)}
+                role="switch"
+                aria-checked={gameOn}
+                aria-label="Turn on video game mode"
+                className={`relative mt-1 h-6 w-11 shrink-0 rounded-full transition-colors ${gameOn ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+              >
+                <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${gameOn ? 'left-[1.375rem]' : 'left-0.5'}`} />
+              </button>
+            </div>
+            {gameOn && (
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                {resetAsk ? (
+                  <>
+                    <span className="text-sm text-slate-600 dark:text-slate-300">Erase your level, gold and upgrades?</span>
+                    <button onClick={() => { resetGame(); setResetAsk(false); }} className="rounded-md bg-red-600 px-2.5 py-1 text-sm font-medium text-white hover:bg-red-500">Erase</button>
+                    <button onClick={() => setResetAsk(false)} className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
+                  </>
+                ) : (
+                  <button onClick={() => setResetAsk(true)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Start the game over</button>
+                )}
+              </div>
+            )}
           </section>
 
           <section className={cardClass}>

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 
 // A panel you can fold away to a single line. The choice is remembered on this browser under `storageKey`.
-export function useFolded(storageKey: string, initial = false): [boolean, () => void] {
+export function useFolded(storageKey: string, initial = false): [boolean, () => void, (value: boolean) => void] {
   const [folded, setFolded] = useState(() => {
     try {
       const v = localStorage.getItem(storageKey);
@@ -18,7 +18,13 @@ export function useFolded(storageKey: string, initial = false): [boolean, () => 
       } catch {}
       return !f;
     });
-  return [folded, toggle];
+  const set = (value: boolean) => {
+    try {
+      localStorage.setItem(storageKey, value ? '1' : '0');
+    } catch {}
+    setFolded(value);
+  };
+  return [folded, toggle, set];
 }
 
 // The heading row of a foldable panel: the whole row is the button, with a chevron and an optional hint while folded.

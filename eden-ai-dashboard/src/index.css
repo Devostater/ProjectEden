@@ -304,6 +304,13 @@ html:not(.dark) .text-emerald-600 { color: #007a55; } /* 5.4:1 (was 3.7:1) */
 /* Count badges: dark digits on amber/green instead of white (white was about 2.2-2.5:1). */
 .bg-amber-500.text-white,
 .bg-emerald-500.text-white { color: #020618; }
+/* Pop-up boxes sit outside the main page, so they never picked up its text colour: dark text on a dark box.
+   Give every pop-up a readable base colour (anything with its own colour still wins), including its text boxes. */
+:where(.fixed.inset-0, [role='dialog']) { color: #0f172a; }
+.dark :where(.fixed.inset-0, [role='dialog']) { color: #e2e8f0; }
+:where(.fixed.inset-0, [role='dialog']) :where(input, select, textarea) { color: inherit; }
+:where(.fixed.inset-0, [role='dialog']) :where(input, textarea)::placeholder { color: #64748b; }
+.dark :where(.fixed.inset-0, [role='dialog']) :where(input, textarea)::placeholder { color: #aab7c9; }
 /* A clear keyboard focus ring on everything you can press (not text boxes: they have their own). */
 :root { --eden-focus: #4f39f6; }
 .dark { --eden-focus: #a3b3ff; }
@@ -370,6 +377,33 @@ button[aria-busy='true'] svg.lucide-refresh-cw {
   }
 }
 
+/* ---- News ticker in the status bar (lines come from the Dashboard): slides slowly, pauses on hover, stands still if motion is turned down. ---- */
+.eden-ticker-track {
+  animation: eden-ticker 40s linear infinite;
+}
+.eden-ticker:hover .eden-ticker-track {
+  animation-play-state: paused;
+}
+@keyframes eden-ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .eden-ticker-track {
+    animation: none;
+    flex-wrap: wrap;
+    width: auto;
+    white-space: normal;
+  }
+  .eden-ticker-track > [aria-hidden='true'] {
+    display: none;
+  }
+}
+
 /* ---- Two pages side by side: a narrow pane lays its page out in one column instead of by window width. ---- */
 .eden-pane[data-narrow] :is([class*='md:grid-cols-'], [class*='lg:grid-cols-'], [class*='xl:grid-cols-']) {
   grid-template-columns: minmax(0, 1fr);
@@ -379,6 +413,50 @@ button[aria-busy='true'] svg.lucide-refresh-cw {
 }
 .eden-pane[data-tight] [class*='sm:grid-cols-'] {
   grid-template-columns: minmax(0, 1fr);
+}
+
+/* ---- Game mode (gameMode.ts, off by default): a retro video-game look, plus the little game in the corner ---- */
+html[data-game='on'] body {
+  font-family: ui-monospace, 'Cascadia Mono', 'Courier New', monospace;
+}
+/* Hard pixel-style corners and a faint scanline texture over the whole window. Clicks go straight through it. */
+html[data-game='on'] [class*='rounded-xl'],
+html[data-game='on'] [class*='rounded-lg'] {
+  border-radius: 2px;
+}
+html[data-game='on'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 0, rgba(0, 0, 0, 0.05) 1px, transparent 1px, transparent 3px);
+}
+.game-foe {
+  animation: game-hit 0.18s ease-out;
+}
+.game-foe[data-boss] {
+  font-size: 3rem;
+  line-height: 1;
+}
+.game-levelup {
+  animation: game-pop 0.6s ease-out;
+}
+@keyframes game-hit {
+  0% { transform: translateX(-4px) scale(0.9); }
+  50% { transform: translateX(4px) scale(1.05); }
+  100% { transform: none; }
+}
+@keyframes game-pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  70% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .game-foe,
+  .game-levelup {
+    animation: none;
+  }
 }
 
 /* ---- Eden themes (themes.ts): re-point the accent (indigo) and background (slate) colours ---- */

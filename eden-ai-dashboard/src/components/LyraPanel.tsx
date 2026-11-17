@@ -120,6 +120,8 @@ const LyraWork: React.FC = () => {
     }
   };
   const lyraUrl = `${location.protocol}//${location.hostname}:${o.lyraPort || 4777}/`;
+  // Her gallery is the Library section of her page.
+  const galleryUrl = `${lyraUrl}#library`;
   return (
     <div className="flex w-72 shrink-0 flex-col gap-2 overflow-y-auto border-l border-slate-200 px-3 py-2 text-sm dark:border-slate-800">
       <div className="flex items-center justify-between">
@@ -212,10 +214,14 @@ const LyraWork: React.FC = () => {
       </form>
       {(o.made || []).length > 0 && (
         <div>
-          <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">Made lately</div>
+          <a href={galleryUrl} target="_blank" rel="noreferrer" title="Open LYRA's gallery" className="mb-1 block text-xs font-medium text-slate-500 hover:text-fuchsia-600 hover:underline dark:text-slate-400 dark:hover:text-fuchsia-400">
+            Made lately ↗
+          </a>
           <div className="grid grid-cols-4 gap-1">
             {(o.made || []).map((m) => (
-              <img key={m.url} src={m.url} alt={m.title} title={m.title} loading="lazy" className="aspect-square w-full rounded-md bg-slate-200 object-cover dark:bg-slate-800" />
+              <a key={m.url} href={galleryUrl} target="_blank" rel="noreferrer" title={`${m.title} — open LYRA's gallery`}>
+                <img src={m.url} alt={m.title} loading="lazy" className="aspect-square w-full rounded-md bg-slate-200 object-cover hover:ring-2 hover:ring-fuchsia-500 dark:bg-slate-800" />
+              </a>
             ))}
           </div>
         </div>

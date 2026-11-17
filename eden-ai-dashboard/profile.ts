@@ -12,8 +12,14 @@ export interface Profile {
   bio: string;
   links: { label: string; url: string }[];
   commands: { label: string; text: string }[];
+  playerLevel: number;
+  workTitle: string; // your job title, e.g. "Lead Designer"
+  gameTitle: string; // the video game you are working on
+  prestige: number; // prestige points
+  credits: number;
+  diamonds: number;
 }
-const EMPTY: Profile = { avatar: '', frame: 'none', bio: '', links: [], commands: [] };
+const EMPTY: Profile = { avatar: '', frame: 'none', bio: '', links: [], commands: [], playerLevel: 1, workTitle: '', gameTitle: '', prestige: 0, credits: 0, diamonds: 0 };
 
 function load(): Profile {
   try {
@@ -37,6 +43,11 @@ function isLocal(req: Request) {
 }
 
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+// A whole number between min and 999,999,999 (anything else becomes the fallback).
+const num = (v: unknown, min: number, fallback: number) => {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) ? Math.min(999_999_999, Math.max(min, n)) : fallback;
+};
 
 export function registerProfileRoutes(app: Express) {
   app.get('/api/profile', (_req, res) => res.json(load()));
@@ -55,7 +66,9 @@ export function registerProfileRoutes(app: Express) {
       .map((c: any) => ({ label: str(c?.label, 40), text: str(c?.text, 2000) }))
       .filter((c: { label: string; text: string }) => c.label && c.text)
       .slice(0, 12);
-    const profile: Profile = { avatar, frame: str(b.frame, 30) || 'none', bio: str(b.bio, 300), links, commands };
+    const profile: Profile = { avatar, frame: str(b.frame, 30) || 'none', bio: str(b.bio, 300), links, commands,
+      playerLevel: num(b.playerLevel, 1, 1), workTitle: str(b.workTitle, 60), gameTitle: str(b.gameTitle, 80),
+      prestige: num(b.prestige, 0, 0), credits: num(b.credits, 0, 0), diamonds: num(b.diamonds, 0, 0) };
     const tmp = FILE + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(profile, null, 2));
     fs.renameSync(tmp, FILE);

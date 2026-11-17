@@ -214,7 +214,7 @@ const InfoTip: React.FC<{ text: string }> = ({ text }) => {
         <Info className="h-3.5 w-3.5" />
       </button>
       {open && (
-        <span role="tooltip" className="absolute bottom-full right-0 z-50 mb-1 w-56 rounded-lg border border-slate-200 bg-white p-2 text-xs leading-snug text-slate-600 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+        <span role="tooltip" className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-slate-200 bg-white p-2 text-xs leading-snug text-slate-600 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
           {text}
         </span>
       )}
