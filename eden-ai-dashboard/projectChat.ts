@@ -10,7 +10,7 @@ import type { Agent, Project, Card } from './src/types/index';
 
 export interface ChatLine { role: 'owner' | 'chief'; text: string; at: string }
 export interface AgendaItem { id: string; text: string; done: boolean; at: string }
-interface ProjectChat { messages: ChatLine[]; agenda: AgendaItem[]; meeting?: string }
+interface ProjectChat { messages: ChatLine[]; agenda: AgendaItem[]; meeting?: string; meetingAt?: string }
 
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-project-chats.json');
 const MAX_MESSAGES = 400;
@@ -88,7 +88,7 @@ When the owner wants something added to the to-discuss list, put each item on it
   app.get('/api/meetings', (_req, res) => {
     const meetings = (getStore().projects || []).map((p) => {
       const c = chats[p.id];
-      return { projectId: p.id, name: p.name, color: p.color, meeting: c?.meeting, agenda: c?.agenda || [] };
+      return { projectId: p.id, name: p.name, color: p.color, meeting: c?.meeting, meetingAt: c?.meetingAt, agenda: c?.agenda || [] };
     });
     res.json({ meetings });
   });
@@ -99,7 +99,12 @@ When the owner wants something added to the to-discuss list, put each item on it
     const chat = chatOf(req.params.id);
     const text = clean(req.body?.text, 300);
     if (text) chat.agenda.push({ id: newId(), text, done: false, at: now() });
-    if (typeof req.body?.meeting === 'string') chat.meeting = clean(req.body.meeting, 80) || undefined;
+    if (typeof req.body?.meeting === 'string') {
+      chat.meeting = clean(req.body.meeting, 80) || undefined;
+      // The exact time when the meeting was picked from a calendar (so it can later count as past); cleared when typed by hand.
+      const at = clean(req.body?.meetingAt, 40);
+      chat.meetingAt = at && !Number.isNaN(Date.parse(at)) ? at : undefined;
+    }
     const item = chat.agenda.find((a) => a.id === req.body?.id);
     if (item && typeof req.body?.done === 'boolean') item.done = req.body.done;
     if (item && req.body?.remove === true) chat.agenda = chat.agenda.filter((a) => a !== item);

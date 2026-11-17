@@ -33,6 +33,14 @@ const whenText = (when: string) => {
   return when.length > 10 ? `${day}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : day;
 };
 
+// What gets saved for a meeting: always a real date (never 'Today'), so it still reads right tomorrow.
+const savedWhenText = (when: string) => {
+  const d = new Date(when);
+  if (!when || Number.isNaN(d.getTime())) return '';
+  const day = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  return when.length > 10 ? `${day}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : day;
+};
+
 const REPEAT_OPTIONS: { value: Repeat; label: string; sub: string }[] = [
   { value: '', label: 'Does not repeat', sub: '' },
   { value: 'daily', label: 'Every day', sub: 'Repeats every day' },
@@ -128,12 +136,12 @@ export const UpcomingPanel: React.FC<{ refreshKey: string | number; onPickProjec
     return () => window.removeEventListener('keydown', onKey);
   }, [scheduling]);
   const saveSchedule = async () => {
-    const text = whenText(schedWhen);
+    const text = savedWhenText(schedWhen);
     if (!text || !scheduling) return;
     setSchedSaving(true);
     setSchedError('');
     try {
-      const r = await fetch(`/api/projects/${scheduling}/agenda`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ meeting: text }) });
+      const r = await fetch(`/api/projects/${scheduling}/agenda`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ meeting: text, meetingAt: schedWhen }) });
       if (!r.ok) throw new Error('save failed');
       load();
       onChanged?.();

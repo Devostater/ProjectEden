@@ -57,7 +57,23 @@ export interface ProfileData { avatar: string; frame: string; bio: string; links
 export function useProfile(): ProfileData | null {
   const [p, setP] = useState<ProfileData | null>(null);
   useEffect(() => {
-    const load = () => fetch('/api/profile').then((r) => r.json()).then(setP).catch(() => {});
+    // Fill in anything an older hub doesn't send yet (e.g. stats and XP right after an update, before the hub
+    // restarts), so the profile card never reads a missing field and blanks the app.
+    const load = () =>
+      fetch('/api/profile')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (!d || typeof d !== 'object') return;
+          setP({
+            ...d,
+            playerLevel: Number.isFinite(d.playerLevel) && d.playerLevel > 0 ? d.playerLevel : 1,
+            links: Array.isArray(d.links) ? d.links : [],
+            commands: Array.isArray(d.commands) ? d.commands : [],
+            xp: Number.isFinite(d.xp) ? d.xp : 0,
+            stats: { creativity: 10, logic: 10, charm: 10, luck: 10, ...(d.stats && typeof d.stats === 'object' ? d.stats : {}) },
+          });
+        })
+        .catch(() => {});
     load();
     window.addEventListener(PROFILE_EVENT, load);
     return () => window.removeEventListener(PROFILE_EVENT, load);

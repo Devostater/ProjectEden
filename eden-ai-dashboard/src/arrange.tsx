@@ -121,6 +121,7 @@ export const Arrangeable: React.FC<{
     const startX = e.clientX;
     const startY = e.clientY;
     let isLifted = false;
+    let moved = false; // dragged after lifting; a hold that is let go in place is still a normal click
     let target: HTMLElement | null = null;
     const mark = (el: HTMLElement | null) => {
       if (target === el) return;
@@ -138,6 +139,7 @@ export const Arrangeable: React.FC<{
         if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) finish(false);
         return;
       }
+      if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) moved = true;
       const under = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(`[data-arrange-list="${holdDrag}"]`) ?? null;
       mark(under && under.dataset.arrangeId !== id ? under : null);
     };
@@ -150,14 +152,17 @@ export const Arrangeable: React.FC<{
       mark(null);
       if (isLifted) {
         setLifted(false);
-        // The let-go after a drag must not also press the button underneath.
-        const swallow = (ev: Event) => {
-          ev.stopPropagation();
-          ev.preventDefault();
-        };
-        window.addEventListener('click', swallow, true);
-        window.setTimeout(() => window.removeEventListener('click', swallow, true), 0);
-        if (drop && to) arr.moveNear(id, to);
+        // The let-go after a real drag must not also press the button underneath. A slow click that never moved
+        // is still a click, so it goes through.
+        if (moved) {
+          const swallow = (ev: Event) => {
+            ev.stopPropagation();
+            ev.preventDefault();
+          };
+          window.addEventListener('click', swallow, true);
+          window.setTimeout(() => window.removeEventListener('click', swallow, true), 0);
+        }
+        if (drop && moved && to) arr.moveNear(id, to);
       }
     };
     const up = () => finish(true);
