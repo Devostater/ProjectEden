@@ -147,10 +147,10 @@ function readBaseline(): Baseline {
   }
 }
 
-export function recordActivity(seen: Partial<Pick<Activity, (typeof NUMBERS)[number]>> & { page?: string[] }) {
-  // Remember the latest real totals: only a snapshot where something has loaded (startup zeros are skipped).
+export function recordActivity(seen: Partial<Pick<Activity, (typeof NUMBERS)[number]>> & { page?: string[]; loaded?: boolean }) {
+  // Remember the latest real totals: only once everything has loaded from the hub (never startup zeros or half a load).
   try {
-    if (NUMBERS.some((k) => typeof seen[k] === 'number' && (seen[k] as number) > 0)) {
+    if (seen.loaded) {
       const latest: Partial<Record<(typeof NUMBERS)[number], number>> = {};
       for (const k of NUMBERS) { const v = seen[k]; if (typeof v === 'number' && isFinite(v)) latest[k] = Math.max(0, Math.floor(v)); }
       localStorage.setItem(SEEN_KEY, JSON.stringify(latest));
@@ -158,7 +158,7 @@ export function recordActivity(seen: Partial<Pick<Activity, (typeof NUMBERS)[num
   } catch {}
   // Right after a reset, the first full set of totals becomes the new zero.
   let base = readBaseline();
-  if (base.pending && NUMBERS.some((k) => typeof seen[k] === 'number')) {
+  if (base.pending && seen.loaded) {
     base = {};
     for (const k of NUMBERS) if (typeof seen[k] === 'number' && isFinite(seen[k] as number)) base[k] = Math.floor(seen[k] as number);
     try { localStorage.setItem(BASELINE_KEY, JSON.stringify(base)); } catch {}

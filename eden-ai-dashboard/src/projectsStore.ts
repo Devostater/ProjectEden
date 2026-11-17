@@ -25,6 +25,7 @@ export function useProjects() {
   const [cards, setCards] = useState<Card[]>([]);
   const [activeId, setActiveId] = useState<string>('');
   const [error, setError] = useState('');
+  const [loaded, setLoaded] = useState(false); // the first answer from the hub has arrived
   const [openCardId, setOpenCardId] = useState<string | null>(null); // the card whose form is open
   // A plan handed over from Nexus: opens "Plan with Chief" on that project with this text filled in.
   const [planRequest, setPlanRequest] = useState<{ projectId: string; goal: string; source?: Omit<CardSource, 'at'> } | null>(null);
@@ -59,6 +60,7 @@ export function useProjects() {
       const snapshot = JSON.stringify(d);
       if (snapshot === lastSeen.current) return;
       lastSeen.current = snapshot;
+      setLoaded(true);
       setProjects(d.projects);
       setCards(d.cards);
       setActiveId((current) => (d.projects.some((p: Project) => p.id === current) ? current : d.projects[0]?.id || ''));
@@ -124,7 +126,7 @@ export function useProjects() {
 
   const active = projects.find((p) => p.id === activeId) || projects[0];
 
-  return { runFilterOf, setRunFilter, visible, planRequest, setPlanRequest, openCardId, setOpenCardId, projects, cards, active, activeId: active?.id || '', setActiveId, error, setError, refresh, saveProject, deleteProject, saveCard, deleteCard, approveCards, sendBackCard, moveCard };
+  return { loaded, runFilterOf, setRunFilter, visible, planRequest, setPlanRequest, openCardId, setOpenCardId, projects, cards, active, activeId: active?.id || '', setActiveId, error, setError, refresh, saveProject, deleteProject, saveCard, deleteCard, approveCards, sendBackCard, moveCard };
 }
 
 export type ProjectsApi = ReturnType<typeof useProjects>;

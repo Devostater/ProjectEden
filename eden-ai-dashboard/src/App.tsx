@@ -138,6 +138,8 @@ export default function App() {
     reveal('settings');
   };
   const projectsApi = useProjects();
+  // Team, workflows and files have arrived from the hub (so achievement totals are real, not startup zeros).
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
 
   // The number of cards waiting for your review, shown in the browser tab title.
   const reviewCount = projectsApi.cards.filter((c) => c.column === 'review').length;
@@ -145,8 +147,8 @@ export default function App() {
   const chatMessages = chat.threads.reduce((n, t) => n + t.messages.filter((m) => m.role === 'user').length, 0);
   const doneCards = projectsApi.cards.filter((c) => c.column === 'done').length;
   useEffect(() => {
-    recordActivity({ projects: projectsApi.projects.length, cards: projectsApi.cards.length, doneCards, workflows: pipelines.length, teammates: agents.length, rooms: nexusRooms.rooms.length, files: files.length, chatMessages, page: panes });
-  }, [projectsApi.projects.length, projectsApi.cards.length, doneCards, pipelines.length, agents.length, nexusRooms.rooms.length, files.length, chatMessages, panes.join('|')]);
+    recordActivity({ projects: projectsApi.projects.length, cards: projectsApi.cards.length, doneCards, workflows: pipelines.length, teammates: agents.length, rooms: nexusRooms.rooms.length, files: files.length, chatMessages, page: panes, loaded: projectsApi.loaded && workspaceLoaded && nexusRooms.loaded });
+  }, [projectsApi.loaded, workspaceLoaded, nexusRooms.loaded, projectsApi.projects.length, projectsApi.cards.length, doneCards, pipelines.length, agents.length, nexusRooms.rooms.length, files.length, chatMessages, panes.join('|')]);
 
   useEffect(() => {
     document.title = reviewCount > 0 ? `(${reviewCount}) Eden AI Hub` : 'Eden AI Hub';
@@ -168,6 +170,7 @@ export default function App() {
       const res = await fetch('/api/workspace');
       if (!res.ok) return;
       const d = await res.json();
+      setWorkspaceLoaded(true);
       if (d.agents) setAgents(d.agents);
       if (d.pipelines) setPipelines(d.pipelines);
       if (d.files) setFiles(d.files);
