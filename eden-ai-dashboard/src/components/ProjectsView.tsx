@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSideActionsTarget } from './ProjectSidePanel.tsx';
-import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, Eye, EyeOff, Bot, AlertTriangle, Sparkles, Link2, Network, Clock, Code2, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
+import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, Eye, EyeOff, Bot, AlertTriangle, Sparkles, Link2, Network, Clock, Code2, ChevronsDownUp, ChevronsUpDown, ChevronDown } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
 import { ResultActions } from './ResultActions.tsx';
 import { SendBackBox } from './SendBackBox.tsx';
@@ -81,6 +81,7 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
   const [choices, setChoices] = useState<{ value: string; name: string; dir: string }[]>([]);
   const [saveError, setSaveError] = useState('');
   const [showTools, setShowTools] = useState(false);
+  const [autoRunOn, setAutoRunOn] = useState(project?.autoRun !== false);
   useEffect(() => {
     Promise.all([fetch('/api/updates').then((r) => (r.ok ? r.json() : null)).catch(() => null), fetch('/api/azi/repos').then((r) => (r.ok ? r.json() : null)).catch(() => null)]).then(([u, a]) => {
       const known: { id: string; name: string; dir: string }[] = (u?.codebases || []).filter((c: any) => c.ok);
@@ -112,7 +113,7 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
     }
     // Keep a finished project finished unless it was switched on.
     const status: Project['status'] = on ? 'active' : project?.status === 'done' ? 'done' : 'paused';
-    await api.saveProject({ id: project?.id, name, goal, status, color, codebaseId: code });
+    await api.saveProject({ id: project?.id, name, goal, status, color, codebaseId: code, autoRun: autoRunOn });
     onClose();
   };
 
@@ -227,6 +228,10 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
             ))}
           </div>
         </div>
+        <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200" title="Cards in Ready with a teammate assigned are worked on automatically">
+          <input type="checkbox" checked={autoRunOn} onChange={(e) => setAutoRunOn(e.target.checked)} className="h-4 w-4 accent-indigo-600" />
+          AI works Ready cards automatically
+        </label>
         {project && (
           <button type="button" onClick={() => setShowTools(true)} className="flex w-full items-center justify-between rounded-lg border border-slate-300 px-3 py-2 text-left text-sm hover:border-indigo-400 dark:border-slate-700">
             <span>🧰 <b>Toolbox</b>: {project.toolbox?.tools.length || 0} tools · {project.toolbox?.links.length || 0} links{project.ai?.use ? ' · own AI' : ''}</span>
@@ -1125,6 +1130,8 @@ const SyncButton: React.FC<{ project: Project }> = ({ project }) => {
 // ---------------------------------------------------------------- page
 export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, newProjectRequest, below, aziProjectRequest, onOpenSource, onOpenBudgets }) => {
   const sideActions = useSideActionsTarget();
+  const [headerOpen, setHeaderOpen] = useState(() => { try { return localStorage.getItem('eden_project_header') !== 'folded'; } catch { return true; } });
+  const toggleHeader = () => setHeaderOpen((v) => { try { localStorage.setItem('eden_project_header', v ? 'folded' : 'open'); } catch {} return !v; });
   // Board columns whose cards are collapsed to one-line titles (saved on this device).
   const [compactCols, setCompactCols] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_board_compact') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
   const toggleCompact = (id: string) => setCompactCols((c) => { const next = c.includes(id) ? c.filter((x) => x !== id) : [...c, id]; try { localStorage.setItem('eden_board_compact', JSON.stringify(next)); } catch {} return next; });
@@ -1215,24 +1222,20 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
       {active && (
         <>
           {/* Project header. Projects are picked in the sidebar. */}
-          <div className="flex flex-wrap items-start gap-3">
-            {/* At least 16rem for the name and goal: the buttons wrap to the next line instead of squeezing them. */}
-            <div className="w-full md:w-auto md:min-w-[16rem] md:flex-1">
-              <h1 className="text-xl font-bold text-slate-900 dark:text-white">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <button onClick={toggleHeader} aria-expanded={headerOpen} aria-label={headerOpen ? 'Fold the project details' : 'Show the project details'} title={headerOpen ? 'Fold details' : 'Show details'} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800">
+                <ChevronDown className={`h-4 w-4 transition-transform ${headerOpen ? '' : '-rotate-90'}`} />
+              </button>
+              <h1 className="shrink-0 text-lg font-bold text-slate-900 dark:text-white">
                 <WaveText text={active.name} />
                 {active.status !== 'active' && <span className="ml-2 text-sm font-normal text-slate-400">({STATUS_LABEL[active.status]})</span>}
               </h1>
-              <p title={active.goal || undefined} className="mt-0.5 line-clamp-1 text-sm text-slate-500 dark:text-slate-400">
-                {active.goal || (
-                  <button onClick={() => setProjectDialog('edit')} className="text-indigo-600 hover:underline dark:text-indigo-400">
-                    Add a goal so your team knows what this project is
-                  </button>
-                )}
-              </p>
+              {active.goal && <span title={active.goal} className="min-w-0 truncate text-sm text-slate-500 dark:text-slate-400">· {active.goal}</span>}
               {active.repo && (
-                <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
+                <span title={active.repo} className="hidden shrink-0 items-center gap-1 text-xs text-slate-400 lg:flex">
                   <FolderGit2 className="h-3.5 w-3.5" /> {active.repo}
-                </p>
+                </span>
               )}
             </div>
             <PortalOr target={sideActions}>
@@ -1246,37 +1249,10 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
             >
               <Sparkles className="h-4 w-4" /> Plan with Chief
             </button>
-            <button
-              onClick={() => api.saveProject({ id: active.id, autoRun: !autoRun })}
-              role="switch"
-              aria-checked={autoRun}
-              title={autoRun ? 'Cards in Ready with a teammate assigned are worked on automatically' : 'Nothing runs automatically in this project'}
-              className="flex shrink-0 items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900"
-            >
-              <span className={`relative h-4 w-7 rounded-full transition-colors ${autoRun ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
-                <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${autoRun ? 'left-3.5' : 'left-0.5'}`} />
-              </span>
-              AI works Ready cards
-            </button>
-            <button
-              onClick={toggleTeam}
-              aria-pressed={showTeam}
-              title={showTeam ? 'Hide the teammates row' : 'Show the teammates row'}
-              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900"
-            >
-              {showTeam ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />} {showTeam ? 'Hide team' : 'Show team'}
-            </button>
             <button onClick={() => setProjectDialog('edit')} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900">
               <Settings2 className="h-4 w-4" /> Settings
             </button>
             {active.repo && <SyncButton project={active} />}
-            <button
-              onClick={() => setAziDialog(true)}
-              title="Create a project folder in C:\AZI with git and a private GitHub repo"
-              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900"
-            >
-              <Plus className="h-4 w-4" /> New AZI project
-            </button>
                         </PortalOr>
             {aziDialog && <NewAziProjectDialog api={api} initialName={aziName} onClose={() => { setAziDialog(false); setAziName(''); }} />}
           </div>
@@ -1287,7 +1263,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
             const rm = roadmapProgress(active.roadmap);
             const chip = 'flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:border-indigo-400 dark:border-slate-800 dark:text-slate-300 dark:hover:border-indigo-500';
             return (
-              <div className={`mt-3 hidden flex-wrap items-center gap-2 ${sideActions ? '' : 'md:flex'}`}>
+              <div className={`mt-3 hidden flex-wrap items-center gap-2 ${sideActions || !headerOpen ? '' : 'md:flex'}`}>
                 <button onClick={() => openPanel('roadmap')} title="Open the roadmap in the bottom bar" className={`${chip} min-w-0 flex-1 sm:flex-none`}>
                   🏗️ <span className="font-medium text-slate-900 dark:text-white">Roadmap</span>
                   {rm ? (
@@ -1316,7 +1292,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
             ))}
           </div>
 
-          <WhyWaiting
+          {headerOpen && <WhyWaiting
             cards={cards}
             autoRun={autoRun}
             onTurnOnAutoRun={() => api.saveProject({ id: active.id, autoRun: true })}
@@ -1324,7 +1300,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
               for (const id of ids) await api.saveCard({ id, column: 'ready' });
             }}
             onOpenBudgets={() => onOpenBudgets?.()}
-          />
+          />}
 
           {api.error && (
             <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-300">
@@ -1332,7 +1308,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
             </p>
           )}
 
-          <div className="flex flex-wrap items-center gap-x-3 [&_*]:[scrollbar-width:none]">
+          <div className={`${headerOpen ? 'flex' : 'hidden'} flex-wrap items-center gap-x-3 [&_*]:[scrollbar-width:none]`}>
             <div className="min-w-0 flex-1">
               <WorkstreamTabs project={active} cards={cards} agents={agents} selected={branchFilter} onSelect={setBranchFilter} onEdit={(branch) => setBranchDialog({ branch })} />
             </div>
@@ -1346,7 +1322,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
               <button onClick={() => api.setRunFilter(active.id, null)} className="text-indigo-600 hover:underline dark:text-indigo-400">Show all lines</button>
             </p>
           )}
-          {showTeam && <TeamStrip cards={branchFilter ? cards.filter((c) => c.branchId === branchFilter) : cards} agents={agents} filter={whoFilter} onFilter={setWhoFilter} />}
+          {false && showTeam && <TeamStrip cards={branchFilter ? cards.filter((c) => c.branchId === branchFilter) : cards} agents={agents} filter={whoFilter} onFilter={setWhoFilter} />}
 
           {/* Board */}
           {/* Phones: the board gets nearly a full screen and shows one column at a time (swipe; snaps). */}

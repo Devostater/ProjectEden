@@ -14,6 +14,7 @@ import { BoardInsights } from './components/ProjectPages.tsx';
 import { NexusView } from './components/NexusView.tsx';
 import { UpdatesView } from './components/UpdatesView.tsx';
 import { DevicesView } from './components/DevicesView.tsx';
+import { MeetingsView } from './components/MeetingsView.tsx';
 import { ReposView } from './components/ReposView.tsx';
 import { StatusBar } from './components/StatusBar.tsx';
 import type { CommandActions } from './components/VoiceCommands.tsx';
@@ -361,6 +362,7 @@ export default function App() {
             {activeTab === 'updates' && <UpdatesView />}
   
             {activeTab === 'repos' && <ReposView />}
+            {activeTab === 'meetings' && <MeetingsView onOpenProject={(id) => { projectsApi.setActiveId(id); setActiveTab('projects'); }} />}
             {activeTab === 'devices' && <DevicesView />}
   
             {activeTab === 'remote' && <RemoteView />}
