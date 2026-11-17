@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Avatar, useProfile } from './Avatar.tsx';
 import { Arrangeable, useArrangedOrder } from '../arrange.tsx';
 import {
@@ -14,6 +15,7 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Plus,
+  CalendarClock,
   Trash2,
   PanelLeftClose,
   PanelLeftOpen,
@@ -37,7 +39,7 @@ import type { ProjectsApi } from '../projectsStore.ts';
 import { RoomList } from './NexusRooms.tsx';
 import type { Agent, DAGPipeline } from '../types/index.ts';
 
-export type AppTab = 'home' | 'projects' | 'nexus' | 'chat' | 'my-ai' | 'pipelines' | 'files' | 'updates' | 'repos' | 'devices' | 'remote' | 'settings';
+export type AppTab = 'home' | 'projects' | 'meetings' | 'nexus' | 'chat' | 'my-ai' | 'pipelines' | 'files' | 'updates' | 'repos' | 'devices' | 'remote' | 'settings';
 
 // What the sidebar asks a page to open, e.g. "the new-project form" or "this teammate".
 export type SidebarRequest =
@@ -455,6 +457,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // Re-arrange the pages in this bar (saved per device). Arrange mode shows Up/Down buttons on each entry.
   const custom = useCustomTabs();
+  const [quickAdd, setQuickAdd] = useState(false);
   // Drag the right edge to make the bar wider or narrower (saved on this device; double-click resets).
   const [barWidth, setBarWidth] = useState(() => { try { return Math.min(420, Math.max(180, Number(localStorage.getItem('eden_sidebar_width')) || 224)); } catch { return 224; } });
   const startBarDrag = (e: React.PointerEvent) => {
@@ -470,7 +473,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // Left-bar pages you hid in Arrange mode (saved on this device).
   const [sideHidden, setSideHidden] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_sidebar_hidden') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
   const toggleSideHidden = (id: string) => setSideHidden((h) => { const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id]; try { localStorage.setItem('eden_sidebar_hidden', JSON.stringify(next)); } catch {} return next; });
-  const navOrder = useArrangedOrder('eden_sidebar_order', ['home', 'projects', 'nexus', 'chat', 'team', 'files', 'updates', ...custom.tabs.map((t) => t.id)]);
+  const navOrder = useArrangedOrder('eden_sidebar_order', ['home', 'projects', 'meetings', 'nexus', 'chat', 'team', 'files', 'updates', ...custom.tabs.map((t) => t.id)]);
   const [arranging, setArranging] = useState(false);
 
   return (
@@ -695,6 +698,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </Arrangeable>
 
 
+          <Arrangeable id="meetings" label="Meetings" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('meetings')} onToggleHidden={() => toggleSideHidden('meetings')}>
+          {navButton('meetings', 'Meetings', CalendarClock)}
+          </Arrangeable>
           <Arrangeable id="files" label="Files" arr={navOrder} arranging={arranging && !collapsed} className="flex flex-col" hidden={sideHidden.includes('files')} onToggleHidden={() => toggleSideHidden('files')}>
           {navButton('files', 'Files', FolderGit2)}
           </Arrangeable>
@@ -715,6 +721,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </Arrangeable>
           ))}
+          <button onClick={() => setQuickAdd(true)} aria-label="Add a project or tab" title="Add a project or tab" style={{ order: 9999 }} className={itemClass(false, collapsed)}>
+            <Plus className="h-5 w-5" />
+            {!collapsed && <span className="truncate">Add…</span>}
+          </button>
+          {quickAdd && (
+            <QuickAdd
+              onClose={() => setQuickAdd(false)}
+              onProject={() => { setQuickAdd(false); setActiveTab('projects'); onRequest({ kind: 'new-project' }); }}
+              onTab={(label, target) => { custom.add(label, target); setQuickAdd(false); }}
+            />
+          )}
         </nav>
 
         <div className={`border-t border-slate-200 dark:border-slate-800 ${collapsed ? 'p-2' : 'p-3'}`}>
@@ -760,8 +777,9 @@ function useCustomTabs() {
     remove: (id: string) => save(tabs.filter((t) => t.id !== id)),
   };
 }
-const AddCustomTab: React.FC<{ onAdd: (label: string, target: string) => void }> = ({ onAdd }) => {
-  const [open, setOpen] = useState(false);
+const AddCustomTab: React.FC<{ onAdd: (label: string, target: string) => void; startOpen?: boolean; onCancel?: () => void }> = ({ onAdd, startOpen = false, onCancel }) => {
+  const [open, setOpenState] = useState(startOpen);
+  const setOpen = (v: boolean) => { setOpenState(v); if (!v) onCancel?.(); };
   const [label, setLabel] = useState('');
   const [target, setTarget] = useState('settings');
   const [link, setLink] = useState('');
@@ -782,5 +800,31 @@ const AddCustomTab: React.FC<{ onAdd: (label: string, target: string) => void }>
         <button onClick={() => setOpen(false)} className="min-h-9 rounded-lg border-2 border-slate-300 px-3 dark:border-slate-600">Cancel</button>
       </div>
     </div>
+  );
+};
+
+// The Add box behind the left bar's "+": start a project, or add a quick tab (a page or a web link).
+const QuickAdd: React.FC<{ onClose: () => void; onProject: () => void; onTab: (label: string, target: string) => void }> = ({ onClose, onProject, onTab }) => {
+  const [kind, setKind] = useState<'pick' | 'tab'>('pick');
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [onClose]);
+  const choice = 'flex flex-1 flex-col items-center gap-2 rounded-xl border-2 border-slate-200 p-4 text-sm font-medium text-slate-800 hover:border-indigo-400 dark:border-slate-700 dark:text-slate-100';
+  return (
+    createPortal(<div role="dialog" aria-modal="true" aria-label="Add" onClick={onClose} className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900">
+        <h2 className="mb-3 text-lg font-semibold text-slate-900 dark:text-white">Add</h2>
+        {kind === 'pick' ? (
+          <div className="flex gap-3">
+            <button autoFocus onClick={onProject} className={choice}><KanbanSquare className="h-7 w-7 text-indigo-500" /> Project</button>
+            <button onClick={() => setKind('tab')} className={choice}><StarIcon className="h-7 w-7 text-indigo-500" /> Tab</button>
+          </div>
+        ) : (
+          <AddCustomTab startOpen onAdd={onTab} onCancel={onClose} />
+        )}
+      </div>
+    </div>, document.body)
   );
 };

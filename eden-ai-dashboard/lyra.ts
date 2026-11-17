@@ -123,6 +123,38 @@ function addMsg(role: LyraMsg['role'], content: string, error = false): LyraMsg 
   return m;
 }
 
+// Turns a raw failure ("terminated", "fetch failed", ECONNREFUSED, a timeout) into a sentence the owner can act on.
+// Anything we don't recognise is kept as it is, so nothing is hidden.
+const LYRA_STOPPED = 'LYRA stopped answering (it may have closed or run out of memory). Press Start LYRA, then send your message again.';
+const LYRA_NOT_CONNECTED = 'LYRA is not connected right now. Press the Start LYRA button, then send your message again.';
+const LYRA_DROPPED = /terminated|fetch failed|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up|other side closed|aborted|timed? ?out|timeout/i;
+async function plainLyraError(raw: string): Promise<string> {
+  await pingLyra(); // check right now, so we know whether she is still running
+  if (!lyraConnected()) return LYRA_NOT_CONNECTED;
+  return LYRA_DROPPED.test(raw) ? LYRA_STOPPED : raw;
+}
+
+// Sends the conversation to LYRA and answers the page. A failure is shown in plain words in the chat and in the
+// activity log, where its Retry button sends the same message again (`userId` is that message's id).
+async function askLyra(messages: { role: 'user' | 'assistant'; content: string }[], userId: string, res: Response) {
+  thinking = true;
+  changed();
+  try {
+    const result = await generate({ model: 'lyra', messages });
+    addMsg('assistant', result.text);
+    res.json({ reply: result.text, model: result.model });
+  } catch (err: any) {
+    const raw = String(err?.message || err);
+    const message = await plainLyraError(raw);
+    logActivity('error', message, { reason: raw, retry: { kind: 'lyra', id: userId } });
+    addMsg('assistant', message, true);
+    res.status(502).json({ error: message });
+  } finally {
+    thinking = false;
+    changed();
+  }
+}
+
 export function registerLyraRoutes(app: Express) {
   // The shared conversation, and whether LYRA is thinking. Any paired device can read it.
   app.get('/api/lyra/conversation', (_req, res) => res.json({ messages: convo.messages, thinking, version: convo.version }));
@@ -278,22 +310,25 @@ export function registerLyraRoutes(app: Express) {
       .slice(-20)
       .map((m) => ({ role: m.role, content: m.content.slice(0, 8000) }));
     // The message is saved and shown on every device right away, before LYRA has answered.
-    addMsg('user', text.slice(0, 8000));
+    const asked = addMsg('user', text.slice(0, 8000));
     messages.push({ role: 'user', content: text.slice(0, 8000) });
-    thinking = true;
-    changed();
-    try {
-      const result = await generate({ model: 'lyra', messages });
-      addMsg('assistant', result.text);
-      res.json({ reply: result.text, model: result.model });
-    } catch (err: any) {
-      const message = String(err?.message || err);
-      logActivity('error', `LYRA: ${message.slice(0, 200)}`);
-      addMsg('assistant', message, true);
-      res.status(502).json({ error: message });
-    } finally {
-      thinking = false;
-      changed();
-    }
+    await askLyra(messages, asked.id, res);
+  });
+
+  // The Retry button on a LYRA error in the activity log: sends that same message to LYRA again.
+  app.post('/api/lyra/retry', async (req, res) => {
+    if (!fromThisComputer(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'LYRA can only be talked to from the hub on this computer.' });
+    const id = typeof req.body?.id === 'string' ? req.body.id : '';
+    const at = convo.messages.findIndex((m) => m.id === id && m.role === 'user');
+    if (at < 0) return res.status(404).json({ error: 'That message is no longer in the LYRA chat. Type it again.' });
+    if (thinking) return res.status(409).json({ error: 'LYRA is still working on a reply. Wait for it, then try again.' });
+    const next = convo.messages[at + 1];
+    if (next && next.role === 'assistant' && !next.error) return res.status(409).json({ error: 'LYRA already answered that message.' });
+    const messages = convo.messages
+      .slice(0, at + 1)
+      .filter((m) => !m.error)
+      .slice(-20)
+      .map((m) => ({ role: m.role, content: m.content.slice(0, 8000) }));
+    await askLyra(messages, id, res);
   });
 }

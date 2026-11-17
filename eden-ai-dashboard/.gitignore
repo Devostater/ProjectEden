@@ -36,3 +36,4 @@ coverage/
 
 # Approved results saved from Review
 Deliverables/
+.eden-project-chats.json

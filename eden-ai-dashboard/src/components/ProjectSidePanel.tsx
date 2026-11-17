@@ -1,18 +1,23 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, ChevronLeft } from 'lucide-react';
+import { ChevronRight, ChevronLeft, Flag, Map, MessagesSquare } from 'lucide-react';
+import { ProjectChat } from './ProjectChat.tsx';
+import { MissionView, JourneyView } from './ProjectPages.tsx';
 import type { PanelProject } from './BottomPanel.tsx';
-import { FlowTab, WorkloadTab, ProgressTab } from './ProjectVisuals.tsx';
-import { Roadmap, roadmapProgress } from './Roadmap.tsx';
-import { Toolbox } from './Toolbox.tsx';
-import { WorkTrail } from './WorkTrail.tsx';
+import { WorkloadTab } from './ProjectVisuals.tsx';
+import { roadmapProgress } from './Roadmap.tsx';
 import { PROJECT_PANELS } from '../panelMeta.ts';
 
 // The Projects page's right-hand panel, shown when only one page is open on a wide screen.
 // Health summary, the project's buttons (moved here from the page header), then the project tools.
 // Drag its left edge to make it wider or narrower; the size is remembered.
-type SideTab = 'roadmap' | 'progress' | 'workload' | 'trail' | 'flow' | 'toolbox';
-const SIDE_TABS = PROJECT_PANELS.filter((p) => p.id !== 'preview') as { id: SideTab; label: string; icon: React.ElementType }[];
-const ORDER: SideTab[] = ['roadmap', 'progress', 'workload', 'trail', 'flow', 'toolbox'];
+type SideTab = 'mission' | 'chief' | 'journey' | 'workload';
+const SIDE_TABS: { id: SideTab; label: string; icon: React.ElementType }[] = [
+  { id: 'mission', label: 'Mission', icon: Flag },
+  { id: 'chief', label: 'Chief', icon: MessagesSquare },
+  { id: 'journey', label: 'Journey', icon: Map },
+  { id: 'workload', label: 'Workload', icon: PROJECT_PANELS.find((p) => p.id === 'workload')!.icon },
+];
+const ORDER: SideTab[] = ['mission', 'chief', 'journey', 'workload'];
 const MIN_W = 320;
 const DEFAULT_W = 720; // "double wide"
 
@@ -44,7 +49,7 @@ const Label: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project }) => {
-  const [tab, setTabState] = useState<SideTab>(() => (ORDER.includes(read('eden_side_tab', 'roadmap') as SideTab) ? (read('eden_side_tab', 'roadmap') as SideTab) : 'roadmap'));
+  const [tab, setTabState] = useState<SideTab>(() => (ORDER.includes(read('eden_side_tab', 'mission') as SideTab) ? (read('eden_side_tab', 'mission') as SideTab) : 'mission'));
   const [closed, setClosed] = useState(() => read('eden_side_closed', '') === '1');
   const [width, setWidth] = useState(() => Math.max(MIN_W, Number(read('eden_side_width', String(DEFAULT_W))) || DEFAULT_W));
   const setTab = (t: SideTab) => { setTabState(t); write('eden_side_tab', t); };
@@ -87,10 +92,13 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
   const pct = rm ? rm.pct : cards.length ? Math.round((done / cards.length) * 100) : 0;
   const r = 34, circ = 2 * Math.PI * r;
   const narrow = width < 520;
-  const square = 'flex aspect-square flex-col items-center justify-center gap-2 rounded-xl border-2 p-2 text-center text-sm font-medium transition-colors';
+  const square = 'flex h-16 flex-col items-center justify-center gap-2 rounded-xl border-2 p-2 text-center text-sm font-medium transition-colors';
 
   return (
-    <aside aria-label="Project panel" style={{ order: 3, width }} className="relative hidden shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-slate-50 xl:flex dark:border-slate-800 dark:bg-slate-950">
+    <aside aria-label="Project panel" style={{ order: 3, width: `min(${width}px, 50vw)`, minWidth: MIN_W }}
+      onDragOver={(e) => { if (e.dataTransfer.types.includes('text/plain')) e.preventDefault(); }}
+      onDrop={(e) => { const id = e.dataTransfer.getData('text/plain'); if (id && project.cards.some((c) => c.id === id)) { e.preventDefault(); project.onOpenCard(id); } }}
+      className="relative hidden shrink-0 flex-col overflow-hidden border-l border-slate-200 bg-slate-50 xl:flex dark:border-slate-800 dark:bg-slate-950">
       <div
         role="separator"
         aria-orientation="vertical"
@@ -132,12 +140,12 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
         {/* The Projects page draws its buttons (Plan with Chief, AI works Ready cards, team, Settings, Sync, New AZI project) here. */}
         <div
           ref={boxRef}
-          className={`mt-3 grid gap-2 ${narrow ? 'grid-cols-3' : 'grid-cols-6'} [&>button]:!flex [&>button]:aspect-square [&>button]:!h-auto [&>button]:!flex-col [&>button]:!items-center [&>button]:!justify-center [&>button]:!gap-2 [&>button]:!whitespace-normal [&>button]:!rounded-xl [&>button]:!p-2 [&>button]:!text-center [&>button]:!text-xs [&>button_svg]:!h-6 [&>button_svg]:!w-6`}
+          className={`mt-3 grid grid-cols-[repeat(auto-fit,minmax(5.5rem,1fr))] gap-2 [&>button]:!flex [&>button]:!h-20 [&>button]:!flex-col [&>button]:!items-center [&>button]:!justify-center [&>button]:!gap-2 [&>button]:!whitespace-normal [&>button]:!rounded-xl [&>button]:!p-2 [&>button]:!text-center [&>button]:!text-xs [&>button_svg]:!h-6 [&>button_svg]:!w-6`}
         />
       </section>
 
-      <section className="flex min-h-[280px] flex-1 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <div role="tablist" aria-label="Project tools" className={`grid gap-2 border-b border-slate-200 p-3 dark:border-slate-800 ${narrow ? 'grid-cols-3' : 'grid-cols-6'}`}>
+      <section className="flex shrink-0 flex-col rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div role="tablist" aria-label="Project tools" className="grid grid-cols-[repeat(auto-fit,minmax(5rem,1fr))] gap-2 border-b border-slate-200 p-3 dark:border-slate-800">
           {ORDER.map((id) => {
             const t = SIDE_TABS.find((x) => x.id === id)!;
             const Icon = t.icon;
@@ -145,20 +153,18 @@ export const ProjectSidePanel: React.FC<{ project: PanelProject }> = ({ project 
             return (
               <button key={id} role="tab" aria-selected={on} onClick={() => setTab(id)} title={t.label}
                 className={`${square} ${on ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-slate-200 text-slate-700 hover:border-indigo-400 dark:border-slate-700 dark:text-slate-200 dark:hover:border-indigo-500'}`}>
-                <Icon className="h-7 w-7" />
+                <Icon className="h-5 w-5" />
                 {t.label}
-                {id === 'roadmap' && rm && <span className="text-xs tabular-nums opacity-80">{rm.pct}%</span>}
+                {id === 'journey' && rm && <span className="text-xs tabular-nums opacity-80">{rm.pct}%</span>}
               </button>
             );
           })}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-3">
-          {tab === 'roadmap' && <div className="@container"><Roadmap key={project.project.id} project={project.project} onSave={project.onSaveRoadmap} embedded /></div>}
-          {tab === 'progress' && <ProgressTab {...project} />}
+        <div className="overflow-x-hidden p-3">
+          {tab === 'mission' && <div className="@container"><MissionView {...project} /></div>}
+          {tab === 'chief' && <ProjectChat projectId={project.project.id} />}
+          {tab === 'journey' && <JourneyView {...project} />}
           {tab === 'workload' && <WorkloadTab {...project} />}
-          {tab === 'trail' && <WorkTrail key={project.project.id} project={project.project} cards={project.cards} agents={project.agents} onOpenCard={project.onOpenCard} />}
-          {tab === 'flow' && <div className="h-[420px]"><FlowTab {...project} zoom="fit" /></div>}
-          {tab === 'toolbox' && <Toolbox key={project.project.id} project={project.project} embedded />}
         </div>
       </section>
       </div>

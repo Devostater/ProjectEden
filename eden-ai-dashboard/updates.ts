@@ -370,7 +370,22 @@ function describeTool(name: string, input: any): string {
 // The AI said its plan's usage limit is used up (for example Claude's 5-hour limit).
 const USAGE_LIMIT_ERROR = /hit your .*limit|usage limit|rate.?limit|too many requests|\b429\b|quota|credit balance/i;
 
-async function runAI(cb: Codebase, job: UpdateJob, appDir: string) {
+// The line added to the request when the AI answered with a plan or an "Understood" instead of editing files.
+const MAKE_CHANGE_NOW = 'Make the change now by editing files. Do not reply with a plan or acknowledgement.';
+const NO_CHANGE_MESSAGE = 'The AI did not make any change. Try rewording the request with the name of the screen you mean.';
+
+// True when what the AI said last is just an acknowledgement ("Understood, I will…") and not a real explanation of
+// why nothing needed changing: it starts like one, or it names no file and gives no reason.
+function looksLikeAcknowledgement(said?: string): boolean {
+  const text = (said || '').trim();
+  if (!text) return true;
+  if (/^[\s"'*_>#-]*(understood|i will|i'll|i shall|i am going to|i'm going to|sure|okay|ok|got it|will do|certainly|of course|absolutely|alright|noted)\b/i.test(text)) return true;
+  const namesFile = /[\w.-]+\.(tsx?|jsx?|css|json|html|md|mjs|cjs)\b|[\w-]+[\\/][\w.-]+/i.test(text);
+  const givesReason = /\b(because|already|since|so that|not needed|no need|nothing to|doesn'?t need|does not need|there is no|there's no|cannot|can't|unable)\b/i.test(text);
+  return !namesFile && !givesReason;
+}
+
+async function runAI(cb: Codebase, job: UpdateJob, appDir: string, extra = '') {
   // On this PC when asked for, or when offline (Claude's servers can't be reached then).
   let local = (job.local || isOffline()) && localAgentModel();
   // Claude already reported its limit is used up: don't wait for it to fail again, go straight to the AI on this PC.
@@ -379,7 +394,7 @@ async function runAI(cb: Codebase, job: UpdateJob, appDir: string) {
     job.log.push('Claude has hit its usage limit, so a different AI (on this PC) does this update');
   }
   try {
-    await runAIOnce(cb, job, appDir, local || null);
+    await runAIOnce(cb, job, appDir, local || null, extra);
   } catch (err: any) {
     // Claude's limit ran out part-way: carry on with the AI on this PC instead of failing the update.
     if (!local && USAGE_LIMIT_ERROR.test(String(err?.message || ''))) recordFailure('anthropic', String(err.message)); // remember it, so nothing else asks Claude until it resets
@@ -388,11 +403,11 @@ async function runAI(cb: Codebase, job: UpdateJob, appDir: string) {
     job.log.push('Claude hit its usage limit, so a different AI (on this PC) is taking over');
     logActivity('info', `Claude hit its usage limit during a code update, so an AI on this PC (${other}) is finishing it.`);
     save();
-    await runAIOnce(cb, job, appDir, other);
+    await runAIOnce(cb, job, appDir, other, extra);
   }
 }
 
-async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: string | null) {
+async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: string | null, extra = '') {
   if (local) {
     job.localModel = local;
     job.log.push(`Running on this PC (${local})`);
@@ -445,7 +460,7 @@ async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: st
       if (code === 0 && !errText) resolve();
       else reject(new Error(errText.trim().split('\n').slice(-2).join(' ') || `Claude Code exited with ${code}`));
     });
-    child.stdin.end(`${RULES(cb)}\n\nThe owner's request:\n${job.request}`);
+    child.stdin.end(`${RULES(cb)}\n\nThe owner's request:\n${job.request}${extra ? `\n\n${extra}` : ''}`);
   });
 }
 
@@ -604,6 +619,14 @@ async function process_(job: UpdateJob) {
       save();
       await runAI(cb, job, copy.appDir);
       readChange(cb, job, copy.dir);
+      if (!job.files?.length && looksLikeAcknowledgement(job.lastAiMessage)) {
+        // The AI only said "Understood" or made a plan: run it once more, telling it to edit the files this time.
+        job.log.push('The AI replied without changing anything, so it is being asked once more to make the change');
+        save();
+        await runAI(cb, job, copy.appDir, MAKE_CHANGE_NOW);
+        readChange(cb, job, copy.dir);
+        if (!job.files?.length) throw new Error(NO_CHANGE_MESSAGE); // the raw AI text is left out on purpose
+      }
       if (!job.files?.length) throw new Error(`The AI finished without changing anything.${job.lastAiMessage ? ` It said: "${job.lastAiMessage}"` : ''}`);
       job.status = 'checking';
       job.log.push(cb.check === 'tsc' ? 'Running the type check' : 'Checking the code and running the tests');
@@ -917,10 +940,10 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
 
   app.get('/api/updates', (req, res) => {
     if (!mayView(req)) return res.status(403).json({ error: LOCKED });
-    // How long an update usually takes: the middle of the last few that ran to the end (8 minutes until there are any).
+    // How long an update usually takes: the middle of the last 5 that ran to the end (8 minutes until there are any).
     const took = jobs
       .filter((j) => j.startedAt && j.finishedAt && !j.interrupted && !j.error)
-      .slice(-10)
+      .slice(-5)
       .map((j) => new Date(j.finishedAt!).getTime() - new Date(j.startedAt!).getTime())
       .filter((ms) => ms > 0)
       .sort((a, b) => a - b);
@@ -1209,6 +1232,9 @@ ${recent.length ? recent.join('\n') : '(nothing yet)'}
 Updates already made or tried (don't suggest these again):
 ${done.length ? done.join('\n') : '(none)'}
 
+Ideas already being suggested to the owner right now (don't suggest these again, only suggest different ones):
+${set.ideas.length ? set.ideas.map((i) => `- ${i.title}: ${i.request.slice(0, 160)}`).join('\n') : '(none)'}
+
 Ideas the owner turned down (don't suggest these or close variants):
 ${set.dismissed.length ? set.dismissed.map((d) => `- ${d}`).join('\n') : '(none)'}
 
@@ -1308,23 +1334,29 @@ async function runIdeas(cb: Codebase) {
         size: (['small', 'medium', 'large'].includes(i.size) ? i.size : 'medium') as Idea['size'],
       }));
     if (!fresh.length) throw new Error('No ideas came back. Try again.');
-    // Drop ideas that repeat an update we already have (ready, applied, discarded, failed...) or that repeat another idea in this batch.
-    const seen = new Set<string>();
+    // Drop ideas that repeat an update we already have (ready, applied, discarded, failed...), that are
+    // already being suggested right now, or that repeat another idea in this batch.
+    const current = set.ideas.filter((i) => !!ideaKey(i.request));
+    const seen = new Set<string>(current.map((i) => ideaKey(i.request)));
+    const seenTitles = new Set<string>(current.map((i) => ideaKey(i.title)));
     const ideas: Idea[] = [];
     for (const idea of fresh) {
       const key = ideaKey(idea.request);
+      const titleKey = ideaKey(idea.title);
       const existing = findSameUpdate(cb.id, idea.request);
-      if (existing || seen.has(key)) {
-        logActivity('work', `Skipped a repeat update idea for ${cb.name}: "${idea.title}" (${existing ? `already ${existing.status}` : 'suggested twice'}).`);
+      if (existing || seen.has(key) || seenTitles.has(titleKey)) {
+        logActivity('work', `Skipped a repeat update idea for ${cb.name}: "${idea.title}" (${existing ? `already ${existing.status}` : 'already suggested'}).`);
         continue;
       }
       seen.add(key);
+      seenTitles.add(titleKey);
       ideas.push(idea);
     }
-    if (!ideas.length) throw new Error('Every idea that came back was already done or tried. Try again later.');
-    set.ideas = ideas;
+    // Ideas already on show stay as they are; only genuinely new ones are added.
+    if (!ideas.length && !current.length) throw new Error('Every idea that came back was already done or tried. Try again later.');
+    set.ideas = [...current, ...ideas].slice(0, 8);
     set.at = new Date().toISOString();
-    logActivity('done', `${ideas.length} update ideas ready for ${cb.name} (Code updates).`);
+    logActivity('done', ideas.length ? `${ideas.length} new update ${ideas.length === 1 ? 'idea' : 'ideas'} ready for ${cb.name} (Code updates).` : `No new update ideas for ${cb.name}: everything that came back was already suggested.`);
   } catch (err: any) {
     const raw = String(err?.message || 'Something went wrong.');
     // A used-up plan limit isn't a fault in the hub: say what to do instead of showing Claude's raw message.

@@ -41,6 +41,22 @@ export function restartHub() {
   setTimeout(() => process.exit(0), 300);
 }
 
+// Set once a restart has been accepted, so a second quick press doesn't log or start it again.
+let restartRequested = false;
+
+// Code updates and card jobs that a restart would cut off.
+function runningWork() {
+  const updates = activeUpdateNames();
+  const cardNames = runningCardNames();
+  const codeUpdates = updates.working.length + updates.queued.length;
+  const interrupted = [
+    ...updates.working.map((n) => `Code update being worked on: ${n}`),
+    ...updates.queued.map((n) => `Code update waiting in the queue: ${n}`),
+    ...cardNames.map((n) => `Card being written: ${n}`),
+  ];
+  return { codeUpdates, cards: cardNames.length, interrupted };
+}
+
 export function registerRestartRoutes(app: Express) {
   app.post('/api/stop-server', (req, res) => {
     if (!mayManage(req)) return res.status(403).json({ error: 'The hub can only be stopped from this computer, or from a device with "Code updates" switched on.' });
@@ -52,15 +68,18 @@ export function registerRestartRoutes(app: Express) {
     });
   });
 
+  // Lets the Settings page ask "is anything still running?" before it restarts the hub.
+  app.get('/api/restart/status', (req, res) => {
+    if (!mayManage(req)) return res.status(403).json({ error: 'The hub can only be restarted from this computer, or from a device with "Code updates" switched on.' });
+    res.json(runningWork());
+  });
+
   app.post('/api/restart', (req, res) => {
     if (!mayManage(req)) return res.status(403).json({ error: 'The hub can only be restarted from this computer, or from a device with "Code updates" switched on.' });
+    // Pressed twice quickly: the restart is already on its way, so don't log it or start it again.
+    if (restartRequested) return res.json({ ok: true });
     // Warn first if a restart would cut off work in progress. "force" means the owner has seen the list and wants to go ahead.
-    const updates = activeUpdateNames();
-    const interrupted = [
-      ...updates.working.map((n) => `Code update being worked on: ${n}`),
-      ...updates.queued.map((n) => `Code update waiting in the queue: ${n}`),
-      ...runningCardNames().map((n) => `Card being written: ${n}`),
-    ];
+    const { interrupted, codeUpdates, cards } = runningWork();
     if (interrupted.length) {
       const summary = `${interrupted.length} thing${interrupted.length === 1 ? '' : 's'} in progress`;
       if (req.body?.force !== true) {
@@ -68,12 +87,15 @@ export function registerRestartRoutes(app: Express) {
         return res.status(409).json({
           error: 'A restart now would interrupt work that is still going.',
           interrupted,
+          codeUpdates,
+          cards,
         });
       }
       logActivity('work', `Hub restarting anyway (asked for from Settings): ${summary} will be interrupted. ${interrupted.join('; ')}.`);
     } else {
       logActivity('work', 'Hub restarting (asked for from Settings).');
     }
+    restartRequested = true;
     res.json({ ok: true });
     // restartHub keeps this copy running if a new one can't be started, rather than leave you with no hub.
     res.on('finish', () => restartHub());

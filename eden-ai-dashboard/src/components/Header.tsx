@@ -5,6 +5,7 @@ import type { AppTab } from './Sidebar.tsx';
 export const TITLES: Record<AppTab, string> = {
   home: 'Dashboard',
   projects: 'Projects',
+  meetings: 'Meetings',
   nexus: 'Nexus',
   chat: 'Chat',
   'my-ai': 'Team',

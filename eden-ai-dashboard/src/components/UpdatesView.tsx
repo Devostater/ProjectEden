@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { picksAsText, clearPicks } from '../picker.ts';
 import { api } from '../api.ts';
 import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, RefreshCw, Lock, Wrench, ArrowUp, ArrowDown, ChevronsUp } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
@@ -74,6 +75,19 @@ const duration = (ms: number) => {
   const m = Math.floor(s / 60);
   if (m < 60) return `${m} min ${String(s % 60).padStart(2, '0')} s`;
   return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
+};
+
+// How far along an update is, read from its log steps: queued 0%, copy made 15%, AI working 50%, checking 85%.
+const progressOf = (job: Job) => {
+  if (job.status === 'queued') return 0;
+  const restart = job.log.lastIndexOf('Back in the queue: it starts again from the beginning by itself');
+  let p = 5;
+  for (const l of job.log.slice(restart + 1)) {
+    if (l.startsWith('Making a separate copy')) p = Math.max(p, 15);
+    else if (l === 'Claude is working on the copy' || l.startsWith('Running on this PC')) p = Math.max(p, 50);
+    else if (l === 'Running the type check' || l === 'Checking the code and running the tests') p = Math.max(p, 85);
+  }
+  return job.status === 'checking' ? Math.max(p, 85) : p;
 };
 
 // The patch, shown file by file with added lines green and removed lines red.
@@ -238,7 +252,7 @@ export const UpdatesView: React.FC = () => {
     };
   }, []);
 
-  const running = jobs.some((j) => j.status === 'working' || j.status === 'checking');
+  const running = jobs.some((j) => j.status === 'queued' || j.status === 'working' || j.status === 'checking');
   useEffect(() => {
     if (!running) return;
     setClock(Date.now());
@@ -250,8 +264,9 @@ export const UpdatesView: React.FC = () => {
     setError('');
     setNote('');
     try {
-      const d = await post('/api/updates', { request, codebaseId: target, local: onThisPc });
+      const d = await post('/api/updates', { request: request + picksAsText(), codebaseId: target, local: onThisPc });
       setRequest('');
+      clearPicks();
       setOpenId(d.job.id);
       setTab('active');
       live.current = true;
@@ -554,10 +569,12 @@ export const UpdatesView: React.FC = () => {
           const open = openId === job.id;
           const st = STATUS[job.status];
           // Time and progress for an update the AI is working on (the bar is an estimate from earlier updates).
-          const runningNow = (job.status === 'working' || job.status === 'checking') && !!job.startedAt;
-          const elapsed = runningNow ? Math.max(0, clock - new Date(job.startedAt!).getTime()) : 0;
-          const percent = Math.min(95, Math.round((elapsed / estimateMs) * 100));
-          const overdue = elapsed > estimateMs;
+          // A queued update has not started yet, so its clock counts the wait from when it was asked for.
+          const runningNow = job.status === 'queued' || ((job.status === 'working' || job.status === 'checking') && !!job.startedAt);
+          const since = job.status === 'queued' ? job.createdAt : job.startedAt;
+          const elapsed = runningNow ? Math.max(0, clock - new Date(since!).getTime()) : 0;
+          const percent = progressOf(job);
+          const overdue = job.status !== 'queued' && elapsed > estimateMs;
           const fix = diagnose(job, jobs);
           return (
             <article key={job.id} className="rounded-xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
@@ -591,7 +608,7 @@ export const UpdatesView: React.FC = () => {
                         <span className={`block h-full rounded-full transition-all duration-1000 ${overdue ? 'bg-amber-500' : 'bg-indigo-500'}`} style={{ width: `${percent}%` }} />
                       </span>
                       <span className="mt-1 block text-xs tabular-nums text-slate-500 dark:text-slate-400">
-                        Running for {duration(elapsed)} · usually about {duration(estimateMs)}
+                        {job.status === 'queued' ? 'Waiting for' : 'Running for'} {duration(elapsed)} · usually about {Math.max(1, Math.round(estimateMs / 60000))} min
                         {overdue && ' · taking longer than usual'}
                       </span>
                     </span>

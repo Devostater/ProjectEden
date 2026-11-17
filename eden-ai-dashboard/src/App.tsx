@@ -10,9 +10,11 @@ import { ChatView, type ChatDraft } from './components/ChatView.tsx';
 import { AccountView, type AccountTab } from './components/AccountView.tsx';
 import { BottomPanel } from './components/BottomPanel.tsx';
 import { ProjectSidePanel } from './components/ProjectSidePanel.tsx';
+import { BoardInsights } from './components/ProjectPages.tsx';
 import { NexusView } from './components/NexusView.tsx';
 import { UpdatesView } from './components/UpdatesView.tsx';
 import { DevicesView } from './components/DevicesView.tsx';
+import { MeetingsView } from './components/MeetingsView.tsx';
 import { ReposView } from './components/ReposView.tsx';
 import { StatusBar } from './components/StatusBar.tsx';
 import type { CommandActions } from './components/VoiceCommands.tsx';
@@ -263,6 +265,10 @@ export default function App() {
         cards: projectsApi.cards.filter((c) => c.projectId === projectsApi.active!.id && projectsApi.visible(c)),
         agents,
         onOpenCard: projectsApi.setOpenCardId,
+        onSaveProject: async (p) => {
+          await projectsApi.saveProject({ id: projectsApi.active!.id, ...p });
+          await projectsApi.refresh();
+        },
         onSaveRoadmap: async (roadmap) => {
           const id = projectsApi.active!.id;
           try {
@@ -299,7 +305,7 @@ export default function App() {
               />
             )}
   
-            {activeTab === 'projects' && <ProjectsView api={projectsApi} agents={agents} onAsk={(text) => openChat(text, false)} newProjectRequest={request?.kind === 'new-project' ? request.n : 0}
+            {activeTab === 'projects' && <ProjectsView below={panelProject && <BoardInsights {...panelProject} />} api={projectsApi} agents={agents} onAsk={(text) => openChat(text, false)} newProjectRequest={request?.kind === 'new-project' ? request.n : 0}
                 aziProjectRequest={request?.kind === 'new-azi-project' ? { name: request.name, n: request.n } : null}
                 onOpenBudgets={() => openAccount('connections')}
                 onOpenSource={(card) => {
@@ -357,6 +363,7 @@ export default function App() {
             {activeTab === 'updates' && <UpdatesView />}
   
             {activeTab === 'repos' && <ReposView />}
+            {activeTab === 'meetings' && <MeetingsView onOpenProject={(id) => { projectsApi.setActiveId(id); setActiveTab('projects'); }} />}
             {activeTab === 'devices' && <DevicesView />}
   
             {activeTab === 'remote' && <RemoteView />}
