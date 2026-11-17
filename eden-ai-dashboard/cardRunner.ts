@@ -27,11 +27,16 @@ function overBudget(p: ProviderId): boolean {
   return !!u && u.messages >= u.limit;
 }
 
+// Auto-switch (Settings, on unless AUTO_SWITCH_MODEL is 0/off): when a teammate's AI is out of budget or unavailable,
+// cards move to another connected AI (then free and local ones) instead of waiting.
+export const autoSwitch = () => !/^(0|off|no|false)$/i.test((process.env.AUTO_SWITCH_MODEL || '').trim());
+
 // Models to try for this teammate, in order: their own AI first, then other connected ones.
 function modelQueue(agent: Agent): string[] {
   const wanted = agent.model || defaultModel();
   const wantedProvider = providerFor(wanted);
   const own = providerUnavailable(wantedProvider) || overBudget(wantedProvider) ? [] : [wanted];
+  if (!autoSwitch()) return own;
   return [...own, ...fallbackModels(wantedProvider).filter((m) => !overBudget(providerFor(m)))];
 }
 
@@ -312,7 +317,7 @@ function tick(getStore: () => RunnerStore, save: () => void) {
       changed = true;
     }
     if (!isOffline() && !modelQueue(agent).length) {
-      hold(card, "Waiting: no connected AI has messages left in today's budget.");
+      hold(card, autoSwitch() ? "Waiting: no connected AI has messages left in today's budget." : "Waiting: this teammate's AI is out of today's budget. Turn on Auto-switch model in Settings to use another AI.");
       continue;
     }
     if (claimed) {

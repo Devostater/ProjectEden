@@ -21,6 +21,7 @@ export const SETTING_KEYS = [
   { key: 'CLAUDE_DAILY_LIMIT', label: 'Claude daily message budget', secret: false, help: 'Default: 100' },
   { key: 'GEMINI_DAILY_LIMIT', label: 'Gemini daily message budget', secret: false, help: 'Default: 100' },
   { key: 'CHATGPT_DAILY_LIMIT', label: 'ChatGPT daily message budget', secret: false, help: 'Default: 100' },
+  { key: 'AUTO_SWITCH_MODEL', label: 'Auto-switch model when a budget runs out', secret: false, help: 'On by default: cards move to another connected AI (then free and local ones). 0 turns it off, so cards wait.' },
   { key: 'OWNER_NAME', label: 'Your name', secret: false, help: 'Shown in the hub' },
   { key: 'STUDIO_NAME', label: 'Studio name', secret: false, help: 'Shown in the hub' },
   { key: 'TERMINAL_ENABLED', label: 'Terminal', secret: false, help: '1 turns the terminal on' },
