@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSideActionsTarget } from './ProjectSidePanel.tsx';
-import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, Eye, EyeOff, Bot, AlertTriangle, Sparkles, Link2, Network, Clock, Code2 } from 'lucide-react';
+import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, Eye, EyeOff, Bot, AlertTriangle, Sparkles, Link2, Network, Clock, Code2, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
 import { ResultActions } from './ResultActions.tsx';
 import { SendBackBox } from './SendBackBox.tsx';
@@ -1125,6 +1125,9 @@ const SyncButton: React.FC<{ project: Project }> = ({ project }) => {
 // ---------------------------------------------------------------- page
 export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, newProjectRequest, below, aziProjectRequest, onOpenSource, onOpenBudgets }) => {
   const sideActions = useSideActionsTarget();
+  // Board columns whose cards are collapsed to one-line titles (saved on this device).
+  const [compactCols, setCompactCols] = useState<string[]>(() => { try { const v = JSON.parse(localStorage.getItem('eden_board_compact') || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } });
+  const toggleCompact = (id: string) => setCompactCols((c) => { const next = c.includes(id) ? c.filter((x) => x !== id) : [...c, id]; try { localStorage.setItem('eden_board_compact', JSON.stringify(next)); } catch {} return next; });
   const { projects, active } = api;
   const [projectDialog, setProjectDialog] = useState<'new' | 'edit' | null>(null);
   const [aziDialog, setAziDialog] = useState(false);
@@ -1375,6 +1378,9 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                     <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
                       {col.label} <span className="font-normal text-slate-400">{colCards.length}</span>
                     </h2>
+                    <button onClick={() => toggleCompact(col.id)} aria-pressed={compactCols.includes(col.id)} aria-label={compactCols.includes(col.id) ? `Show card details in ${col.label}` : `Collapse cards in ${col.label}`} title={compactCols.includes(col.id) ? 'Show details' : 'Collapse cards to titles'} className="ml-auto rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800">
+                      {compactCols.includes(col.id) ? <ChevronsUpDown className="h-4 w-4" /> : <ChevronsDownUp className="h-4 w-4" />}
+                    </button>
                     <button
                       onClick={() => {
                         setAddingIn(col.id);
@@ -1426,7 +1432,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                             setOverColumn(null);
                           }}
                           onClick={() => setOpenCardId(card.id)}
-                          className={`block w-full cursor-grab rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm hover:border-indigo-400 active:cursor-grabbing dark:border-slate-700 dark:bg-slate-800 dark:hover:border-indigo-500 ${
+                          title={compactCols.includes(col.id) ? card.title : undefined}
+                          className={`block w-full cursor-grab rounded-lg border border-slate-200 bg-white ${compactCols.includes(col.id) ? 'px-3 py-1.5 [&>*:not(:first-child)]:hidden [&>span:first-child]:truncate [&>span:first-child]:text-sm' : 'p-3'} text-left shadow-sm hover:border-indigo-400 active:cursor-grabbing dark:border-slate-700 dark:bg-slate-800 dark:hover:border-indigo-500 ${
                             dragId === card.id ? 'opacity-40' : ''
                           }`}
                         >
