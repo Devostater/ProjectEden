@@ -39,7 +39,7 @@ interface ActivityEntry {
   text: string; // the short version
   full?: string; // the whole message, only when it was longer than the short version (older saved lines don't have it)
   hint?: { explain: string; action: string }; // plain explanation and suggestion for common failures
-  retry?: { kind: 'card' | 'update'; id: string }; // what Retry runs again
+  retry?: { kind: 'card' | 'update' | 'lyra'; id: string }; // what Retry runs again
 }
 
 interface TerminalLine {
@@ -189,6 +189,10 @@ export const BottomPanel: React.FC<{
     try {
       if (e.retry.kind === 'card') {
         say((await onRetryCard(e.retry.id)) ? 'Sent back to the team. It will start again shortly.' : 'Already handled. Nothing to retry.');
+      } else if (e.retry.kind === 'lyra') {
+        const res = await fetch('/api/lyra/retry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: e.retry.id }) });
+        const d = await res.json().catch(() => ({}));
+        say(res.ok ? 'Sent to LYRA again. Her answer is in the LYRA chat.' : d.error || "Couldn't reach LYRA. Press Start LYRA first.");
       } else {
         const res = await fetch(`/api/updates/${e.retry.id}/retry`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
         const d = await res.json().catch(() => ({}));

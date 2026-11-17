@@ -662,15 +662,27 @@ async function callLyra(req: GenerateRequest): Promise<GenerateResult> {
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let k;
-    while ((k = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, k)); buf = buf.slice(k + 1); }
+  let cutOff = false; // LYRA closed the connection before she finished (she was stopped, restarted or crashed)
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let k;
+      while ((k = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, k)); buf = buf.slice(k + 1); }
+    }
+  } catch {
+    cutOff = true;
+    lyraUp = false;
   }
-  handle(buf);
-  if (!answer) throw new Error('LYRA: ' + (error || 'no answer'));
+  if (!cutOff) handle(buf);
+  // If she had already sent an answer before the connection dropped, keep it.
+  if (!answer) {
+    if (cutOff) throw new Error('LYRA stopped in the middle of answering (she was probably closed or restarted, or the PC ran out of memory). Check that her window is still open, restart her with Nova.bat if not, and ask again.');
+    // LYRA reports a bare "terminated" when her own model (Ollama / LM Studio) drops the connection mid-answer.
+    if (/^\s*terminated\s*$/i.test(error)) throw new Error("LYRA's local AI model stopped in the middle of answering (it was probably closed, restarted, or the PC ran low on memory). Check that Ollama or LM Studio is still running, then ask again.");
+    throw new Error('LYRA: ' + (error || 'no answer'));
+  }
   return { text: answer.trim(), tokens, model: used, provider: 'lyra' };
 }
 

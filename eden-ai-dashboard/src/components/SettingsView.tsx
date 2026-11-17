@@ -54,26 +54,57 @@ const Code = ({ children }: { children: string }) => (
 // Pairing a phone: the code and the addresses the Android app (or a phone browser) connects to.
 // Restart the hub without closing and reopening Start Eden. Waits for it to come back, then reloads the page.
 const RestartCard: React.FC = () => {
-  const [confirm, setConfirm] = useState(false);
-  const [state, setState] = useState<'idle' | 'restarting' | 'failed'>('idle');
+  const [state, setState] = useState<'idle' | 'checking' | 'restarting' | 'failed'>('idle');
   const [error, setError] = useState('');
   const [stopConfirm, setStopConfirm] = useState(false);
   const [stopState, setStopState] = useState<'idle' | 'stopping' | 'stopped' | 'failed'>('idle');
   const [stopError, setStopError] = useState('');
 
-  // Work that a restart would cut off. The hub lists it and waits to hear "Restart anyway" or "Wait".
-  const [interrupted, setInterrupted] = useState<string[] | null>(null);
+  // Work that a restart would cut off. We ask the hub first, then wait to hear "Restart anyway" or "Wait".
+  const [busy, setBusy] = useState<{ codeUpdates: number; cards: number } | null>(null);
+
+  const countOf = (n: unknown) => (typeof n === 'number' && n > 0 ? n : 0);
+  const busyMessage = (b: { codeUpdates: number; cards: number }) => {
+    const total = b.codeUpdates + b.cards;
+    const parts = [
+      b.codeUpdates ? (b.codeUpdates === 1 ? 'a code update' : `${b.codeUpdates} code updates`) : '',
+      b.cards ? (b.cards === 1 ? 'a card' : `${b.cards} cards`) : '',
+    ].filter(Boolean);
+    return `${total} thing${total === 1 ? ' is' : 's are'} still running (${parts.join(' and ')}). Restarting will stop ${total === 1 ? 'it' : 'them'}. Restart anyway?`;
+  };
+
+  // Press of the "Restart hub" button: restart straight away unless something is still running.
+  const checkThenRestart = async () => {
+    if (state === 'checking' || state === 'restarting') return;
+    setError('');
+    setState('checking');
+    try {
+      const res = await fetch('/api/restart/status');
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const found = { codeUpdates: countOf(data.codeUpdates), cards: countOf(data.cards) };
+        if (found.codeUpdates + found.cards > 0) {
+          setBusy(found);
+          setState('idle');
+          return;
+        }
+      }
+    } catch {
+      // Couldn't check: carry on. The hub still refuses to cut off work unless told to.
+    }
+    restart();
+  };
 
   const restart = async (force = false) => {
-    setConfirm(false);
-    setInterrupted(null);
+    setBusy(null);
     setError('');
     setState('restarting');
     try {
       const res = await fetch('/api/restart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(force ? { force: true } : {}) });
       const data = await res.json().catch(() => ({}));
       if (res.status === 409 && Array.isArray(data.interrupted) && data.interrupted.length) {
-        setInterrupted(data.interrupted);
+        // Something started since we checked: ask again.
+        setBusy({ codeUpdates: countOf(data.codeUpdates), cards: countOf(data.cards) });
         setState('idle');
         return;
       }
@@ -113,33 +144,22 @@ const RestartCard: React.FC = () => {
         <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Restart the hub</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use this after a code update that says the hub needs a restart. It closes and starts the hub again for you.</p>
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-          {interrupted ? (
+          {busy ? (
             <div role="alertdialog" aria-label="Restart would interrupt work" className="w-full space-y-3">
-              <p className="text-sm font-medium text-slate-800 dark:text-slate-100">Restarting now would interrupt this work:</p>
-              <ul className="list-disc space-y-1 pl-5 text-sm text-slate-600 dark:text-slate-300">
-                {interrupted.map((item, i) => (
-                  <li key={i}>{item}</li>
-                ))}
-              </ul>
+              <p className="text-sm font-medium text-slate-800 dark:text-slate-100">{busyMessage(busy)}</p>
               <div className="flex flex-wrap gap-3">
                 <button onClick={() => restart(true)} className="rounded-md bg-red-600 px-2.5 py-1 text-sm font-medium text-white hover:bg-red-500">Restart anyway</button>
-                <button onClick={() => setInterrupted(null)} className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Wait</button>
+                <button onClick={() => setBusy(null)} className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Wait</button>
               </div>
             </div>
-          ) : confirm ? (
-            <>
-              <span className="text-sm text-slate-600 dark:text-slate-300">Restart now? Anything the team is writing right now will stop.</span>
-              <button onClick={() => restart()} className="rounded-md bg-red-600 px-2.5 py-1 text-sm font-medium text-white hover:bg-red-500">Restart</button>
-              <button onClick={() => setConfirm(false)} className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
-            </>
           ) : (
             <button
-              onClick={() => setConfirm(true)}
-              disabled={state === 'restarting'}
+              onClick={checkThenRestart}
+              disabled={state === 'checking' || state === 'restarting'}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
             >
-              {state === 'restarting' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
-              {state === 'restarting' ? 'Restarting… this page reloads when the hub is back' : 'Restart hub'}
+              {state === 'checking' || state === 'restarting' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Power className="h-4 w-4" />}
+              {state === 'restarting' ? 'Restarting… this page reloads when the hub is back' : state === 'checking' ? 'Checking…' : 'Restart hub'}
             </button>
           )}
           {error && <span role="alert" className="text-sm text-red-500">{error}</span>}

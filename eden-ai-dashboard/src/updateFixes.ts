@@ -142,6 +142,11 @@ export function diagnose(job: FixableJob, jobs: FixableJob[], now = Date.now()):
     return { kind: 'local-model', reason: "The AI on this PC can't do code updates (its model isn't supported for this). Your Claude plan can.", action: 'retryClaude', label: 'Run it with Claude' };
   }
 
+  if (/did not make any change/i.test(err)) {
+    // Asked twice and still no edit: running the same words again would do the same, so the fix is to reword it.
+    return { kind: 'no-change', reason: 'The AI was asked twice but did not change anything. Reword the request with the name of the screen you mean, then ask again.', action: 'discard', label: 'Clear it' };
+  }
+
   if (/finished without changing anything|nothing (was )?changed|no changes/i.test(err)) {
     return { kind: 'no-change', reason: 'The AI looked and found nothing to change. It is probably already done.', action: 'discard', label: 'Clear it' };
   }

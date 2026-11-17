@@ -8,9 +8,9 @@ import type { Express } from 'express';
 
 export type ActivityKind = 'info' | 'work' | 'done' | 'error';
 
-// What can be tried again from an error line: a task card, or a Code update.
+// What can be tried again from an error line: a task card, a Code update, or a message to LYRA.
 export interface ActivityRetry {
-  kind: 'card' | 'update';
+  kind: 'card' | 'update' | 'lyra';
   id: string;
 }
 

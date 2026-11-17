@@ -23,7 +23,7 @@ interface HomeError {
   kind: string;
   text: string;
   hint?: { explain: string; action: string };
-  retry?: { kind: 'card' | 'update'; id: string }; // what "Try again" runs
+  retry?: { kind: 'card' | 'update' | 'lyra'; id: string }; // what "Try again" runs
 }
 
 interface HomeViewProps {
@@ -146,7 +146,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     if (fixing || toFix.length === 0) return;
     setFixing(true);
     setFixNote('');
-    let cards = 0, updates = 0, skipped = 0, cleared = 0;
+    let cards = 0, updates = 0, skipped = 0, cleared = 0, chats = 0;
     const seen = new Set<string>();
     const rest: string[] = [];
     let limited = 0;
@@ -167,6 +167,15 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
         try {
           if (e.retry.kind === 'card') {
             if (await onRetryCard(e.retry.id)) cards++; else skipped++;
+          } else if (e.retry.kind === 'lyra') {
+            // A message LYRA didn't answer: send it again. If LYRA still isn't running it stays listed.
+            const r = await fetch('/api/lyra/retry', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: e.retry.id }) });
+            if (r.ok) chats++;
+            else if (r.status === 404 || r.status === 409) skipped++;
+            else {
+              const d = await r.json().catch(() => ({}));
+              throw new Error(d.error || 'LYRA is not answering. Press Start LYRA first.');
+            }
           } else {
             // Code updates get the same easy fix as in Code updates: run again, with Claude, with what failed, or clear a twin.
             if (!updates_) {
@@ -208,6 +217,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     }
     const parts: string[] = [];
     if (cards) parts.push(`sent ${cards} ${cards === 1 ? 'task' : 'tasks'} back to the team`);
+    if (chats) parts.push(`sent ${chats} ${chats === 1 ? 'message' : 'messages'} to LYRA again`);
     if (updates) parts.push(`started ${updates} code ${updates === 1 ? 'update' : 'updates'} again`);
     if (asked) parts.push(`asked Claude to fix ${asked} ${asked === 1 ? 'problem' : 'problems'} (see Code updates)`);
     if (cleared) parts.push(`cleared ${cleared} ${cleared === 1 ? 'update' : 'updates'} that ${cleared === 1 ? "wasn't" : "weren't"} needed`);
