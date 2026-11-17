@@ -316,9 +316,10 @@ export async function callExtra(id: string, req: { system?: string; messages: { 
     if (permanent(res.status, msg)) {
       provider.tested = { ...provider.tested, [model]: msg.slice(0, 120) };
       save();
-    } else resting.set(id, Date.now() + (res.status >= 500 && (provider.local || isOllama) && /^\s*(internal server error|server error|\d{3})?\s*$|memory|unable to allocate|cudamalloc/i.test(msg) ? 2 * 60 * 1000 : restDuration)); // a model that could not start is left alone for 2 minutes, so the next chat goes straight to another AI
+    } else resting.set(id, Date.now() + (res.status >= 500 && (provider.local || isOllama) && /^\s*(internal server error|server error|\d{3})?\s*$|memory|unable to allocate|cudamalloc|runner process has terminated|unexpectedly stopped|exit status/i.test(msg) ? 2 * 60 * 1000 : restDuration)); // a model that could not start is left alone for 2 minutes, so the next chat goes straight to another AI
     // Ollama says plainly when the model needs more memory than the PC has free.
-    if (res.status >= 500 && (provider.local || provider.device) && /more system memory|out of memory|insufficient memory|not enough memory|memory layout|cudamalloc|unable to allocate/i.test(msg)) {
+    // A model that crashes while loading ("runner process has terminated", "unexpectedly stopped") is almost always short of memory too.
+    if (res.status >= 500 && (provider.local || provider.device) && /more system memory|out of memory|insufficient memory|not enough memory|memory layout|cudamalloc|unable to allocate|runner process has terminated|unexpectedly stopped|exit status/i.test(msg)) {
       throw new Error(`${provider.name} (${model}) needs more free memory than this PC has right now. Close other heavy programs, or pick a smaller model (Account → Connections), or switch the chat to Online. (Ollama said: ${msg.slice(0, 160)})`);
     }
     // Ollama answers a bare "Internal Server Error" when the model could not start, usually because the PC is out of memory.
