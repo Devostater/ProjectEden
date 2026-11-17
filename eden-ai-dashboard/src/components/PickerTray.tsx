@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Wand2, MessagesSquare, Pencil, Loader2 } from 'lucide-react';
-import { usePicks, removePick, clearPicks, picksAsText } from '../picker.ts';
+import { usePicks, removePick, clearPicks, picksAsText, getPickTarget } from '../picker.ts';
 import { api } from '../api.ts';
 
 // The picked elements, floating at the bottom of the screen while picking or while any are picked.
@@ -18,7 +18,9 @@ export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onStar
     setBusy(true);
     setError('');
     try {
-      await api('POST', '/api/updates', { request: text.trim() + picksAsText(), codebaseId: 'hub', local: false });
+      const t = getPickTarget();
+      if (t.name && !t.codebaseId) throw new Error(`${t.name} has no code set yet. Choose its code in Project settings first.`);
+      await api('POST', '/api/updates', { request: text.trim() + picksAsText(), codebaseId: t.codebaseId || 'hub', local: false });
       setText('');
       clearPicks();
       onStop();
@@ -33,7 +35,7 @@ export const PickerTray: React.FC<{ picking: boolean; onStop: () => void; onStar
     <div data-eden-picker-ui="" className="fixed bottom-20 left-1/2 z-[2147483646] w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-indigo-400 bg-white/95 p-3 shadow-xl backdrop-blur dark:bg-slate-900/95">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Pencil className="h-4 w-4 text-indigo-500" />
-        <span className="font-medium text-slate-900 dark:text-white">{picking ? 'Click parts of the screen to pick them' : `${picks.length} picked`}</span>
+        <span className="font-medium text-slate-900 dark:text-white">{picking ? 'Click parts of the screen to pick them' : `${picks.length} picked${getPickTarget().name ? ` in ${getPickTarget().name}` : ' in EDEN'}`}</span>
         <span className="text-xs text-slate-500">{picking ? 'Esc to stop' : 'Say what should change'}</span>
         <span className="ml-auto flex gap-2">
           {picking && <button onClick={onStop} className="rounded-lg border border-slate-300 px-2.5 py-1 dark:border-slate-600">Done</button>}

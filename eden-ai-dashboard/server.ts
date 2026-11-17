@@ -9,6 +9,7 @@ import { registerToolboxRoutes } from './toolbox';
 import { startCardRunner, askTeammate, runningCards } from './cardRunner';
 import { registerPlannerRoutes } from './planner';
 import { registerProjectChat } from './projectChat';
+import { registerPreviewProxy } from './previewProxy';
 import { registerActivityRoutes, logActivity } from './activity';
 import { registerTerminalRoutes } from './terminal';
 import { registerLyraRoutes } from './lyra';
@@ -546,6 +547,7 @@ async function startServer() {
   registerProjectRoutes(app, () => store, () => saveStore(store));
   registerPlannerRoutes(app, () => store);
   registerProjectChat(app, () => store); // ongoing project chat with Chief + to-discuss list
+  registerPreviewProxy(app, () => store); // App tab: the project's running app, with the picker inside
   registerActivityRoutes(app);
   registerTerminalRoutes(app);
   registerLyraRoutes(app);

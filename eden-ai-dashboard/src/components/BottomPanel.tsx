@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight, Copy, Check, SlidersHorizontal, EyeOff, Map as MapIcon, MessagesSquare } from 'lucide-react';
+import { ChevronDown, ChevronUp, Activity, TerminalSquare, Trash2, Workflow, Users, TrendingUp, Maximize2, Minimize2, ZoomIn, ZoomOut, Scan, Inbox, Hammer, Wrench, Expand, Shrink, Eye, Footprints, ArrowLeftRight, Copy, Check, SlidersHorizontal, EyeOff, Map as MapIcon, MessagesSquare, AppWindow } from 'lucide-react';
+import { LiveAppView } from './LiveAppView.tsx';
 import { JourneyView } from './ProjectPages.tsx';
 import { ProjectChat } from './ProjectChat.tsx';
 import type { Agent, Card, Project, RoadmapGoal } from '../types/index.ts';
@@ -16,8 +17,8 @@ import { UsagePanel } from './UsageBars.tsx';
 import { useSideActionsTarget } from './ProjectSidePanel.tsx';
 import { PauseAI } from './PauseAI.tsx';
 
-type PanelTab = 'chief' | 'journey' | 'flow' | 'workload' | 'progress' | 'trail' | 'roadmap' | 'toolbox' | 'preview' | 'review' | 'lyra' | 'activity' | 'terminal';
-const PROJECT_TABS: PanelTab[] = ['chief', 'journey', 'flow', 'workload', 'progress', 'trail', 'roadmap', 'toolbox', 'preview'];
+type PanelTab = 'app' | 'chief' | 'journey' | 'flow' | 'workload' | 'progress' | 'trail' | 'roadmap' | 'toolbox' | 'preview' | 'review' | 'lyra' | 'activity' | 'terminal';
+const PROJECT_TABS: PanelTab[] = ['app', 'chief', 'journey', 'flow', 'workload', 'progress', 'trail', 'roadmap', 'toolbox', 'preview'];
 const ALL_TABS: PanelTab[] = [...PROJECT_TABS, 'review', 'lyra', 'activity', 'terminal'];
 
 // The little LYRA face used as the tab's icon.
@@ -317,7 +318,7 @@ export const BottomPanel: React.FC<{
   });
   const toggleHidden = (id: string) => setHiddenTabs((h) => { const next = h.includes(id) ? h.filter((x) => x !== id) : [...h, id]; try { localStorage.setItem('eden_dock_hidden', JSON.stringify(next)); } catch {} return next; });
   const sidePanelOpen = !!useSideActionsTarget();
-  const inSidePanel = (id: PanelTab) => sidePanelOpen && PROJECT_TABS.includes(id) && id !== 'preview' && id !== 'chief';
+  const inSidePanel = (id: PanelTab) => sidePanelOpen && PROJECT_TABS.includes(id) && id !== 'preview' && id !== 'chief' && id !== 'app';
   const tabButton = (id: PanelTab, label: React.ReactNode, Icon: React.ElementType, dot = false) => inSidePanel(id) ? null : (
     <Arrangeable key={id} id={id} label={typeof label === 'string' ? label : id.charAt(0).toUpperCase() + id.slice(1)} arr={dockOrder} arranging={arrangingDock} horizontal showing={project ? ALL_TABS : ALL_TABS.filter((t) => !PROJECT_TABS.includes(t))} className="flex shrink-0" hidden={hiddenTabs.includes(id)} onToggleHidden={() => toggleHidden(id)}>
       <button
@@ -357,6 +358,7 @@ export const BottomPanel: React.FC<{
       )}
       <div className="flex h-[3.25rem] shrink-0 items-center border-b border-slate-200 px-2 dark:border-slate-800">
         <div className="flex min-w-0 flex-1 items-center justify-evenly gap-1 overflow-x-auto">
+        {project && tabButton('app', 'App', AppWindow)}
         {project && tabButton('chief', 'Chief', MessagesSquare)}
         {project && tabButton('journey', 'Journey', MapIcon)}
         {project && tabButton('flow', 'Flow', Workflow)}
@@ -458,6 +460,7 @@ export const BottomPanel: React.FC<{
 
       {open && project && PROJECT_TABS.includes(tab) && (
         <div className="min-h-0 flex-1">
+          {tab === 'app' && <LiveAppView project={project.project} />}
           {tab === 'chief' && <div className="h-full overflow-y-auto p-3"><ProjectChat projectId={project.project.id} /></div>}
           {tab === 'journey' && <div className="h-full overflow-y-auto p-3"><JourneyView {...project} /></div>}
           {tab === 'flow' && <FlowTab {...project} zoom={zoom} />}
