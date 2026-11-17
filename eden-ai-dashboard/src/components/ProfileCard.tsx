@@ -49,7 +49,8 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
       const r = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || 'Could not save.');
-      setP(normalizeProfile(d) || p);
+      // Keep what was typed for any field an older hub leaves out of its reply.
+      setP(normalizeProfile(d && typeof d === 'object' && !Array.isArray(d) ? { ...p, ...d } : null) || p);
       setMsg({ ok: true, text: 'Profile saved.' });
       window.dispatchEvent(new Event(PROFILE_EVENT));
     } catch (e: any) {

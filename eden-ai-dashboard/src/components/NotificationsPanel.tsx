@@ -1,12 +1,24 @@
 import React from 'react';
-import { AlertTriangle, Inbox, Loader2, XCircle, CheckCircle2, X } from 'lucide-react';
+import { AlertTriangle, CalendarClock, Inbox, Loader2, XCircle, CheckCircle2, X } from 'lucide-react';
 import type { UpdatesFeed } from '../readyUpdates.ts';
+import { HEADS_UP_CHOICES, type HeadsUp } from '../meetingHeadsUp.ts';
 
 const short = (t: string, n = 80) => (t.length > n ? `${t.slice(0, n)}…` : t);
 
+// "in 12 minutes", "in 1 hour", or "starting now".
+const startsIn = (at: number) => {
+  const mins = Math.max(0, Math.round((at - Date.now()) / 60000));
+  if (mins < 1) return 'starting now';
+  if (mins < 60) return `in ${mins} ${mins === 1 ? 'minute' : 'minutes'}`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `in ${h} ${h === 1 ? 'hour' : 'hours'}${m ? ` ${m} min` : ''}`;
+};
+
 // What the notification button counts: things that need you (a click), and news you haven't looked at yet.
-export const countNotifications = (feed: UpdatesFeed, reviewCount: number) => {
-  const needs = reviewCount + feed.ready.length + (feed.restartPending ? 1 : 0);
+// A meeting heads-up counts as needing you, because it is time sensitive.
+export const countNotifications = (feed: UpdatesFeed, reviewCount: number, headsUpCount = 0) => {
+  const needs = reviewCount + feed.ready.length + (feed.restartPending ? 1 : 0) + headsUpCount;
   const news = feed.running.length + feed.failed.length + feed.finished.length;
   return { needs, news };
 };
@@ -30,9 +42,9 @@ const Row: React.FC<{ icon: React.ReactNode; title: string; detail?: string; act
 // "Needs you" is what waits for a click. "Good to know" is news that needs no click, until you visit the Code updates page.
 export const NotificationsPanel = React.forwardRef<
   HTMLDivElement,
-  { feed: UpdatesFeed; reviewCount: number; onClose: () => void; onReview: () => void; onOpenUpdates: () => void }
->(({ feed, reviewCount, onClose, onReview, onOpenUpdates }, ref) => {
-  const { needs, news } = countNotifications(feed, reviewCount);
+  { feed: UpdatesFeed; reviewCount: number; headsUp: HeadsUp[]; headsUpMinutes: number; onHeadsUpMinutes: (m: number) => void; onDismissHeadsUp: (h: HeadsUp) => void; onOpenMeetings: () => void; onClose: () => void; onReview: () => void; onOpenUpdates: () => void }
+>(({ feed, reviewCount, headsUp, headsUpMinutes, onHeadsUpMinutes, onDismissHeadsUp, onOpenMeetings, onClose, onReview, onOpenUpdates }, ref) => {
+  const { needs, news } = countNotifications(feed, reviewCount, headsUp.length);
   const go = (fn: () => void) => () => { onClose(); fn(); };
   return (
     <div ref={ref} className="absolute left-2 top-full z-30 mt-1 flex max-h-[70vh] w-[26rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border border-slate-300 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
@@ -48,6 +60,21 @@ export const NotificationsPanel = React.forwardRef<
           <section>
             <h3 className="bg-amber-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Needs you</h3>
             <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+              {headsUp.map((h) => (
+                <li key={`${h.key}@${h.at}`} className="flex items-start gap-2.5 px-3 py-2">
+                  <span className="mt-0.5 shrink-0"><CalendarClock className="h-4 w-4 text-amber-500" /></span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm text-slate-900 dark:text-white">{short(h.title, 50)} is {startsIn(h.at)}</span>
+                    <span className="block truncate text-xs text-slate-500 dark:text-slate-400">
+                      {new Date(h.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}{h.project ? ` · ${h.project}` : ''}
+                    </span>
+                  </span>
+                  {h.key.startsWith('meeting:') && (
+                    <button onClick={go(onOpenMeetings)} className="shrink-0 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Open</button>
+                  )}
+                  <button onClick={() => onDismissHeadsUp(h)} className="shrink-0 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800">Got it</button>
+                </li>
+              ))}
               {feed.restartPending && (
                 <Row icon={<AlertTriangle className="h-4 w-4 text-amber-500" />} title="Restart needed" detail="An update changed the server part of the hub. It only takes effect after a restart." action="Open to restart" onClick={go(onOpenUpdates)} />
               )}
@@ -89,6 +116,15 @@ export const NotificationsPanel = React.forwardRef<
             <p className="px-3 pb-2 pt-1 text-xs text-slate-500 dark:text-slate-400">The finished and failed ones clear once you open Code updates.</p>
           </section>
         )}
+      </div>
+      <div className="border-t border-slate-100 px-3 py-2 dark:border-slate-800">
+        <label className="flex items-center justify-between gap-2 text-xs text-slate-600 dark:text-slate-300">
+          <span>Heads up before a meeting</span>
+          <select value={headsUpMinutes} onChange={(e) => onHeadsUpMinutes(Number(e.target.value))} aria-label="Heads up before a meeting" className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100">
+            {HEADS_UP_CHOICES.map((c) => <option key={c.minutes} value={c.minutes}>{c.label}</option>)}
+          </select>
+        </label>
+        <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Saved on this device. Meetings with a day but no time can't give a heads-up.</p>
       </div>
     </div>
   );

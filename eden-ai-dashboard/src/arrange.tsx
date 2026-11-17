@@ -118,6 +118,9 @@ export const Arrangeable: React.FC<{
   // Press and hold (about a third of a second), then drag onto another item of the same list and let go.
   const startHold = (e: React.PointerEvent) => {
     if (!holdDrag || arranging || e.button !== 0) return;
+    // Fingers wobble more than a mouse: use a bigger "this is a drag" distance for touch and pen, beyond the
+    // browser's own tap tolerance, so a slow tap stays a tap.
+    const slop = e.pointerType === 'mouse' ? 6 : 16;
     const startX = e.clientX;
     const startY = e.clientY;
     let isLifted = false;
@@ -137,10 +140,10 @@ export const Arrangeable: React.FC<{
     const move = (ev: PointerEvent) => {
       if (!isLifted) {
         // Moved before the hold finished: this is a normal press or scroll, not a drag.
-        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) finish(false);
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > slop) finish(false);
         return;
       }
-      if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) {
+      if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) > slop) {
         moved = true;
         setLifted(true);
       }
@@ -189,7 +192,7 @@ export const Arrangeable: React.FC<{
       data-arrange-id={id}
       onPointerDown={startHold}
       title={holdDrag && !arranging ? 'Press and hold, then drag to move' : undefined}
-      className={`${arranging ? "" : className} ${arranging ? `flex flex-row items-center gap-0.5 rounded-lg ring-2 ring-dashed ring-indigo-400/60 ${horizontal ? 'px-1' : 'p-1'}` : ''} ${lifted ? 'z-10 scale-105 cursor-grabbing select-none opacity-70 shadow-lg' : ''}`}
+      className={`${arranging ? "" : className} ${arranging ? `flex flex-row items-center gap-0.5 rounded-lg ring-2 ring-dashed ring-indigo-400/60 ${horizontal ? 'px-1' : 'p-1'}` : ''} ${lifted ? 'z-10 cursor-grabbing select-none opacity-70 shadow-lg' : ''}`}
       draggable={arranging}
       onDragStart={(e) => {
         e.dataTransfer.setData('text/x-eden-arrange', id);

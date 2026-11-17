@@ -13,6 +13,7 @@ import { ReviewTab, type ReviewProps } from './ReviewTab.tsx';
 import { useTickerItems } from '../ticker.ts';
 import { useUpdatesFeed } from '../readyUpdates.ts';
 import { NotificationsPanel, countNotifications } from './NotificationsPanel.tsx';
+import { useMeetingHeadsUp } from '../meetingHeadsUp.ts';
 
 interface Status {
   offline?: { offline: boolean; mode: string; localFirst: boolean; week: { localPercent: number; local: number; cloud: number } };
@@ -93,7 +94,8 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
   const readyUpdates = feed.ready.length;
   const waiting = reviewCount + readyUpdates;
   // Notifications: "needs you" waits for a click; "news" only needs to be seen (it clears when you open Code updates).
-  const { needs, news } = countNotifications(feed, reviewCount);
+  const { minutes: headsUpMinutes, setMinutes: setHeadsUpMinutes, headsUp, dismiss: dismissHeadsUp } = useMeetingHeadsUp();
+  const { needs, news } = countNotifications(feed, reviewCount, headsUp.length);
   const [notesOpen, setNotesOpen] = useState(false);
   const notesBtnRef = useRef<HTMLButtonElement>(null);
   const notesPanelRef = useRef<HTMLDivElement>(null);
@@ -159,6 +161,11 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           ref={notesPanelRef}
           feed={feed}
           reviewCount={reviewCount}
+          headsUp={headsUp}
+          headsUpMinutes={headsUpMinutes}
+          onHeadsUpMinutes={setHeadsUpMinutes}
+          onDismissHeadsUp={dismissHeadsUp}
+          onOpenMeetings={() => setActiveTab('meetings')}
           onClose={() => setNotesOpen(false)}
           onReview={() => (review ? setReviewOpen(true) : openPanel('review'))}
           onOpenUpdates={() => { try { sessionStorage.setItem('eden_updates_open', 'active'); } catch {} setActiveTab('updates'); }}

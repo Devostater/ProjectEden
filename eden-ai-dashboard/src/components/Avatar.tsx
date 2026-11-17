@@ -57,13 +57,13 @@ export interface ProfileData { avatar: string; frame: string; bio: string; links
 // Fill in anything an older hub doesn't send yet (fields added by later updates, before the hub restarts), so the
 // profile card never reads a missing field and crashes. Used for both loading and saving.
 export function normalizeProfile(d: any): ProfileData | null {
-  if (!d || typeof d !== 'object') return null;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return null;
   const num = (v: unknown, dflt: number) => (typeof v === 'number' && Number.isFinite(v) ? v : dflt);
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
   const st = d.stats && typeof d.stats === 'object' ? d.stats : {};
   return {
     ...d,
-    avatar: str(d.avatar), frame: str(d.frame), bio: str(d.bio),
+    avatar: str(d.avatar), frame: str(d.frame) || 'none', bio: str(d.bio),
     workTitle: str(d.workTitle), gameTitle: str(d.gameTitle), playerClass: str(d.playerClass),
     playerLevel: Math.max(1, num(d.playerLevel, 1)),
     prestige: num(d.prestige, 0), credits: num(d.credits, 0), diamonds: num(d.diamonds, 0), xp: num(d.xp, 0),

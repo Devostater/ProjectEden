@@ -5,11 +5,11 @@ import { CalendarClock, CalendarDays, Pin, Plus, X } from 'lucide-react';
 // your own events, anything pinned), a button to add a meeting, and the past meetings at the bottom.
 // Project meetings come from the Meetings page; your own events and pins are saved on this device only.
 interface MeetingInfo { projectId: string; name: string; color: string; meeting?: string; agenda?: { done: boolean }[] }
-type Repeat = '' | 'daily' | 'weekly' | 'biweekly' | 'monthly';
-interface OwnEvent { id: string; text: string; when: string; repeat?: Repeat } // when: "2026-11-20T17:00", or empty if no time was set
+export type Repeat ='' | 'daily' | 'weekly' | 'biweekly' | 'monthly';
+export interface OwnEvent { id: string; text: string; when: string; repeat?: Repeat } // when: "2026-11-20T17:00", or empty if no time was set
 interface Row { key: string; title: string; sub: string; color?: string; pinned: boolean; time: number | null; own: boolean; past: boolean; unscheduled?: boolean }
 
-const EVENTS_KEY = 'eden_upcoming_events';
+export const EVENTS_KEY = 'eden_upcoming_events';
 const PINS_KEY = 'eden_upcoming_pins';
 
 function read<T>(key: string, fallback: T): T {
@@ -53,7 +53,7 @@ const pad = (n: number) => String(n).padStart(2, '0');
 const toLocalInput = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
 // The next time a repeating event happens (or the first time, if that is still ahead). Others just keep their own time.
-const nextTime = (when: string, repeat: Repeat | undefined, now: number): number => {
+export const nextTime = (when: string, repeat: Repeat | undefined, now: number): number => {
   const start = new Date(when);
   const t = start.getTime();
   if (!when || Number.isNaN(t) || !repeat || t >= now) return t;
