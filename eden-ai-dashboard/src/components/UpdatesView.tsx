@@ -156,7 +156,8 @@ export const UpdatesView: React.FC = () => {
   const [applyingAll, setApplyingAll] = useState(false);
   const [restartPending, setRestartPending] = useState(false); // an applied update needs the hub restarted
   const [restarting, setRestarting] = useState(false);
-  const [tab, setTab] = useState<UpdatesTab>('construction');
+  // Opened from the picker after starting an update: show it running (Active).
+  const [tab, setTab] = useState<UpdatesTab>(() => { try { if (sessionStorage.getItem('eden_updates_open') === 'active') { sessionStorage.removeItem('eden_updates_open'); return 'active'; } } catch {} return 'construction'; });
   const [checking, setChecking] = useState(false); // "Check for fixes" is reloading everything
   const [confirmFixAll, setConfirmFixAll] = useState(false); // "Fix all": waiting for "Yes, fix them"
   const [fixingAll, setFixingAll] = useState(false);

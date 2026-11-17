@@ -176,7 +176,7 @@ const PickButton: React.FC<{ setActiveTab: (t: AppTab) => void }> = ({ setActive
       <button data-eden-picker-ui="" onClick={toggle} aria-pressed={on} title={on ? 'Stop picking (Esc)' : 'Pick parts of the screen to show the AI what to change'} aria-label="Pick elements" className={`hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg border md:flex ${on ? 'border-indigo-400 bg-indigo-600 text-white' : 'border-slate-300 text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800'}`}>
         <Pencil className="h-4 w-4" />
       </button>
-      <PickerTray picking={on} onStop={stop} onCodeUpdate={() => { stop(); setActiveTab('updates'); }} onChief={() => { stop(); setActiveTab('projects'); }} />
+      <PickerTray picking={on} onStop={stop} onStarted={() => { try { sessionStorage.setItem('eden_updates_open', 'active'); } catch {} setActiveTab('updates'); }} onChief={() => { stop(); setActiveTab('projects'); }} />
     </>
   );
 };
