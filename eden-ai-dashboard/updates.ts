@@ -158,6 +158,7 @@ interface UpdateJob {
   stale?: boolean; // Apply found the code had changed since this update was made, so it no longer fits
   retryOf?: string; // set on an update that was started by "Try again": the id of the earlier one
   retriedAs?: string; // set on the earlier one: the id of the fresh update started from it
+  autoRetry?: boolean; // the hub started this one by itself (Apply found the earlier one no longer fits). It is never retried by itself again.
   // Saved just before Apply, so Undo can put the files back exactly as they were.
   restore?: { ref: string; commit: string; files: string[]; backup?: string; at: string };
 }
@@ -864,6 +865,31 @@ export function requestCodeUpdate(codebaseId: string, request: string, cardId?: 
   return job.id;
 }
 
+// Starts a fresh update with the same request and codebase, linked to the old one (retryOf / retriedAs), then clears the
+// old one away. Used by the "Try again" route and by Apply's one automatic retry (`auto`). Throws if it can't start,
+// and then the old one is left as it was.
+function startRetry(job: UpdateJob, opts: { note?: string; useClaude?: boolean; auto?: boolean } = {}): string {
+  const note = (opts.note || '').trim().slice(0, 3000);
+  // The note always fits: the request is shortened to make room for it, never the other way round.
+  const header = '\n\nLast time this failed:\n';
+  const base = job.request.split(header.trimEnd())[0].trimEnd();
+  const request = note ? `${base.slice(0, Math.max(500, 4000 - header.length - note.length))}${header}${note}`.slice(0, 4000 + 3000) : job.request;
+  const local = opts.useClaude === true ? false : job.local === true;
+  const id = requestCodeUpdate(job.codebaseId, request, job.cardId, local);
+  const fresh = jobs.find((j) => j.id === id);
+  if (fresh) {
+    fresh.retryOf = job.id;
+    if (opts.auto) fresh.autoRetry = true;
+  }
+  job.retriedAs = id;
+  job.status = 'discarded'; // only after the new one has started, so a refused retry keeps the old one
+  delete job.stale;
+  delete job.olderBase;
+  delete job.olderBaseSameFiles;
+  save();
+  return id;
+}
+
 // Right after an update is applied or undone: every other finished update waiting to be applied was checked on
 // code that has now changed. Ones that no longer fit are marked stale ("Try again" re-makes them now instead of
 // failing later at Apply). Ones that fit (including stale ones an Undo made fit again) get olderBase: their checks
@@ -1019,6 +1045,16 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     const doesNotFit = (err: any) => {
       job.stale = true; // lets "Try again" start a fresh update on the current code
       save();
+      // One automatic retry on the current code. Only once per update: one the hub made by itself is never retried
+      // by itself again, and neither is one that was already tried again. If it can't start (e.g. not signed in to
+      // Claude), the update stays as it is and the "Try again" button is still there.
+      if (!job.autoRetry && !job.retriedAs) {
+        try {
+          const id = startRetry(job, { auto: true });
+          logActivity('work', 'Re-made your update on the latest code');
+          return res.status(409).json({ retriedAs: id, error: `${cb.name} has changed since this update was made, so it no longer fits. Eden has started re-making it on the latest code. Look for the newer update in the list.` });
+        } catch {}
+      }
       return res.status(409).json({ error: `${cb.name} has changed since this update was made, so it no longer fits. Press "Try again" to redo it on the current code, or discard it. (${err.message})` });
     };
     // Make sure it fits before saving anything.
@@ -1122,21 +1158,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
       return res.status(409).json({ error: 'This update was already tried again. Look for the newer one in the list.' });
     }
     try {
-      const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 3000) : '';
-      // The note always fits: the request is shortened to make room for it, never the other way round.
-      const header = '\n\nLast time this failed:\n';
-      const base = job.request.split(header.trimEnd())[0].trimEnd();
-      const request = note ? `${base.slice(0, Math.max(500, 4000 - header.length - note.length))}${header}${note}`.slice(0, 4000 + 3000) : job.request;
-      const local = req.body?.useClaude === true ? false : job.local === true;
-      const id = requestCodeUpdate(job.codebaseId, request, job.cardId, local);
-      const fresh = jobs.find((j) => j.id === id);
-      if (fresh) fresh.retryOf = job.id;
-      job.retriedAs = id;
-      job.status = 'discarded'; // only after the new one has started, so a refused retry keeps the old one
-      delete job.stale;
-      delete job.olderBase;
-      delete job.olderBaseSameFiles;
-      save();
+      const id = startRetry(job, { note: typeof req.body?.note === 'string' ? req.body.note : '', useClaude: req.body?.useClaude === true });
       res.json({ job: { id }, uncommitted: jobs.find((j) => j.id === id)?.uncommitted });
     } catch (err: any) {
       res.status(400).json({ error: err.message });

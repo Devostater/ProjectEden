@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.ts';
 import { Sections } from './Sections.tsx';
+import { plainFileList } from './ReviewSaveRow.tsx';
 import { FolderGit2, RefreshCw, ArrowDown, ArrowUp, Loader2, Save, ExternalLink, Link2, Download, CheckCircle2, AlertTriangle, ChevronDown } from 'lucide-react';
 
 interface Repo {
@@ -116,6 +117,25 @@ function RepoCard({ repo, onChange }: { repo: Repo; onChange: (r: Repo) => void 
 
       {repo.changeCount > 0 && (
         <div className="space-y-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-950/60">
+          {/* Review & save: the changed files in plain words. Save to GitHub only fills in the message below; nothing is sent until "Save changes" and "Push" are pressed. */}
+          <div className="flex flex-wrap items-start gap-2">
+            <p className="min-w-0 flex-1 basis-56 text-sm text-slate-700 dark:text-slate-200">
+              <span className="font-medium">Review & save:</span> {repo.changeCount} {repo.changeCount === 1 ? 'file' : 'files'} changed
+              {repo.changes.length > 0 && <span className="block break-words text-xs text-slate-500 dark:text-slate-400">{plainFileList(repo.changes.map((c) => c.file), Math.max(0, repo.changeCount - repo.changes.length))}</span>}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setNote(`Save ${repo.changeCount} changed ${repo.changeCount === 1 ? 'file' : 'files'} in ${repo.name}`);
+                setMsg(null);
+                setOpen(true);
+              }}
+              disabled={!!busy}
+              className={btn}
+            >
+              <Save className="h-4 w-4" /> Save to GitHub
+            </button>
+          </div>
           <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 text-left text-sm font-medium text-slate-700 dark:text-slate-200" aria-expanded={open}>
             <ChevronDown className={`h-4 w-4 transition-transform ${open ? '' : '-rotate-90'}`} />
             {repo.changeCount} unsaved change{repo.changeCount === 1 ? '' : 's'}

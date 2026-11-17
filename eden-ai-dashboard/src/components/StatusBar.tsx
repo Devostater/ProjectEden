@@ -143,9 +143,17 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
           </button>
         )}
         {s.paused && (
-          <span className={`${chip} flex border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200`}>
+          <button
+            onClick={async () => {
+              // Pressing it resumes the AI (your choice, so a finishing update won't pause it again).
+              const d = await fetch('/api/ai/pause', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paused: false }) }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+              if (d) setS((v) => ({ ...v, paused: d.paused, pausedForUpdate: d.heldForUpdate }));
+            }}
+            title={s.pausedForUpdate ? 'Paused while an update is applied. Press to resume the AI now' : 'The AI is paused. Press to resume'}
+            className={`${chip} flex border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200 dark:hover:bg-amber-900/50`}
+          >
             <PauseCircle className="h-3.5 w-3.5" /> {s.pausedForUpdate ? 'AI paused while an update is applied' : 'AI paused'}
-          </span>
+          </button>
         )}
         <button onClick={() => setMore((v) => !v)} aria-expanded={more} title={more ? 'Hide status' : 'Show status: online, PC, devices'} className={`${chip} hidden md:flex ${calm}`}>
           {more ? 'Less' : 'Status'}

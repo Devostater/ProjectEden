@@ -629,7 +629,10 @@ function pendingPaths(dir: string): string[] {
 }
 
 const commitPushBusy = new Set<string>();
-export function commitPushProject(dir: string, opts: { dryRun?: boolean; projectName?: string } = {}): CommitPushResult {
+// The note the owner typed for a save: one plain line, at most 200 characters; empty means "use the usual note".
+export const cleanCommitNote = (v: unknown): string => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, 200) : '');
+
+export function commitPushProject(dir: string, opts: { dryRun?: boolean; projectName?: string; message?: string } = {}): CommitPushResult {
   const steps: Step[] = [];
   const add = (step: string, state: StepState, detail: string) => steps.push({ step, state, detail });
   const name = path.basename(dir);
@@ -700,7 +703,7 @@ export function commitPushProject(dir: string, opts: { dryRun?: boolean; project
   }
   add('Stage', 'ok', `Staged ${plural(staged.length, 'file', 'files')}.`);
 
-  const message = `Hub: save work ${new Date().toISOString().slice(0, 10)}`;
+  const message = cleanCommitNote(opts.message) || `Hub: save work ${new Date().toISOString().slice(0, 10)}`;
   const c = git(['commit', '-q', '-m', message], dir);
   if (!c.ok) return refuse('commit', `Could not commit: ${lastLine(c.err || c.out)}`, summary);
   const commit = git(['rev-parse', '--short', 'HEAD'], dir).out;
@@ -733,6 +736,9 @@ export interface AziRepo {
   private?: boolean; // visibility on GitHub (unknown without a token)
   reason?: SyncReason; // why it is not in step with GitHub (when state is 'changes')
   hint?: string; // one plain sentence about it
+  files?: number; // how many files are changed here and not saved ("uncommitted" reason)
+  fileNames?: string[]; // the first few of those file names
+  moreFiles?: number; // how many more changed files there are
   projectId?: string; // the Eden project for this repo, so the push route can be used on it
 }
 
@@ -761,7 +767,9 @@ function repoStatus(dir: string, fetchFirst: boolean): AziRepo {
   const state = !ab.ok || ahead || behind || dirty || forgeOnMain ? 'changes' : 'synced';
   const reason = state === 'changes' ? repoReason(dir, branch, ahead, behind, dirty, ab.ok) : undefined;
   const n = reason === 'uncommitted' ? dirty : reason === 'behind' ? behind : ahead;
-  return { name, folder: dir, repo, url: `https://github.com/${repo}`, branch, ahead, behind, dirty, state, detail: ab.ok ? undefined : 'No upstream branch yet.', reason, hint: reason ? syncHint(name, reason, n) : undefined };
+  // For unsaved changes the entry also carries how many files changed and the first few names, for the "Review & save" row.
+  const list = reason === 'uncommitted' ? changedFiles(dir) : undefined;
+  return { name, folder: dir, repo, url: `https://github.com/${repo}`, branch, ahead, behind, dirty, state, detail: ab.ok ? undefined : 'No upstream branch yet.', reason, hint: reason ? syncHint(name, reason, n) : undefined, files: list ? dirty : undefined, fileNames: list?.names, moreFiles: list?.more };
 }
 
 export function aziRepoDirs(): string[] {
@@ -1002,7 +1010,7 @@ export function registerNewProjectRoutes(app: Express, getStore: () => Store, sa
       commitPushBusy.add(key);
     }
     try {
-      const result = commitPushProject(dir, { dryRun, projectName: p.name });
+      const result = commitPushProject(dir, { dryRun, projectName: p.name, message: req.body?.message });
       if (!dryRun) logActivity(result.ok ? 'done' : 'info', `Save and push ${p.name}: ${result.message}`);
       res.json({ ...result, folder: dir });
     } catch (err: any) {

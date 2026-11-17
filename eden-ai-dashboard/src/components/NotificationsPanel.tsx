@@ -2,6 +2,7 @@ import React from 'react';
 import { AlertTriangle, CalendarClock, Inbox, Loader2, XCircle, CheckCircle2, X } from 'lucide-react';
 import type { UpdatesFeed } from '../readyUpdates.ts';
 import { HEADS_UP_CHOICES, type HeadsUp } from '../meetingHeadsUp.ts';
+import { ReviewSaveRow, useReposToReview, collapseNotices } from './ReviewSaveRow.tsx';
 
 const short = (t: string, n = 80) => (t.length > n ? `${t.slice(0, n)}…` : t);
 
@@ -46,6 +47,11 @@ export const NotificationsPanel = React.forwardRef<
 >(({ feed, reviewCount, headsUp, headsUpMinutes, onHeadsUpMinutes, onDismissHeadsUp, onOpenMeetings, onClose, onReview, onOpenUpdates }, ref) => {
   const { needs, news } = countNotifications(feed, reviewCount, headsUp.length);
   const go = (fn: () => void) => () => { onClose(); fn(); };
+  // Project folders not in step with GitHub: one "Review & save" row per project with unsaved files; every other
+  // sync notice with the same words is shown once, with a count.
+  const { repos, reload } = useReposToReview();
+  const toSave = repos.filter((r) => r.reason === 'uncommitted' && r.projectId);
+  const otherNotices = collapseNotices(repos.filter((r) => !(r.reason === 'uncommitted' && r.projectId)).map((r) => r.hint || `${r.name || 'A project'}: needs a sync`));
   return (
     <div ref={ref} className="absolute left-2 top-full z-30 mt-1 flex max-h-[70vh] w-[26rem] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border border-slate-300 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
       <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2 dark:border-slate-800">
@@ -55,7 +61,18 @@ export const NotificationsPanel = React.forwardRef<
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {needs + news === 0 && <p className="p-4 text-sm text-slate-500 dark:text-slate-400">All clear: nothing needs you and there is no news.</p>}
+        {needs + news === 0 && repos.length === 0 && <p className="p-4 text-sm text-slate-500 dark:text-slate-400">All clear: nothing needs you and there is no news.</p>}
+        {repos.length > 0 && (
+          <section>
+            <h3 className="bg-amber-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Waiting to be saved</h3>
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+              {toSave.map((r) => <ReviewSaveRow key={r.name} repo={r} onDone={reload} />)}
+              {otherNotices.map((n) => (
+                <Row key={n.text} icon={<AlertTriangle className="h-4 w-4 text-amber-500" />} title={n.count > 1 ? `${n.text} (×${n.count})` : n.text} />
+              ))}
+            </ul>
+          </section>
+        )}
         {needs > 0 && (
           <section>
             <h3 className="bg-amber-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Needs you</h3>
@@ -101,13 +118,13 @@ export const NotificationsPanel = React.forwardRef<
                 <Row
                   icon={<Loader2 className="h-4 w-4 animate-spin text-indigo-500" />}
                   title={`${feed.running.length} code ${feed.running.length === 1 ? 'update is' : 'updates are'} running or waiting`}
-                  detail={short(feed.running[0].request, 60)}
+                  detail={`${feed.running.some((u) => u.autoRetry) ? 'Re-made on the latest code: ' : ''}${short(feed.running.find((u) => u.autoRetry)?.request || feed.running[0].request, 60)}`}
                   action="Look"
                   onClick={go(onOpenUpdates)}
                 />
               )}
               {feed.failed.map((u) => (
-                <Row key={u.id} icon={<XCircle className="h-4 w-4 text-red-500" />} title="An update did not work out" detail={short(u.request)} action="Look" onClick={go(onOpenUpdates)} />
+                <Row key={u.id} icon={<XCircle className="h-4 w-4 text-red-500" />} title={u.autoRetry ? 'The automatic retry did not work out' : 'An update did not work out'} detail={u.autoRetry ? `Press Try again in Code updates: ${short(u.request, 50)}` : short(u.request)} action="Look" onClick={go(onOpenUpdates)} />
               ))}
               {feed.finished.map((u) => (
                 <Row key={u.id} icon={<CheckCircle2 className="h-4 w-4 text-emerald-500" />} title={`An update was ${u.status}`} detail={short(u.request)} action="Look" onClick={go(onOpenUpdates)} />

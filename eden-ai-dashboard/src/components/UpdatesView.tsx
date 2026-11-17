@@ -32,6 +32,7 @@ interface Job {
   olderBaseSameFiles?: boolean; // and that update changed a file this one changes too
   retryOf?: string; // started by "Try again" from this earlier update
   retriedAs?: string; // "Try again" was pressed: the newer update that took its place
+  autoRetry?: boolean; // the hub re-made it by itself because the earlier one no longer fit (only done once)
   local?: boolean; // ran on an AI on this PC instead of your Claude plan
 }
 
@@ -729,6 +730,16 @@ export const UpdatesView: React.FC = () => {
                   )}
                   {job.stale && (job.status === 'ready' || job.status === 'undone') && (
                     <p className="text-sm text-amber-700 dark:text-amber-300">The code has changed since this update was made, so it no longer fits. "Try again" redoes it on the current code.</p>
+                  )}
+
+                  {job.autoRetry && job.retryOf && (
+                    <p className="text-sm text-slate-600 dark:text-slate-300">
+                      {job.status === 'failed'
+                        ? 'Eden re-made this on the latest code by itself, and that did not work out either. Press Try again to run it once more.'
+                        : job.status === 'queued' || job.status === 'working' || job.status === 'checking'
+                          ? 'Eden is re-making this on the latest code by itself, because the earlier one no longer fit.'
+                          : 'Eden re-made this on the latest code by itself, because the earlier one no longer fit.'}
+                    </p>
                   )}
 
                   {job.summary && (

@@ -17,6 +17,7 @@ export interface UpdateNote {
   status: string;
   codebaseName?: string;
   when: string; // when it was asked for or finished (ISO)
+  autoRetry?: boolean; // Eden re-made it by itself on the latest code (see updates.ts)
 }
 
 export interface UpdatesFeed {
@@ -49,7 +50,7 @@ let timer: ReturnType<typeof setInterval> | undefined;
 
 const build = (): UpdatesFeed => {
   const jobs = lastJobs || [];
-  const note = (j: any): UpdateNote => ({ id: j.id, request: j.request, status: j.status, codebaseName: j.codebaseName, when: j.finishedAt || j.createdAt });
+  const note = (j: any): UpdateNote => ({ id: j.id, request: j.request, status: j.status, codebaseName: j.codebaseName, when: j.finishedAt || j.createdAt, autoRetry: j.autoRetry === true && !!j.retryOf ? true : undefined });
   const after = (j: any) => new Date(j.finishedAt || j.createdAt).getTime() > seenAt;
   return {
     ready: jobs.filter((j) => j.status === 'ready'),
