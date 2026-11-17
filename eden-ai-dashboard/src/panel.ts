@@ -5,7 +5,7 @@ export type PanelTarget = 'review' | 'activity' | 'lyra' | 'terminal';
 export const OPEN_PANEL_EVENT = 'eden-open-panel';
 
 // The project tabs of the bottom panel (only on the Projects page, on bigger screens).
-export type ProjectPanelTarget = 'journey' | 'trail' | 'roadmap' | 'toolbox' | 'preview' | 'flow' | 'workload' | 'progress';
+export type ProjectPanelTarget = 'chief' | 'journey' | 'trail' | 'roadmap' | 'toolbox' | 'preview' | 'flow' | 'workload' | 'progress';
 
 export const openPanel = (tab: PanelTarget | ProjectPanelTarget) => window.dispatchEvent(new CustomEvent<PanelTarget | ProjectPanelTarget>(OPEN_PANEL_EVENT, { detail: tab }));
 
