@@ -12,7 +12,7 @@ import type { RoomSummary } from './NexusRooms.tsx';
 //            Each panel can be minimized and moved up or down; the order and what is minimized are remembered on this device.
 // Same data as each project's Chief tab (To discuss), so adding a topic here shows there too.
 interface AgendaItem { id: string; text: string; done: boolean; at: string }
-interface Meeting { projectId: string; name: string; color: string; meeting?: string; agenda: AgendaItem[] }
+interface Meeting { projectId: string; name: string; color: string; meeting?: string; meetingAt?: string; meetingHost?: boolean; hostedAt?: string; meetingRoomId?: string; agenda: AgendaItem[] }
 
 type PanelId = 'topics' | 'details' | 'discussed' | 'notes';
 const DEFAULT_ORDER: PanelId[] = ['topics', 'details', 'discussed', 'notes'];
@@ -77,6 +77,23 @@ export const MeetingsView: React.FC<{ onOpenProject?: (id: string) => void; room
     fetch(`/api/projects/${projectId}/agenda`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then((r) => (r.ok ? load() : setError('Could not save that.')))
       .catch(() => setError('Could not save that.'));
+
+  // Start the meeting now: Chief opens a meeting room with the project's team and leads it through the topics.
+  const [starting, setStarting] = useState('');
+  const startMeeting = async (m: Meeting) => {
+    setStarting(m.projectId);
+    setError('');
+    try {
+      const r = await fetch(`/api/projects/${m.projectId}/meeting/start`, { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Could not start the meeting.');
+      await load();
+      if (d.roomId) onOpenRoom?.(d.roomId);
+    } catch (e: any) {
+      setError(e.message || 'Could not start the meeting.');
+    }
+    setStarting('');
+  };
 
   // The picked project, or the first one until you pick.
   const current = (list || []).find((m) => m.projectId === picked) || (list || [])[0];
@@ -214,6 +231,18 @@ export const MeetingsView: React.FC<{ onOpenProject?: (id: string) => void; room
         <p className="text-sm text-slate-700 dark:text-slate-200">
           {open.length} {open.length === 1 ? 'topic' : 'topics'} to discuss · {done.length} discussed
         </p>
+        <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200" title={m.meetingAt ? 'At the meeting time, Chief opens a meeting room with the team and leads it' : 'Pick a time from the calendar (Schedule) so the AI knows when to start'}>
+          <input type="checkbox" checked={!!m.meetingHost} disabled={!m.meetingAt} onChange={(e) => change(m.projectId, { meetingHost: e.target.checked })} className="h-4 w-4 accent-indigo-600" />
+          AI hosts it at the meeting time{m.meetingHost && m.hostedAt && m.hostedAt === m.meetingAt ? ' (started)' : ''}
+        </label>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => startMeeting(m)} disabled={starting === m.projectId} className={ui.btnPrimary} title="Chief opens a meeting room with the project's team now and leads it through the topics">
+            <MessagesSquare className="h-4 w-4" /> {starting === m.projectId ? 'Starting…' : 'Start meeting now'}
+          </button>
+          {m.meetingRoomId && onOpenRoom && (
+            <button onClick={() => onOpenRoom(m.meetingRoomId!)} className={ui.btn}>Open meeting room</button>
+          )}
+        </div>
         {onOpenProject && (
           <button onClick={() => onOpenProject(m.projectId)} title="Open the project (Chief tab has the chat)" className={ui.btn}>
             <MessagesSquare className="h-4 w-4" /> Chat with Chief

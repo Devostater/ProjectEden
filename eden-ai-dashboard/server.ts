@@ -13,7 +13,7 @@ import { registerPreviewProxy } from './previewProxy';
 import { registerActivityRoutes, logActivity } from './activity';
 import { registerTerminalRoutes } from './terminal';
 import { registerLyraRoutes } from './lyra';
-import { registerChatRoutes } from './chats';
+import { registerChatRoutes, appendToChat } from './chats';
 import { registerRepoRoutes } from './repos';
 import { registerNexusRoutes, runningRooms, type NexusData } from './nexus';
 import { registerControlRoutes } from './control';
@@ -544,6 +544,23 @@ async function startServer() {
 
     const replies = targets.length ? await Promise.all(targets.map((a) => runOne(a))) : [await runOne()];
     if (targets.length) saveStore(store);
+    // Asked by another program on this PC (LYRA calls this with no page origin): keep the exchange as a chat in the
+    // hub, so it shows in Chat on every device and you can follow up there.
+    if (!req.headers.origin) {
+      const from = typeof req.body?.from === 'string' && req.body.from.trim() ? req.body.from.trim().slice(0, 30) : 'LYRA';
+      const asked = history[history.length - 1]?.content || '';
+      try {
+        appendToChat(
+          `ext-${from.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+          `${from}'s questions`,
+          [
+            { role: 'user', author: from, content: asked },
+            ...replies.map((r: any) => ({ role: 'assistant' as const, author: r.author, content: r.content || '', error: r.error, model: r.model, note: r.note || undefined })),
+          ],
+          targets.map((a: Agent) => a.id),
+        );
+      } catch {}
+    }
     res.json({ replies });
   });
 
