@@ -1,14 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
-import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, RefreshCw, Lock, Wrench, ArrowUp, ArrowDown, ChevronsUp } from 'lucide-react';
+import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, RefreshCw, Lock, Wrench, ArrowUp, ArrowDown, ChevronsUp, HelpCircle, Send, Circle, MinusCircle } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
 import { NextUpdate, type CodebaseInfo } from './NextUpdate.tsx';
 import { diagnose, applyFix, canFix, planFixAll, type Fix } from '../updateFixes.ts';
+import { FixAllFailed } from './FixAllFailed.tsx';
 
 interface Job {
   id: string;
   request: string;
-  status: 'queued' | 'working' | 'checking' | 'ready' | 'applied' | 'undone' | 'discarded' | 'failed';
+  status: 'queued' | 'working' | 'checking' | 'ready' | 'applied' | 'undone' | 'discarded' | 'failed' | 'unneeded' | 'question';
   createdAt: string;
   startedAt?: string; // when the AI began working on it
   finishedAt?: string;
@@ -31,7 +32,16 @@ interface Job {
   retryOf?: string; // started by "Try again" from this earlier update
   retriedAs?: string; // "Try again" was pressed: the newer update that took its place
   local?: boolean; // ran on an AI on this PC instead of your Claude plan
+  agent?: 'claude' | 'codex' | 'gemini' | 'local'; // which AI made the change
+  question?: string; // status 'question': what the AI asked
+  // A "Fix all failed" combined update: its parts and the review.
+  bundle?: {
+    items: { key: string; request: string; state: 'waiting' | 'working' | 'done' | 'dropped' | 'unneeded' | 'question'; agent?: Job['agent']; files?: string[]; reason?: string }[];
+    review?: { agent: NonNullable<Job['agent']>; state: 'working' | 'done' | 'skipped'; note?: string };
+  };
 }
+
+const AGENT_NAME: Record<NonNullable<Job['agent']>, string> = { claude: 'Claude', codex: 'Codex', gemini: 'Gemini', local: 'AI on this PC' };
 
 const unsavedNote = (n: number) => `Based on your current files, including ${n} not yet saved to GitHub`;
 
@@ -44,6 +54,8 @@ const STATUS: Record<Job['status'], { label: string; tone: string }> = {
   undone: { label: 'Undone', tone: 'text-slate-500' },
   discarded: { label: 'Discarded', tone: 'text-slate-500' },
   failed: { label: 'Failed', tone: 'text-red-600 dark:text-red-400' },
+  unneeded: { label: 'Already done', tone: 'text-emerald-600 dark:text-emerald-400' },
+  question: { label: 'Needs your answer', tone: 'text-amber-600 dark:text-amber-400' },
 };
 
 // The Updates list is split into three tabs. "Active" includes updates waiting for your review.
@@ -57,6 +69,8 @@ const TAB_OF: Record<Job['status'], UpdatesTab> = {
   applied: 'finished',
   undone: 'finished',
   discarded: 'finished',
+  unneeded: 'finished',
+  question: 'error',
 };
 const TABS: { id: UpdatesTab; label: string; empty: string }[] = [
   { id: 'construction', label: 'Construction', empty: '' },
@@ -79,11 +93,16 @@ const duration = (ms: number) => {
 // How far along an update is, read from its log steps: queued 0%, copy made 15%, AI working 50%, checking 85%.
 const progressOf = (job: Job) => {
   if (job.status === 'queued') return 0;
+  if (job.bundle) {
+    const parts = job.bundle.items.length || 1;
+    const settled = job.bundle.items.filter((it) => it.state !== 'waiting' && it.state !== 'working').length;
+    return job.status === 'checking' ? 95 : Math.min(90, 10 + Math.round((settled / parts) * 75) + (job.bundle.review ? 5 : 0));
+  }
   const restart = job.log.lastIndexOf('Back in the queue: it starts again from the beginning by itself');
   let p = 5;
   for (const l of job.log.slice(restart + 1)) {
     if (l.startsWith('Making a separate copy')) p = Math.max(p, 15);
-    else if (l === 'Claude is working on the copy' || l.startsWith('Running on this PC')) p = Math.max(p, 50);
+    else if (l.endsWith('is working on the copy') || l.startsWith('Running on this PC')) p = Math.max(p, 50);
     else if (l === 'Running the type check' || l === 'Checking the code and running the tests') p = Math.max(p, 85);
   }
   return job.status === 'checking' ? Math.max(p, 85) : p;
@@ -157,8 +176,8 @@ export const UpdatesView: React.FC = () => {
   const [restarting, setRestarting] = useState(false);
   const [tab, setTab] = useState<UpdatesTab>('construction');
   const [checking, setChecking] = useState(false); // "Check for fixes" is reloading everything
-  const [confirmFixAll, setConfirmFixAll] = useState(false); // "Fix all": waiting for "Yes, fix them"
-  const [fixingAll, setFixingAll] = useState(false);
+  const [fixAllOpen, setFixAllOpen] = useState(false); // the "Fix all failed" dialog
+  const [answer, setAnswer] = useState<Record<string, string>>({}); // answers being typed to an AI's question
   const [estimateMs, setEstimateMs] = useState(8 * 60 * 1000); // how long an update usually takes
   const [clock, setClock] = useState(Date.now()); // ticks every second while something runs, so elapsed time counts up
   const live = useRef(false);
@@ -172,7 +191,7 @@ export const UpdatesView: React.FC = () => {
       setLocked('');
       setJobs(d.jobs);
       setBusy(d.busy);
-      setClaudeReady(d.claudeReady);
+      setClaudeReady(!!d.claudeReady || (d.agents || []).some((a: { ok: boolean }) => a.ok)); // any AI that can do updates (Claude, Codex or Gemini)
       setCodebases(d.codebases || []);
       if (typeof d.estimateMs === 'number' && d.estimateMs > 0) setEstimateMs(d.estimateMs);
       setRemote(!!d.remote);
@@ -194,7 +213,7 @@ export const UpdatesView: React.FC = () => {
       const failed = list.filter((j: Job) => j.status === 'failed').length;
       const parts = [];
       if (ready) parts.push(ready + ' ready to apply');
-      if (failed) parts.push(failed + ' failed (' + plan.run + ' can be fixed with Fix all)');
+      if (failed) parts.push(failed + ' failed (Fix all failed redoes them as one update)');
       setNote(parts.length ? 'Checked: ' + parts.join(', ') + '.' : 'Checked: everything is up to date.');
       if (failed) setTab('error'); else if (ready) setTab('active');
     } catch (e: any) { setError("Could not reach the hub: " + e.message); }
@@ -391,44 +410,25 @@ export const UpdatesView: React.FC = () => {
     }
   };
 
-  const fixPlan = planFixAll(jobs, Date.now(), claudeReady);
-  const fixAll = async () => {
-    setConfirmFixAll(false);
+  // The AI asked what was meant: send the owner's answer, which starts the update again with it.
+  const sendAnswer = async (job: Job) => {
     setError('');
     setNote('');
-    setFixingAll(true);
-    let started = 0;
-    let cleared = 0;
-    const problems: string[] = [];
-    // Clear the extra copies first, so the run-again step never trips over a twin still in the list.
-    const ordered = [
-      ...fixPlan.plan.filter((p) => p.fix.action === 'discard'),
-      ...fixPlan.plan.filter((p) => p.fix.action !== 'discard' && p.fix.action !== 'wait' && !p.blocked).reverse(),
-    ];
-    for (const { job, fix } of ordered) {
-      setActing(job.id);
-      try {
-        if (await doFix(job as Job, fix)) started++;
-        else cleared++;
-      } catch (err: any) {
-        problems.push(`"${job.request.length > 50 ? `${job.request.slice(0, 50)}…` : job.request}": ${err.message}`);
-      }
-    }
-    setActing(null);
-    setFixingAll(false);
-    const parts: string[] = [];
-    if (started) parts.push(`started ${started} again (they run one at a time)`);
-    if (cleared) parts.push(`cleared ${cleared} that ${cleared === 1 ? "wasn't" : "weren't"} needed`);
-    if (fixPlan.waiting) parts.push(`left ${fixPlan.waiting} that hit the Claude usage limit, so press Fix all again after it resets`);
-    if (fixPlan.blocked) parts.push(`left ${fixPlan.blocked} that need Claude: sign in to Claude in Account → Connections, then press Fix all again`);
-    if (parts.length) setNote(parts.join(', ').replace(/^./, (c) => c.toUpperCase()) + '.');
-    if (problems.length) setError(`${problems.length} couldn't be fixed: ${problems.join(' ')}`);
-    if (started) {
+    setActing(job.id);
+    try {
+      const d = await post(`/api/updates/${job.id}/answer`, { answer: answer[job.id] || '' });
+      setAnswer((a) => ({ ...a, [job.id]: '' }));
+      setOpenId(d.job.id);
       setTab('active');
       live.current = true;
+      await load();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setActing(null);
     }
-    await load();
   };
+  const failedCount = jobs.filter((j) => j.status === 'failed' || j.status === 'question').length;
 
   if (locked) {
     return (
@@ -517,21 +517,14 @@ export const UpdatesView: React.FC = () => {
             </button>
           </div>
         )}
-        {(tab === 'error' || (tab === 'active' && fixPlan.plan.some((p) => p.job.status === 'ready'))) && fixPlan.plan.length > 0 && (
+        {tab === 'error' && failedCount > 0 && (
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-100">
             <Wrench className="h-5 w-5 shrink-0 text-indigo-500" />
             <span className="min-w-0 flex-1">
-              {fixPlan.run > 0 && <>{fixPlan.run} can run again{fixPlan.fixChecks > 0 && ` (${fixPlan.fixChecks} with what went wrong)`}. </>}
-              {fixPlan.clear > 0 && <>{fixPlan.clear} {fixPlan.clear === 1 ? "isn't" : "aren't"} needed and can be cleared. </>}
-              {fixPlan.waiting > 0 && <>{fixPlan.waiting} must wait for Claude usage to reset. </>}
-              {fixPlan.blocked > 0 && <>{fixPlan.blocked} need you to sign in to Claude first.</>}
+              Redo everything that failed as one update. If one AI can't do a part, the next one tries (Claude, then Codex, then Gemini), and a second AI reviews the result.
             </span>
-            <button
-              onClick={() => setConfirmFixAll(true)}
-              disabled={fixingAll || !!acting || fixPlan.run + fixPlan.clear === 0}
-              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-            >
-              {fixingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />} {fixingAll ? 'Fixing…' : 'Fix all'}
+            <button onClick={() => setFixAllOpen(true)} disabled={!!acting} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50">
+              <Wrench className="h-4 w-4" /> Fix all failed
             </button>
           </div>
         )}
@@ -590,6 +583,8 @@ export const UpdatesView: React.FC = () => {
                   <span className={`mt-0.5 flex items-center gap-1.5 text-xs ${st.tone}`}>
                     {(job.status === 'working' || job.status === 'checking') && <Loader2 className="h-3 w-3 animate-spin" />}
                     {st.label}
+                    {job.agent && !job.bundle && <span className="text-slate-500"> · by {AGENT_NAME[job.agent]}</span>}
+                    {job.bundle && <span className="text-slate-500"> · {job.bundle.items.filter((it) => it.state === 'done').length} of {job.bundle.items.length} parts done</span>}
                     {job.files && <span className="text-slate-500"> · {job.files.length} file{job.files.length === 1 ? '' : 's'}</span>}
                     <span className="text-slate-500"> · {new Date(job.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
                   </span>
@@ -658,14 +653,63 @@ export const UpdatesView: React.FC = () => {
 
                   {job.error && <p className="text-sm text-red-600 dark:text-red-400">{job.error}</p>}
 
+                  {job.status === 'question' && (
+                    <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/30">
+                      <p className="flex items-start gap-2 text-amber-950 dark:text-amber-100">
+                        <HelpCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                        <span>{job.agent ? `${AGENT_NAME[job.agent]} asks` : 'The AI asks'}: {job.question || 'what exactly should change?'}</span>
+                      </p>
+                      <textarea
+                        value={answer[job.id] || ''}
+                        onChange={(e) => setAnswer((a) => ({ ...a, [job.id]: e.target.value }))}
+                        rows={2}
+                        aria-label="Your answer"
+                        placeholder="Your answer: which screen, button or behaviour you mean"
+                        className="w-full rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 dark:border-amber-800 dark:bg-slate-950"
+                      />
+                      <button onClick={() => sendAnswer(job)} disabled={acting === job.id || !(answer[job.id] || '').trim()} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 font-medium text-white hover:bg-amber-500 disabled:opacity-50">
+                        {acting === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Answer and try again
+                      </button>
+                    </div>
+                  )}
+
+                  {job.bundle && (
+                    <div>
+                      <div className="mb-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">Parts of this combined update</div>
+                      <ul className="space-y-1 text-sm">
+                        {job.bundle.items.map((it) => (
+                          <li key={it.key} className="flex items-start gap-2">
+                            {it.state === 'done' ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" /> : it.state === 'working' ? <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-indigo-500" /> : it.state === 'waiting' ? <Circle className="mt-0.5 h-4 w-4 shrink-0 text-slate-300" /> : it.state === 'question' ? <HelpCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" /> : it.state === 'unneeded' ? <MinusCircle className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />}
+                            <span className="min-w-0">
+                              <span className="block text-slate-800 dark:text-slate-100">{it.request.length > 120 ? `${it.request.slice(0, 120)}…` : it.request}</span>
+                              <span className="block text-xs text-slate-500 dark:text-slate-400">
+                                {it.state === 'done' && `Done by ${AGENT_NAME[it.agent || 'claude']}${it.files ? ` · ${it.files.length} file${it.files.length === 1 ? '' : 's'}` : ''}`}
+                                {it.state === 'working' && 'Working on it…'}
+                                {it.state === 'waiting' && 'Waiting its turn'}
+                                {it.state === 'unneeded' && `Already done${it.reason ? `: ${it.reason.slice(0, 160)}` : ''}`}
+                                {it.state === 'question' && `Left out, the AI asked: ${it.reason?.slice(0, 200) || 'what this means'}`}
+                                {it.state === 'dropped' && `Left out: ${it.reason?.slice(0, 220) || 'it could not be made to pass the checks'}`}
+                              </span>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      {job.bundle.review && (
+                        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                          Review by {AGENT_NAME[job.bundle.review.agent]}: {job.bundle.review.state === 'working' ? 'in progress…' : job.bundle.review.note}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {fix && (
                     <div className="flex flex-wrap items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2.5 text-sm dark:border-indigo-800 dark:bg-indigo-950/40">
                       <Wrench className="h-4 w-4 shrink-0 text-indigo-500" />
                       <span className="min-w-0 flex-1 text-indigo-950 dark:text-indigo-100">{fix.reason}</span>
                       <button
                         onClick={() => fixOne(job, fix)}
-                        disabled={acting === job.id || fixingAll || !canFix(job, fix, claudeReady)}
-                        title={canFix(job, fix, claudeReady) ? undefined : 'Sign in to Claude in Account → Connections first'}
+                        disabled={acting === job.id || !canFix(job, fix, claudeReady)}
+                        title={canFix(job, fix, claudeReady) ? undefined : 'No AI is ready: sign in to Claude, or run "codex login" on the PC'}
                         className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium disabled:opacity-50 ${fix.action === 'wait' ? 'border border-indigo-300 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700 dark:text-indigo-200 dark:hover:bg-indigo-900/50' : 'bg-indigo-600 text-white hover:bg-indigo-500'}`}
                       >
                         {acting === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : fix.action === 'discard' ? <Trash2 className="h-4 w-4" /> : <Wrench className="h-4 w-4" />} {fix.label}
@@ -810,42 +854,21 @@ export const UpdatesView: React.FC = () => {
         </div>
       )}
 
-      {confirmFixAll && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setConfirmFixAll(false)}>
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="fix-all-title"
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.key === 'Escape' && setConfirmFixAll(false)}
-            className="w-full max-w-lg rounded-xl bg-white p-5 shadow-xl dark:bg-slate-900"
-          >
-            <h2 id="fix-all-title" className="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-white">
-              <Wrench className="h-5 w-5 text-indigo-500" /> Fix all {fixPlan.plan.length} problem{fixPlan.plan.length === 1 ? '' : 's'}?
-            </h2>
-            <ul className="mt-3 max-h-64 space-y-2 overflow-y-auto text-sm">
-              {fixPlan.plan.map(({ job, fix, blocked }) => (
-                <li key={job.id} className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/60">
-                  <span className="block text-slate-800 dark:text-slate-100">{job.request.length > 90 ? `${job.request.slice(0, 90)}…` : job.request}</span>
-                  <span className={`block text-xs ${fix.action === 'wait' || blocked ? 'text-amber-700 dark:text-amber-300' : 'text-slate-600 dark:text-slate-400'}`}>
-                    {fix.action === 'wait' ? 'Left for now: out of Claude usage.' : blocked ? 'Left for now: sign in to Claude first.' : fix.action === 'discard' ? `Cleared: ${fix.reason}` : `${fix.label}.`}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
-              Updates that run again wait in the queue and go one at a time. Nothing is applied to your code until you press Apply.
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button autoFocus onClick={() => setConfirmFixAll(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
-                Not yet
-              </button>
-              <button onClick={fixAll} disabled={fixPlan.run + fixPlan.clear === 0} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50">
-                <Wrench className="h-4 w-4" /> Yes, fix them
-              </button>
-            </div>
-          </div>
-        </div>
+      {fixAllOpen && (
+        <FixAllFailed
+          codebaseId={target}
+          onClose={() => setFixAllOpen(false)}
+          onStarted={async (id, msg) => {
+            setFixAllOpen(false);
+            setNote(msg);
+            if (id) {
+              setOpenId(id);
+              setTab('active');
+              live.current = true;
+            }
+            await load();
+          }}
+        />
       )}
 
       {confirmAll && (

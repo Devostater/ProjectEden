@@ -2,10 +2,14 @@
 //
 //   1. You describe the change. The hub makes a separate copy of that codebase (a git worktree outside
 //      it, including your uncommitted work), so the running app is never touched while the AI works.
-//   2. Claude Code edits that copy. It may only read and edit files: no commands, no internet.
+//   2. An AI edits that copy: Claude Code first; if it can't (out of usage, stopped, changed nothing), Codex,
+//      then Gemini (see codeAgents.ts). They may only change files in the copy.
 //   3. The hub runs that codebase's checks on the copy and shows you every changed line.
 //   4. Only when you press Apply is the change copied into the real folder. Undo reverses it.
 //   One update runs at a time; any others asked for meanwhile wait in a queue and start by themselves.
+//   If the AI finds the code already does it, the update is closed as "Already done"; if it can't tell what is
+//   meant, it asks, and the owner's answer starts it again. "Fix all failed" redoes every failed request as ONE
+//   combined update, reviewed by a second AI (see processBundle).
 // Every request here must come from the hub's own page, on this computer or on a paired device the owner
 // switched "Code updates" on for (see pairing.ts).
 import { spawn, spawnSync } from 'child_process';
@@ -18,9 +22,10 @@ import { logActivity, recentActivity, fileProblem } from './activity';
 import { holdForApply } from './control';
 import { recheckWaiting } from './updateOverlap';
 import { cliSignedIn, providerUnavailable, recordFailure } from './providers';
+import { AGENT_NAMES, USAGE_LIMIT_ERROR, agentChain, agentStatus, cliPath, noteAgentFailure, runAgent, type AgentId } from './codeAgents';
 import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
-import { localAgentModel, localClaudeEnv, planClaudeEnv } from './localClaude';
+import { localAgentModel, planClaudeEnv } from './localClaude';
 import { mayView, mayManage } from './pairing';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -128,7 +133,20 @@ export function addCodebase(rawName: string, rawDir: string): string {
 
 // ---- Jobs ---------------------------------------------------------------------------------------
 
-type Status = 'queued' | 'working' | 'checking' | 'ready' | 'applied' | 'undone' | 'discarded' | 'failed';
+// unneeded: the AI found the code already does this (closed, nothing to apply).
+// question: the AI couldn't tell what is wanted; the owner's answer starts it again (see /answer).
+type Status = 'queued' | 'working' | 'checking' | 'ready' | 'applied' | 'undone' | 'discarded' | 'failed' | 'unneeded' | 'question';
+
+// One request inside a "Fix all failed" combined update.
+export interface BundleItem {
+  key: string; // the request, tidied, so retries of the same request count as one
+  request: string;
+  sourceIds: string[]; // the earlier updates this request comes from
+  state: 'waiting' | 'working' | 'done' | 'dropped' | 'unneeded' | 'question';
+  agent?: AgentId; // which AI made it
+  files?: string[];
+  reason?: string; // why it was left out, or what the AI asked
+}
 
 interface UpdateJob {
   id: string;
@@ -137,6 +155,9 @@ interface UpdateJob {
   cardId?: string; // when it was asked for from a project card
   local?: boolean; // run Claude Code on a model on this PC (Ollama) instead of your Claude plan
   localModel?: string; // the model it ran on
+  agent?: AgentId; // which AI made the change (Claude, Codex, Gemini or the AI on this PC)
+  question?: string; // status 'question': what the AI asked the owner
+  bundle?: { items: BundleItem[]; review?: { agent: AgentId; state: 'working' | 'done' | 'skipped'; note?: string } };
   status: Status;
   createdAt: string;
   startedAt?: string; // when the AI began working on it (not when it was asked for), to show elapsed time
@@ -189,6 +210,8 @@ for (const j of jobs) {
   interrupted.push(j);
   j.interruptions = (j.interruptions || 0) + 1;
   j.log = [...(j.log || []), 'The hub restarted while this was running'];
+  if (j.bundle) for (const it of j.bundle.items) if (it.state === 'working' || it.state === 'done' || it.state === 'dropped') Object.assign(it, { state: 'waiting', agent: undefined, files: undefined, reason: undefined });
+  if (j.bundle) delete j.bundle.review;
   if (j.interruptions === 1) {
     j.status = 'queued';
     delete j.error;
@@ -348,27 +371,18 @@ function sweepCopies() {
 
 // ---- Running the AI -----------------------------------------------------------------------------
 
-const RULES = (cb: Codebase) => `You are improving ${cb.about}
+// The real folder's path is never given to the AI: it works in the copy, and a path to the original tempts it
+// to edit there (Codex did exactly that in testing).
+const RULES = (cb: Codebase, agent: AgentId = 'claude') => `You are improving ${cb.about.split(cb.dir).join('the code in this folder')}
 Make the change the owner asks for below, carefully and completely.
 Rules:
 - Only edit files inside this folder. Never touch: ${cb.protect.join(', ')}.
 - Follow the existing code style. Keep wording plain for a non-technical owner.
 - Keep it working: if you change something shared, update every place that uses it.
-- You cannot run commands; the hub runs the checks after you finish.
+- ${agent === 'codex' ? 'Only run commands that read files (to look around). Do not install anything, build, or use the network;' : 'You cannot run commands;'} the hub runs the checks after you finish.
+- If the code already does what is asked, change nothing and say so, starting with "Already done:".
+- If you cannot tell what the owner wants, change nothing and ask one short question, starting with "Question:".
 - Finish with a short summary in plain language: what you changed, which files, and anything the owner should check.`;
-
-function describeTool(name: string, input: any): string {
-  const file = input?.file_path || input?.path || input?.pattern || '';
-  const short = String(file).replace(/\\/g, '/').split('/').slice(-2).join('/');
-  if (name === 'Read') return `Reading ${short}`;
-  if (name === 'Edit' || name === 'MultiEdit') return `Editing ${short}`;
-  if (name === 'Write') return `Writing ${short}`;
-  if (name === 'Glob' || name === 'Grep') return `Searching for ${String(file).slice(0, 60)}`;
-  return name;
-}
-
-// The AI said its plan's usage limit is used up (for example Claude's 5-hour limit).
-const USAGE_LIMIT_ERROR = /hit your .*limit|usage limit|rate.?limit|too many requests|\b429\b|quota|credit balance/i;
 
 // The line added to the request when the AI answered with a plan or an "Understood" instead of editing files.
 const MAKE_CHANGE_NOW = 'Make the change now by editing files. Do not reply with a plan or acknowledgement.';
@@ -385,90 +399,134 @@ function looksLikeAcknowledgement(said?: string): boolean {
   return !namesFile && !givesReason;
 }
 
-async function runAI(cb: Codebase, job: UpdateJob, appDir: string, extra = '') {
-  // On this PC when asked for, or when offline (Claude's servers can't be reached then).
-  let local = (job.local || isOffline()) && localAgentModel();
-  // Claude already reported its limit is used up: don't wait for it to fail again, go straight to the AI on this PC.
-  if (!local && providerUnavailable('anthropic') && localAgentModel()) {
-    local = localAgentModel();
-    job.log.push('Claude has hit its usage limit, so a different AI (on this PC) does this update');
-  }
+// When the AI changed nothing, what it said decides what happens next:
+//   question - it couldn't tell what is wanted: the owner is asked (the AI's words are the question)
+//   already  - it found the code already does this: the update is closed as "Already done", not as a failure
+export function readNoChange(said?: string): 'question' | 'already' | null {
+  const t = (said || '').trim();
+  if (!t) return null;
+  // The AIs are told to start with these words (see RULES).
+  if (/^[\s*_#>"']*question\s*:/i.test(t)) return 'question';
+  if (/^[\s*_#>"']*already done\s*:/i.test(t)) return 'already';
+  if (/(can'?t|couldn'?t|could not|cannot|unable to|wasn'?t able to)\s+(tell|work out|figure out|understand|find what|see what|determine)|not sure what|unclear|doesn'?t say (which|what)|does not say (which|what)|which (screen|errors?|one|page|part|button|section)s? (you|it|this)|what (do|did) you mean|please (clarify|tell me|say|describe)|could you (clarify|tell me|say)/i.test(t)) return 'question';
+  if (/\balready\b|no changes? (is |are |were )?(needed|required)|nothing (needed|needs|to change)|(is|are) (already )?in place|does(n'?t| not) need (any )?chang/i.test(t)) return 'already';
+  return null;
+}
+
+// Runs one AI on the copy. Its progress goes into the update's log, its last words into lastAiMessage.
+async function runOne(agent: AgentId, cb: Codebase, job: UpdateJob, appDir: string, request: string): Promise<string> {
+  job.agent = agent;
+  if (agent === 'local') job.localModel = localAgentModel() || undefined;
+  job.lastAiMessage = undefined; // a fresh run starts without the old message
+  save();
+  const before = realFolderPrint(cb);
   try {
-    await runAIOnce(cb, job, appDir, local || null, extra);
-  } catch (err: any) {
-    // Claude's limit ran out part-way: carry on with the AI on this PC instead of failing the update.
-    if (!local && USAGE_LIMIT_ERROR.test(String(err?.message || ''))) recordFailure('anthropic', String(err.message)); // remember it, so nothing else asks Claude until it resets
-    const other = !local && USAGE_LIMIT_ERROR.test(String(err?.message || '')) && localAgentModel();
-    if (!other) throw err;
-    job.log.push('Claude hit its usage limit, so a different AI (on this PC) is taking over');
-    logActivity('info', `Claude hit its usage limit during a code update, so an AI on this PC (${other}) is finishing it.`);
-    save();
-    await runAIOnce(cb, job, appDir, other, extra);
-  }
-}
-
-async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: string | null, extra = '') {
-  if (local) {
-    job.localModel = local;
-    job.log.push(`Running on this PC (${local})`);
-  }
-  job.summary = undefined;
-  job.lastAiMessage = undefined; // a fresh run (for example "Try again") starts without the old message
-  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--tools', 'Read,Edit,Write,Glob,Grep', '--model', local ? 'sonnet' : 'claude-sonnet-5-5'];
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(['claude', ...args].join(' '), { cwd: appDir, shell: true, windowsHide: true, env: local ? localClaudeEnv(local) : planClaudeEnv() });
-    let buffer = '';
-    let errText = '';
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error('The AI took longer than 20 minutes and was stopped.'));
-    }, TIMEOUT_MS);
-    child.stdout.on('data', (d) => {
-      buffer += d.toString();
-      let nl: number;
-      while ((nl = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line) continue;
-        try {
-          const ev = JSON.parse(line);
-          if (ev.type === 'assistant') {
-            for (const part of ev.message?.content || []) if (part.type === 'tool_use') job.log.push(describeTool(part.name, part.input));
-            const said = (ev.message?.content || [])
-              .filter((part: any) => part.type === 'text' && typeof part.text === 'string')
-              .map((part: any) => part.text)
-              .join('\n')
-              .trim();
-            if (said) job.lastAiMessage = said.length > 400 ? `${said.slice(0, 400).trim()}…` : said;
-            if (job.log.length > 300) job.log.splice(0, job.log.length - 300);
-            save();
-          } else if (ev.type === 'result') {
-            if (ev.is_error) errText = ev.result || 'The AI stopped with an error.';
-            else job.summary = String(ev.result || '').trim();
-          }
-        } catch {}
-      }
-    });
-    // Warnings (the model-name note, the connectors note) are not failures: only keep real error lines.
-    child.stderr.on('data', (d) => (errText += d.toString().split(/\r?\n/).filter((l: string) => l.trim() && !/^\s*⚠|unrecognized_model|doesn't recognize the model|connectors are disabled/i.test(l)).map((l: string) => l + '\n').join('')));
-    child.on('error', (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (code === 0 && !errText) resolve();
-      else reject(new Error(errText.trim().split('\n').slice(-2).join(' ') || `Claude Code exited with ${code}`));
-    });
-    child.stdin.end(`${RULES(cb)}\n\nThe owner's request:\n${job.request}${extra ? `\n\n${extra}` : ''}`);
+    return await runAgent(agent, {
+    cwd: appDir,
+    prompt: `${RULES(cb, agent)}\n- Your working folder is ${appDir}. Make every edit there, using paths inside it. Never edit files anywhere else.\n\nThe owner's request:\n${request}`,
+    timeoutMs: TIMEOUT_MS,
+    log: (line) => {
+      job.log.push(line);
+      if (job.log.length > 300) job.log.splice(0, job.log.length - 300);
+      save();
+    },
+    said: (text) => {
+      job.lastAiMessage = text.length > 400 ? `${text.slice(0, 400).trim()}…` : text;
+      save();
+    },
   });
+  } finally {
+    // Safety net: the AI may only change the copy. If the real folder changed while it worked, say so loudly.
+    const after = realFolderPrint(cb);
+    if (before !== null && after !== null && before !== after) {
+      const files = changedRealFiles(cb);
+      job.log.push(`Warning: files in the real ${cb.name} folder changed while ${AGENT_NAMES[agent]} was working: ${files || 'see git status'}`);
+      logActivity('error', `While ${AGENT_NAMES[agent]} worked on a code update, files in the real ${cb.name} folder changed (${files || 'see git status'}). If you didn't edit them yourself, check them in git before going on.`);
+      save();
+    }
+  }
 }
 
-function readChange(cb: Codebase, job: UpdateJob, dir: string) {
+// A fingerprint of the real codebase folder's uncommitted state (which files differ, and the whole difference),
+// to notice edits made outside the copy. null when git can't tell.
+function realFolderPrint(cb: Codebase): string | null {
+  try {
+    const root = repoRoot(cb);
+    const spec = pathspec(relOf(cb));
+    return git(['status', '--porcelain', '--untracked-files=all', ...spec], root) + git(['diff', 'HEAD', ...spec], root);
+  } catch {
+    return null;
+  }
+}
+function changedRealFiles(cb: Codebase): string {
+  try {
+    return git(['status', '--porcelain', ...pathspec(relOf(cb))], repoRoot(cb))
+      .split('\n')
+      .filter(Boolean)
+      .slice(0, 8)
+      .map((l) => l.slice(3))
+      .join(', ');
+  } catch {
+    return '';
+  }
+}
+
+type Attempt = { result: 'changed'; agent: AgentId } | { result: 'question' | 'already'; agent: AgentId; said: string } | { result: 'failed'; reason: string };
+
+// Tries the AIs in turn (Claude, then Codex, then Gemini) until one makes the change. An AI that errors (out of
+// usage, not reachable) or edits nothing without saying why hands over to the next one. One that says the code
+// already does it, or asks what is meant, ends the run: another AI would only say the same.
+// `changed()` reads what is different in the copy now; `skip` leaves an AI out (for a second opinion).
+async function attemptChange(cb: Codebase, job: UpdateJob, appDir: string, request: string, changed: () => boolean, opts: { skip?: AgentId[]; reset?: () => void } = {}): Promise<Attempt> {
+  const chain = agentChain(job.local).filter((a) => !opts.skip?.includes(a));
+  if (!chain.length) return { result: 'failed', reason: noAgentMessage() };
+  const reasons: string[] = [];
+  for (const [i, agent] of chain.entries()) {
+    const next = chain[i + 1];
+    job.log.push(`${AGENT_NAMES[agent]} is working on the copy`);
+    try {
+      job.summary = await runOne(agent, cb, job, appDir, request);
+      if (!changed() && looksLikeAcknowledgement(job.lastAiMessage)) {
+        // The AI only said "Understood" or made a plan: ask once more, telling it to edit the files this time.
+        job.log.push(`${AGENT_NAMES[agent]} replied without changing anything, so it is asked once more to make the change`);
+        job.summary = await runOne(agent, cb, job, appDir, `${request}\n\n${MAKE_CHANGE_NOW}`);
+      }
+      if (changed()) return { result: 'changed', agent };
+      const kind = readNoChange(job.lastAiMessage);
+      if (kind) return { result: kind, agent, said: job.lastAiMessage || '' };
+      reasons.push(`${AGENT_NAMES[agent]} changed nothing`);
+      if (next) job.log.push(`${AGENT_NAMES[agent]} changed nothing, so ${AGENT_NAMES[next]} tries`);
+    } catch (err: any) {
+      const message = String(err?.message || err);
+      noteAgentFailure(agent, message);
+      // Anything it half-wrote before stopping is put back, so the next AI starts clean.
+      try {
+        opts.reset?.();
+      } catch {}
+      const why = USAGE_LIMIT_ERROR.test(message) ? 'is out of usage for now' : `stopped (${message.slice(0, 160)})`;
+      reasons.push(`${AGENT_NAMES[agent]} ${why}`);
+      if (next) {
+        job.log.push(`${AGENT_NAMES[agent]} ${why}, so ${AGENT_NAMES[next]} takes over`);
+        logActivity('info', `${AGENT_NAMES[agent]} ${why} during a code update, so ${AGENT_NAMES[next]} is taking over.`);
+      }
+    }
+    save();
+  }
+  return { result: 'failed', reason: reasons.length === 1 && reasons[0].endsWith('changed nothing') ? `${NO_CHANGE_MESSAGE}${job.lastAiMessage ? ` It said: "${job.lastAiMessage}"` : ''}` : `No AI could make this change: ${reasons.join('; ')}.` };
+}
+
+function noAgentMessage(): string {
+  const why = agentStatus()
+    .map((a) => `${a.name}: ${a.ok ? 'ready' : a.why}`)
+    .join('; ');
+  return `No AI can do code updates right now (${why}). Sign in to Claude in Account → Connections, or run "codex login" once on the PC.`;
+}
+
+function readChange(cb: Codebase, job: UpdateJob, dir: string, base = 'HEAD') {
   const rel = relOf(cb);
   git(['add', '-A', ...pathspec(rel)], dir);
-  job.diff = git(['diff', '--cached', '--binary', 'HEAD', ...pathspec(rel)], dir);
-  const stat = git(['diff', '--cached', '--numstat', 'HEAD', ...pathspec(rel)], dir);
+  job.diff = git(['diff', '--cached', '--binary', base, ...pathspec(rel)], dir);
+  const stat = git(['diff', '--cached', '--numstat', base, ...pathspec(rel)], dir);
   job.files = stat
     .split('\n')
     .filter(Boolean)
@@ -615,32 +673,9 @@ async function process_(job: UpdateJob) {
         baselineTypeProblems = (await runTypeCheck(copy.appDir)).problems;
         if (baselineTypeProblems.length) job.log.push(`Already wrong before any change: ${baselineTypeProblems.length} type problem${baselineTypeProblems.length === 1 ? '' : 's'}`);
       }
-      job.log.push('Claude is working on the copy');
-      save();
-      await runAI(cb, job, copy.appDir);
-      readChange(cb, job, copy.dir);
-      if (!job.files?.length && looksLikeAcknowledgement(job.lastAiMessage)) {
-        // The AI only said "Understood" or made a plan: run it once more, telling it to edit the files this time.
-        job.log.push('The AI replied without changing anything, so it is being asked once more to make the change');
-        save();
-        await runAI(cb, job, copy.appDir, MAKE_CHANGE_NOW);
-        readChange(cb, job, copy.dir);
-        if (!job.files?.length) throw new Error(NO_CHANGE_MESSAGE); // the raw AI text is left out on purpose
-      }
-      if (!job.files?.length) throw new Error(`The AI finished without changing anything.${job.lastAiMessage ? ` It said: "${job.lastAiMessage}"` : ''}`);
-      job.status = 'checking';
-      job.log.push(cb.check === 'tsc' ? 'Running the type check' : 'Checking the code and running the tests');
-      save();
-      job.check = await runCheck(cb, copy.appDir, job.files.map((f) => f.path), baselineFailed, baselineTypeProblems);
-      job.status = 'ready';
-      const fileCount = `${job.files.length} file${job.files.length === 1 ? '' : 's'}`;
-      if (job.check.ok) {
-        logActivity('done', `Code update ready for review (${cb.name}, ${fileCount}).`);
-      } else {
-        // Say what the check found and what to do, not only that it failed.
-        const firstProblem = job.check.output.split('\n').map((l) => l.trim()).find((l) => /error|fail|broke|syntax/i.test(l)) || '';
-        logActivity('error', `Code update ready for review (${cb.name}, ${fileCount}) but its checks failed${firstProblem ? ` (${firstProblem.slice(0, 160)})` : ''}. Open it and press "Ask the AI to fix it", or discard it.`, { reason: job.check.output.slice(-500), retry: { kind: 'update', id: job.id } });
-      }
+      const baseline = { failed: baselineFailed, types: baselineTypeProblems };
+      if (job.bundle) await processBundle(cb, job, copy, baseline);
+      else await processSingle(cb, job, copy, baseline);
     } finally {
       removeCopy(cb, job.id);
     }
@@ -654,6 +689,193 @@ async function process_(job: UpdateJob) {
     busy = false;
     startNext();
   }
+}
+
+type Copy = { dir: string; appDir: string };
+type Baseline = { failed: string[]; types: string[] };
+
+// What is different in the copy from `base` right now (staged, so new files count too).
+function changedFiles(cb: Codebase, dir: string, base = 'HEAD'): string[] {
+  const rel = relOf(cb);
+  git(['add', '-A', ...pathspec(rel)], dir);
+  return git(['diff', '--cached', '--name-only', base, ...pathspec(rel)], dir).split('\n').filter(Boolean);
+}
+
+// The AI said the code already does it, or asked what is meant: neither is a failure.
+function closeWithoutChange(cb: Codebase, job: UpdateJob, a: { result: 'question' | 'already'; agent: AgentId; said: string }) {
+  const said = a.said.replace(/^\s*(already done|question)\s*:\s*/i, '').trim();
+  if (a.result === 'already') {
+    job.status = 'unneeded';
+    job.summary = said;
+    logActivity('info', `Code update not needed (${cb.name}): ${AGENT_NAMES[a.agent]} found the code already does this. ${job.request.slice(0, 80)}`);
+  } else {
+    job.status = 'question';
+    job.question = said;
+    logActivity('info', `Code update needs your answer (${cb.name}): ${said.slice(0, 160)}`);
+  }
+}
+
+async function processSingle(cb: Codebase, job: UpdateJob, copy: Copy, baseline: Baseline) {
+  const a = await attemptChange(cb, job, copy.appDir, job.request, () => changedFiles(cb, copy.dir).length > 0, { reset: () => resetTo(cb, copy.dir, 'HEAD') });
+  if (a.result === 'failed') throw new Error(a.reason);
+  if (a.result !== 'changed') return closeWithoutChange(cb, job, a);
+  readChange(cb, job, copy.dir);
+  job.status = 'checking';
+  job.log.push(cb.check === 'tsc' ? 'Running the type check' : 'Checking the code and running the tests');
+  save();
+  job.check = await runCheck(cb, copy.appDir, job.files!.map((f) => f.path), baseline.failed, baseline.types);
+  job.status = 'ready';
+  const fileCount = `${job.files!.length} file${job.files!.length === 1 ? '' : 's'}`;
+  if (job.check.ok) {
+    logActivity('done', `Code update ready for review (${cb.name}, ${fileCount}, by ${AGENT_NAMES[a.agent]}).`);
+  } else {
+    // Say what the check found and what to do, not only that it failed.
+    const firstProblem = job.check.output.split('\n').map((l) => l.trim()).find((l) => /error|fail|broke|syntax/i.test(l)) || '';
+    logActivity('error', `Code update ready for review (${cb.name}, ${fileCount}) but its checks failed${firstProblem ? ` (${firstProblem.slice(0, 160)})` : ''}. Open it and press "Ask the AI to fix it", or discard it.`, { reason: job.check.output.slice(-500), retry: { kind: 'update', id: job.id } });
+  }
+}
+
+// ---- Fix all failed: one combined update -----------------------------------------------------------
+// Every request that never got applied is redone, one after another, in ONE copy of the code, so each part
+// builds on the ones before it. Each part goes through the AIs in turn and must pass the checks to stay in;
+// a part that can't be made to pass is taken out again (its files put back) and listed with the reason.
+// Then a different AI reviews the whole combined change and fixes what it finds. The owner gets one update
+// to look at and Apply (and Undo, which reverses all of it).
+
+const commitStep = (cb: Codebase, dir: string, message: string) => {
+  git(['add', '-A', ...pathspec(relOf(cb))], dir);
+  git(['-c', 'user.name=Eden Hub', '-c', 'user.email=eden-hub@localhost', 'commit', '--no-verify', '-q', '--allow-empty', '-m', message], dir);
+};
+// Puts the copy back exactly as it was at `commit` (the shared-packages link is left alone).
+const resetTo = (cb: Codebase, dir: string, commit: string) => {
+  git(['reset', '-q', '--hard', commit], dir);
+  git(['clean', '-fdq', '-e', 'node_modules', ...pathspec(relOf(cb))], dir);
+};
+const headOf = (dir: string) => git(['rev-parse', 'HEAD'], dir).trim();
+const firstProblem = (output: string) => output.split('\n').map((l) => l.trim()).find((l) => /^- |error|fail|broke|syntax/i.test(l))?.replace(/^- /, '') || 'its checks failed';
+
+async function processBundle(cb: Codebase, job: UpdateJob, copy: Copy, baseline: Baseline) {
+  const bundle = job.bundle!;
+  const start = headOf(copy.dir);
+  const total = bundle.items.length;
+  for (const [i, item] of bundle.items.entries()) {
+    if (item.state !== 'waiting') continue;
+    item.state = 'working';
+    job.log.push(`Part ${i + 1} of ${total}: ${item.request.slice(0, 90)}`);
+    save();
+    const before = headOf(copy.dir);
+    const context = `${item.request}\n\n(This is part ${i + 1} of ${total} of one combined update. Earlier parts are already in the code: keep them working.)`;
+    const tried: AgentId[] = [];
+    let reason = '';
+    // Each AI gets one go plus one fix-up round for failed checks; a part that still fails goes to the next AI.
+    while (item.state === 'working') {
+      const a = await attemptChange(cb, job, copy.appDir, context, () => changedFiles(cb, copy.dir).length > 0, { skip: tried, reset: () => resetTo(cb, copy.dir, before) });
+      if (a.result === 'failed') {
+        resetTo(cb, copy.dir, before);
+        item.state = 'dropped';
+        item.reason = reason || a.reason;
+        break;
+      }
+      if (a.result !== 'changed') {
+        resetTo(cb, copy.dir, before);
+        item.state = a.result === 'already' ? 'unneeded' : 'question';
+        item.agent = a.agent;
+        item.reason = a.said.replace(/^\s*(already done|question)\s*:\s*/i, '').trim();
+        break;
+      }
+      tried.push(a.agent);
+      let files = changedFiles(cb, copy.dir, before);
+      job.log.push(`Checking part ${i + 1}`);
+      save();
+      let check = await runCheck(cb, copy.appDir, files, baseline.failed, baseline.types);
+      if (!check.ok) {
+        job.log.push(`Part ${i + 1} failed its checks, so ${AGENT_NAMES[a.agent]} is asked to fix it`);
+        save();
+        try {
+          await runOne(a.agent, cb, job, copy.appDir, `${context}\n\nYour change for this failed the checks. Fix the problems below, keeping the change:\n${check.output.slice(-3000)}`);
+        } catch (err: any) {
+          noteAgentFailure(a.agent, String(err?.message || err));
+        }
+        files = changedFiles(cb, copy.dir, before);
+        check = await runCheck(cb, copy.appDir, files, baseline.failed, baseline.types);
+      }
+      if (check.ok) {
+        commitStep(cb, copy.dir, `Part ${i + 1}: ${item.request.slice(0, 60)}`);
+        item.state = 'done';
+        item.agent = a.agent;
+        item.files = files;
+        job.log.push(`Part ${i + 1} done by ${AGENT_NAMES[a.agent]} (${files.length} file${files.length === 1 ? '' : 's'})`);
+      } else {
+        reason = `${AGENT_NAMES[a.agent]}'s change failed the checks: ${firstProblem(check.output)}`;
+        job.log.push(`Part ${i + 1}: ${reason}. Taking it out again`);
+        resetTo(cb, copy.dir, before);
+      }
+      save();
+    }
+  }
+
+  const done = bundle.items.filter((it) => it.state === 'done');
+  if (!done.length) {
+    const why = bundle.items.map((it) => `"${it.request.slice(0, 50)}": ${it.state === 'unneeded' ? 'already done' : it.state === 'question' ? 'needs your answer' : it.reason}`).join('; ');
+    if (bundle.items.every((it) => it.state === 'unneeded' || it.state === 'question')) {
+      job.status = 'unneeded';
+      job.summary = `Nothing to change: ${why}`;
+      return;
+    }
+    throw new Error(`None of the ${total} could be done. ${why}`);
+  }
+
+  // Review: a different AI from the one that wrote most of it, so it sees the work with fresh eyes.
+  const authors = done.map((it) => it.agent!);
+  const main = authors.sort((x, y) => authors.filter((a) => a === y).length - authors.filter((a) => a === x).length)[0];
+  const chain = agentChain(job.local);
+  const reviewer = chain.find((a) => a !== main) || chain[0];
+  if (reviewer) {
+    bundle.review = { agent: reviewer, state: 'working' };
+    job.log.push(`${AGENT_NAMES[reviewer]} is reviewing the combined change`);
+    save();
+    const before = headOf(copy.dir);
+    const combined = git(['diff', start, 'HEAD', ...pathspec(relOf(cb))], copy.dir);
+    const prompt = `Review this combined update. It does these things:\n${done.map((it, n) => `${n + 1}. ${it.request}`).join('\n')}\n\nThe whole change (a git diff against the code before it):\n${combined.length > 60000 ? `${combined.slice(0, 60000)}\n…(cut short; read the files for the rest)` : combined}\n\nLook for bugs, parts that clash with each other, and anything left half-done. Fix real problems by editing the files. Do not rewrite working code or add new features. If you find nothing to fix, change nothing and say "No problems found".`;
+    try {
+      await runOne(reviewer, cb, job, copy.appDir, prompt);
+      const files = changedFiles(cb, copy.dir, before);
+      if (!files.length) {
+        bundle.review = { agent: reviewer, state: 'done', note: job.lastAiMessage || 'No problems found.' };
+      } else {
+        const check = await runCheck(cb, copy.appDir, files, baseline.failed, baseline.types);
+        if (check.ok) {
+          commitStep(cb, copy.dir, 'Review fixes');
+          bundle.review = { agent: reviewer, state: 'done', note: `Fixed ${files.length} file${files.length === 1 ? '' : 's'}. ${job.lastAiMessage || ''}`.trim() };
+        } else {
+          resetTo(cb, copy.dir, before);
+          bundle.review = { agent: reviewer, state: 'skipped', note: `Its fixes failed the checks (${firstProblem(check.output)}), so they were left out.` };
+        }
+      }
+    } catch (err: any) {
+      noteAgentFailure(reviewer, String(err?.message || err));
+      resetTo(cb, copy.dir, before);
+      bundle.review = { agent: reviewer, state: 'skipped', note: `The review could not run: ${String(err?.message || err).slice(0, 200)}` };
+    }
+    job.log.push(`Review: ${bundle.review.note?.slice(0, 160)}`);
+    save();
+  }
+
+  // The result: one change from where the copy started, checked as a whole.
+  readChange(cb, job, copy.dir, start);
+  job.status = 'checking';
+  job.log.push(cb.check === 'tsc' ? 'Running the type check on the combined change' : 'Checking the combined change');
+  save();
+  job.check = await runCheck(cb, copy.appDir, job.files!.map((f) => f.path), baseline.failed, baseline.types);
+  job.status = 'ready';
+  const skipped = bundle.items.filter((it) => it.state !== 'done');
+  job.summary = [
+    `Combined update with ${done.length} of ${total} request${total === 1 ? '' : 's'}:`,
+    ...done.map((it) => `- ${it.request.slice(0, 120)} (by ${AGENT_NAMES[it.agent!]})`),
+    ...(skipped.length ? ['', 'Left out:', ...skipped.map((it) => `- ${it.request.slice(0, 120)}: ${it.state === 'unneeded' ? 'already done' : it.state === 'question' ? `needs your answer (${it.reason})` : it.reason}`)] : []),
+    ...(bundle.review ? ['', `Review by ${AGENT_NAMES[bundle.review.agent]}: ${bundle.review.note}`] : []),
+  ].join('\n');
+  logActivity(job.check.ok ? 'done' : 'error', `Fix all failed: combined update ready for review (${done.length} of ${total} done${skipped.length ? `, ${skipped.length} left out` : ''})${job.check.ok ? '' : ', but its final check failed'}.`);
 }
 
 // Updates asked for while another is running wait here, in the order they were asked, and start by themselves.
@@ -842,7 +1064,7 @@ export function requestCodeUpdate(codebaseId: string, request: string, cardId?: 
   if (!cb) throw new Error('That codebase is not set up in the hub.');
   // Uses the saved sign-in check (it refreshes itself every so often) so adding to the queue is quick and never freezes the hub.
   if (local && !localAgentModel()) throw new Error('No AI on this PC can do code updates yet. Start Ollama (gpt-oss-20b or a coder model).');
-  if (!local && !isOffline() && !cliSignedIn('anthropic')) throw new Error('Code updates use Claude Code. Sign in to Claude in Account → Connections first.');
+  if (!local && !isOffline() && !agentChain().length) throw new Error(noAgentMessage());
   // If another update is running, this one waits in the queue.
   const job: UpdateJob = { id: `upd-${Date.now().toString(36)}`, codebaseId: cb.id, request, cardId, local: local || undefined, status: 'queued', createdAt: now(), log: [] };
   job.uncommitted = countUncommitted(cb); // shown right away; refreshed when the copy is actually made
@@ -901,6 +1123,89 @@ function recheckAfter(changed: UpdateJob, cb: Codebase) {
   }
 }
 
+// ---- Collecting what failed ------------------------------------------------------------------------
+// The same request can fail several times ("Try again" makes a fresh update each time, with notes added under
+// it). Retries are grouped back into one request by their text, and a request counts as settled once any
+// update for it was applied, is ready or running, was found already done, or is part of a combined update.
+
+const ANSWER_HEADER = '\n\nThe owner answered your question';
+const baseRequest = (r: string) => r.split('\n\nLast time this failed:')[0].split(ANSWER_HEADER)[0].trim();
+const requestKey = (r: string) => baseRequest(r).toLowerCase().replace(/\s+/g, ' ').slice(0, 300);
+const withAnswer = (request: string, question: string, answer: string) => `${baseRequest(request)}${ANSWER_HEADER} ("${question.slice(0, 300)}"): ${answer.slice(0, 1500)}`;
+// A failure where the AI wrote nothing: what it said is the reason (it may be "already done" or a question).
+const saidNothingChanged = (j: UpdateJob) => /without changing anything|did not make any change/i.test(j.error || '');
+
+export interface FailedGroup {
+  key: string;
+  request: string;
+  ids: string[]; // every update for this request, oldest first
+  attempts: number;
+  lastError?: string;
+  said?: string; // already done: what the AI said; question: what it asked
+}
+
+export function collectFailed(codebaseId = 'hub'): { retry: FailedGroup[]; already: FailedGroup[]; questions: FailedGroup[] } {
+  const mine = jobs.filter((j) => j.codebaseId === codebaseId && !j.bundle);
+  const settled = new Set<string>();
+  for (const j of mine) if (['queued', 'working', 'checking', 'ready', 'applied', 'unneeded'].includes(j.status)) settled.add(requestKey(j.request));
+  for (const b of jobs.filter((j) => j.bundle && j.codebaseId === codebaseId && ['queued', 'working', 'checking', 'ready', 'applied'].includes(j.status))) {
+    for (const it of b.bundle!.items) if (it.state === 'waiting' || it.state === 'working' || it.state === 'done') settled.add(it.key);
+  }
+  const groups = new Map<string, UpdateJob[]>();
+  for (const j of mine) {
+    // Discarded by the owner without an error (an update they looked at and didn't want) isn't a failure.
+    const failedLike = j.status === 'failed' || j.status === 'question' || (j.status === 'discarded' && (!!j.error || !!j.retriedAs));
+    const k = requestKey(j.request);
+    if (!failedLike || !k || settled.has(k)) continue;
+    groups.set(k, [...(groups.get(k) || []), j]);
+  }
+  const out = { retry: [] as FailedGroup[], already: [] as FailedGroup[], questions: [] as FailedGroup[] };
+  for (const [key, list] of groups) {
+    list.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const last = list[list.length - 1];
+    const g: FailedGroup = { key, request: baseRequest(last.request), ids: list.map((j) => j.id), attempts: list.length, lastError: last.error };
+    const kind = last.status === 'question' ? 'question' : saidNothingChanged(last) ? readNoChange(last.lastAiMessage) : null;
+    if (kind === 'question') out.questions.push({ ...g, said: last.question || last.lastAiMessage });
+    else if (kind === 'already') out.already.push({ ...g, said: last.lastAiMessage });
+    else out.retry.push(g);
+  }
+  return out;
+}
+
+// Puts the old updates of a request out of the Error list, pointing at what took their place.
+function settleSources(ids: string[], status: Status, by?: string, summary?: string) {
+  for (const id of ids) {
+    const j = jobs.find((x) => x.id === id);
+    if (!j || !['failed', 'discarded', 'question'].includes(j.status)) continue;
+    j.status = status;
+    if (by) j.retriedAs = by;
+    if (summary) j.summary = summary;
+  }
+}
+
+export function startBundle(codebaseId: string, items: BundleItem[], sourceIds: string[]): string {
+  const cb = findCodebase(codebaseId);
+  if (!cb) throw new Error('That codebase is not set up in the hub.');
+  if (!agentChain().length) throw new Error(noAgentMessage());
+  const id = `upd-${Date.now().toString(36)}`;
+  const job: UpdateJob = {
+    id,
+    codebaseId: cb.id,
+    request: `Fix all failed: redo ${items.length} request${items.length === 1 ? '' : 's'} as one update`,
+    status: 'queued',
+    createdAt: now(),
+    log: [],
+    bundle: { items },
+  };
+  job.uncommitted = countUncommitted(cb);
+  jobs.push(job);
+  settleSources(sourceIds, 'discarded', id);
+  logActivity('work', `Fix all failed: ${items.length} request${items.length === 1 ? '' : 's'} queued as one combined update (${cb.name}).`);
+  save();
+  startNext();
+  return id;
+}
+
 export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: { cardId?: string; request: string; codebase: string; files: number; needsRestart: boolean; restartHint: string }) => void } = {}) {
   onApplied = (job, cb) =>
     hooks.onApplied?.({ cardId: job.cardId, request: job.request, codebase: cb.name, files: job.files?.length || 0, needsRestart: !!job.needsRestart, restartHint: cb.restartHint });
@@ -957,6 +1262,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
       }),
       busy,
       claudeReady: cliSignedIn('anthropic'),
+      agents: agentStatus(), // which AIs can do updates right now (Claude, Codex, Gemini), in the order they are tried
       restartPending,
       remote: !isLocal(req), // a paired device: the page asks before applying, so a stray tap can't change code
     });
@@ -1085,6 +1391,72 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     res.json({ ok: true, needsRestart: !!job.needsRestart, restartHint: cb.restartHint });
   });
 
+  // Fix all failed, step 1: what would happen. Requests the AI found already done are closed, ones where it
+  // asked a question wait for the owner's answer, and the rest are redone together as one update.
+  app.get('/api/updates/fix-all', (req, res) => {
+    if (!mayView(req)) return res.status(403).json({ error: LOCKED });
+    const codebaseId = String(req.query.codebaseId || 'hub');
+    res.json({ ...collectFailed(codebaseId), agents: agentStatus(), chain: agentChain().map((a) => AGENT_NAMES[a]) });
+  });
+
+  // Fix all failed, step 2: go. `answers`: { [key]: answer } for the questions; `skip`: keys to leave out.
+  app.post('/api/updates/fix-all', (req, res) => {
+    const denied = guard(req);
+    if (denied) return res.status(403).json({ error: denied });
+    const codebaseId = String(req.body?.codebaseId || 'hub');
+    const answers: Record<string, string> = req.body?.answers && typeof req.body.answers === 'object' ? req.body.answers : {};
+    const skip = new Set<string>(Array.isArray(req.body?.skip) ? req.body.skip.map(String) : []);
+    const found = collectFailed(codebaseId);
+    // Already done: closed now, so they leave the Error list.
+    for (const g of found.already) settleSources(g.ids, 'unneeded', undefined, `Already done: ${g.said || 'the AI found the code already does this.'}`);
+    const items: BundleItem[] = [];
+    const sources: string[] = [];
+    for (const g of found.retry) {
+      if (skip.has(g.key)) continue;
+      items.push({ key: g.key, request: g.request, sourceIds: g.ids, state: 'waiting' });
+      sources.push(...g.ids);
+    }
+    let unanswered = 0;
+    for (const g of found.questions) {
+      const answer = typeof answers[g.key] === 'string' ? answers[g.key].trim() : '';
+      if (!answer || skip.has(g.key)) {
+        unanswered++;
+        continue;
+      }
+      items.push({ key: g.key, request: withAnswer(g.request, g.said || '', answer), sourceIds: g.ids, state: 'waiting' });
+      sources.push(...g.ids);
+    }
+    save();
+    if (!items.length) return res.json({ ok: true, closed: found.already.length, unanswered, started: 0 });
+    try {
+      const id = startBundle(codebaseId, items, sources);
+      res.json({ ok: true, job: { id }, closed: found.already.length, unanswered, started: items.length });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // The AI asked what was meant: the owner's answer starts the update again with the answer added.
+  app.post('/api/updates/:id/answer', (req, res) => {
+    const denied = guard(req);
+    if (denied) return res.status(403).json({ error: denied });
+    const job = jobs.find((j) => j.id === req.params.id);
+    if (!job || job.status !== 'question') return res.status(400).json({ error: 'That update is not waiting for an answer.' });
+    const answer = typeof req.body?.answer === 'string' ? req.body.answer.trim() : '';
+    if (!answer) return res.status(400).json({ error: 'Write your answer first.' });
+    try {
+      const id = requestCodeUpdate(job.codebaseId, withAnswer(job.request, job.question || '', answer), job.cardId, job.local === true);
+      const fresh = jobs.find((j) => j.id === id);
+      if (fresh) fresh.retryOf = job.id;
+      job.retriedAs = id;
+      job.status = 'discarded';
+      save();
+      res.json({ job: { id } });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // Try an update again: starts a fresh update with the same request and codebase, linked to the old one.
   // Allowed for failed and discarded updates, and for ones that no longer fit the code (Apply said the code
   // has changed). The fresh update works on a new copy of the code as it is now (see makeCopy), and the old
@@ -1109,6 +1481,19 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     const already = job.retriedAs && jobs.find((j) => j.id === job.retriedAs);
     if (already && already.status !== 'failed' && already.status !== 'discarded') {
       return res.status(409).json({ error: 'This update was already tried again. Look for the newer one in the list.' });
+    }
+    if (job.bundle) {
+      // A combined update is redone part by part on the current code, as a new combined update.
+      try {
+        const items = job.bundle.items.map((it) => ({ key: it.key, request: it.request, sourceIds: it.sourceIds, state: 'waiting' as const }));
+        const id = startBundle(job.codebaseId, items, []);
+        job.retriedAs = id;
+        job.status = 'discarded';
+        save();
+        return res.json({ job: { id } });
+      } catch (err: any) {
+        return res.status(400).json({ error: err.message });
+      }
     }
     try {
       const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 3000) : '';
@@ -1298,7 +1683,7 @@ async function runIdeas(cb: Codebase) {
   try {
     const text = await new Promise<string>((resolve, reject) => {
       const args = ['-p', '--output-format', 'json', '--permission-mode', 'default', '--tools', 'Read,Glob,Grep', '--model', 'claude-sonnet-5-5'];
-      const child = spawn(['claude', ...args].join(' '), { cwd: cb.dir, shell: true, windowsHide: true, env: planClaudeEnv() });
+      const child = spawn([cliPath('claude'), ...args].join(' '), { cwd: cb.dir, shell: true, windowsHide: true, env: planClaudeEnv() });
       let out = '';
       let err = '';
       const timer = setTimeout(() => {

@@ -274,7 +274,7 @@ export const NextUpdate: React.FC<{
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <StartRow onThisPc={p.onThisPc} onOnThisPc={p.onOnThisPc} busy={p.busy} canStart={!!p.request.trim() && (p.claudeReady || p.onThisPc)} onStart={p.onStart} />
       </div>
-      {!p.claudeReady && <p className="mt-2 text-sm text-amber-600 dark:text-amber-400">App updates use Claude Code. Sign in to Claude in Account → Connections first.</p>}
+      {!p.claudeReady && <p className="mt-2 text-sm text-amber-600 dark:text-amber-400">No AI can do code updates right now. Sign in to Claude in Account → Connections, or run "codex login" once on the PC.</p>}
       <UnsavedWarning count={current?.uncommitted} />
       <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
         Uses your Claude plan. A change usually takes a few minutes and several messages' worth of usage.
