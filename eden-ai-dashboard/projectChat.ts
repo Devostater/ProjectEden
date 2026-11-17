@@ -84,6 +84,15 @@ When the owner wants something added to the to-discuss list, put each item on it
     }
   });
 
+  // Meetings page: every project's next meeting and topics.
+  app.get('/api/meetings', (_req, res) => {
+    const meetings = (getStore().projects || []).map((p) => {
+      const c = chats[p.id];
+      return { projectId: p.id, name: p.name, color: p.color, meeting: c?.meeting, agenda: c?.agenda || [] };
+    });
+    res.json({ meetings });
+  });
+
   // The to-discuss list: add, tick off, remove; and the meeting time shown above it.
   app.post('/api/projects/:id/agenda', (req, res) => {
     if (!projectOf(req.params.id)) return res.status(404).json({ error: 'Project not found.' });
