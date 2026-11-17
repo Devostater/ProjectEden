@@ -4,6 +4,7 @@ import path from 'path';
 import type { Express } from 'express';
 import type { Agent, Project, Card, CardColumn, Branch } from './src/types/index';
 import { findCodebase } from './updates';
+import { logActivity } from './activity';
 
 export const COLUMNS: CardColumn[] = ['todo', 'ready', 'doing', 'review', 'done'];
 
@@ -145,6 +146,7 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
         repo: b.repo !== undefined ? text(b.repo, 200) : existing.repo,
         status,
         autoRun: typeof b.autoRun === 'boolean' ? b.autoRun : existing.autoRun,
+        checkpoints: typeof b.checkpoints === 'boolean' ? b.checkpoints : existing.checkpoints,
         codebaseId: b.codebaseId !== undefined ? text(b.codebaseId, 40) || undefined : existing.codebaseId,
         updatedAt: now(),
       });
@@ -174,6 +176,7 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
     const goals = Array.isArray(req.body?.roadmap) ? req.body.roadmap : null;
     if (!goals) return res.status(400).json({ error: 'Send the roadmap as a list of goals.' });
     const states = ['planned', 'building', 'done'];
+    const wasDone = new Set((project.roadmap || []).flatMap((g) => g.blocks).filter((b) => b.state === 'done').map((b) => b.id));
     project.roadmap = goals.slice(0, 20).map((g: any) => ({
       id: text(g?.id, 40) || id('goal'),
       title: text(g?.title, 80) || 'Goal',
@@ -185,6 +188,12 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
         ...(text(b?.note, 400) ? { note: text(b.note, 400) } : {}),
       })),
     }));
+    // Checkpoint: a block just finished, so the AI stops taking new cards until the owner presses Continue.
+    const finished = (project.roadmap || []).flatMap((g) => g.blocks).filter((b) => b.state === 'done' && !wasDone.has(b.id));
+    if (finished.length && project.checkpoints !== false && project.autoRun !== false) {
+      project.autoRun = false;
+      logActivity('info', `Checkpoint in ${project.name}: "${finished[0].title}" is done. The AI paused; look it over, then press Continue on Mission.`);
+    }
     project.updatedAt = now();
     save();
     res.json({ project });
