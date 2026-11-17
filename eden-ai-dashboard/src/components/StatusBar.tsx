@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { TextSizePicker } from './TextSizePicker.tsx';
 import { Avatar, useProfile } from './Avatar.tsx';
-import { Bell, Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Inbox, Columns2, Square, Search, Pencil, User, X } from 'lucide-react';
+import { Bell, Wifi, WifiOff, Leaf, Gauge, Tablet, Plus, PauseCircle, Sun, Moon, Columns2, Square, Search, Pencil, User, X } from 'lucide-react';
 import { startPicking, setTrayOpen, useTrayOpen, usePicks } from '../picker.ts';
 import { PickerTray } from './PickerTray.tsx';
 import type { AppTab } from './Sidebar.tsx';
@@ -89,10 +89,8 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
   const [more, setMore] = useState(false);
   const o = s.offline;
   const b = s.busy;
-  // Review holds finished tasks and finished code updates, so the button counts both.
+  // One button for Notifications and Review: finished tasks and code updates count as "needs you" and open from its list.
   const feed = useUpdatesFeed();
-  const readyUpdates = feed.ready.length;
-  const waiting = reviewCount + readyUpdates;
   // Notifications: "needs you" waits for a click; "news" only needs to be seen (it clears when you open Code updates).
   const { minutes: headsUpMinutes, setMinutes: setHeadsUpMinutes, headsUp, dismiss: dismissHeadsUp } = useMeetingHeadsUp();
   const { needs, news } = countNotifications(feed, reviewCount, headsUp.length);
@@ -113,14 +111,11 @@ export const StatusBar: React.FC<{ title: string; setActiveTab: (t: AppTab) => v
       document.removeEventListener('pointerdown', away);
     };
   }, [notesOpen]);
-  const notesTitle = needs > 0 ? `${needs} ${needs === 1 ? 'thing needs' : 'things need'} you${news > 0 ? `, ${news} more to know` : ''}: open Notifications` : news > 0 ? `${news} to know about (nothing needs you): open Notifications` : 'Notifications: all clear';
+  const notesTitle = needs > 0 ? `${needs} ${needs === 1 ? 'thing needs' : 'things need'} you${news > 0 ? `, ${news} more to know` : ''}: open Notifications` : news > 0 ? `${news} to know about (nothing needs you): open Notifications` : 'Notifications and review: all clear, nothing waiting for you';
   return (
     <div className="relative z-20 flex min-h-[5.5rem] items-center gap-2 border-b border-slate-200 bg-white/90 px-3 py-1.5 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
       {title && <span className="mr-1 max-w-[40vw] shrink-0 truncate text-base font-bold text-slate-900 dark:text-white">{title}</span>}
       <div className={`flex min-w-0 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] ${ticker ? 'max-w-[45%] shrink-0' : 'flex-1'}`}>
-        <button ref={reviewBtnRef} onClick={() => (review ? setReviewOpen((v) => !v) : openPanel('review'))} aria-expanded={review ? reviewOpen : undefined} title={waiting > 0 ? 'Finished tasks and code updates waiting for you: open Review' : 'Review: nothing waiting for you right now'} className={`${chip} flex ${waiting > 0 ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200' : calm}`}>
-          <Inbox className="h-3.5 w-3.5" /> {waiting > 0 ? `${waiting} to review` : 'Review'}
-        </button>
         <button ref={notesBtnRef} onClick={() => { setReviewOpen(false); setNotesOpen((v) => !v); }} aria-expanded={notesOpen} title={notesTitle} aria-label={notesTitle} className={`${chip} flex ${needs > 0 ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-200' : news > 0 ? 'border-sky-300 bg-sky-50 text-sky-800 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-200' : calm}`}>
           <Bell className="h-3.5 w-3.5" />
           {needs > 0 ? `${needs} need${needs === 1 ? 's' : ''} you` : news > 0 ? `${news} new` : 'Notifications'}

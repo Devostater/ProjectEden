@@ -49,9 +49,9 @@ export const ProfileCard: React.FC<{ name: string }> = ({ name }) => {
   useEffect(() => {
     if (!saved || gameSeeded()) return;
     if (readGameSave().xp > 0) return markGameSeeded(); // this device already has its own progress
-    markGameSeeded();
     const fromHub = xpAtLevel(Math.max(1, saved.playerLevel || 1)) + Math.max(0, saved.xp || 0);
     if (fromHub > 0) {
+      markGameSeeded(); // only used up when there was really something to copy in
       writeGameSave({ ...readGameSave(), xp: fromHub });
       setGame(readGameSave());
       window.dispatchEvent(new Event('eden-game-mode'));

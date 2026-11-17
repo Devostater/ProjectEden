@@ -3,6 +3,7 @@ import { CalendarClock, ChevronDown, ChevronRight, ArrowDown, ArrowUp, Plus, X, 
 import { ui } from '../ui.ts';
 import { UpcomingPanel, type PickedEvent } from './UpcomingPanel.tsx';
 import { setMeetingNote, setMeetingSelection, useMeetingSelection } from '../meetingSelection.ts';
+import type { RoomSummary } from './NexusRooms.tsx';
 
 // Meetings: two areas side by side.
 //   Left   - what needs attention, add a meeting, the project tabs, then past meetings at the bottom.
@@ -38,8 +39,9 @@ function cleanOrder(value: unknown): PanelId[] {
   return [...seen, ...DEFAULT_ORDER.filter((id) => !seen.includes(id))];
 }
 
-export const MeetingsView: React.FC<{ onOpenProject?: (id: string) => void }> = ({ onOpenProject }) => {
+export const MeetingsView: React.FC<{ onOpenProject?: (id: string) => void; rooms?: RoomSummary[]; activeRoomId?: string; onOpenRoom?: (roomId: string) => void }> = ({ onOpenProject, rooms = [], activeRoomId = '', onOpenRoom }) => {
   const [list, setList] = useState<Meeting[] | null>(null);
+  const [roomPick, setRoomPick] = useState(''); // the Nexus room chosen for "Join Nexus chat"; empty means the best match
   const [error, setError] = useState('');
   const [draft, setDraft] = useState('');
   const [picked, setPicked] = useState('');
@@ -217,6 +219,7 @@ export const MeetingsView: React.FC<{ onOpenProject?: (id: string) => void }> = 
             <MessagesSquare className="h-4 w-4" /> Chat with Chief
           </button>
         )}
+        {renderJoinChat(m.name)}
       </>
     ),
     discussed: (
@@ -248,6 +251,27 @@ export const MeetingsView: React.FC<{ onOpenProject?: (id: string) => void }> = 
   });
 
   const selectedKey = pickedEvent ? pickedEvent.key : picked ? `meeting:${picked}` : '';
+
+  // Join the Nexus chat for what is showing: pick a room (a room named like the meeting is chosen for you), then open it.
+  const renderJoinChat = (title: string) => {
+    if (!onOpenRoom) return null;
+    if (!rooms.length) return <p className="text-xs text-slate-500 dark:text-slate-400">No Nexus rooms yet. Start one on the Nexus page, then join it from here.</p>;
+    const lower = title.trim().toLowerCase();
+    const guess = rooms.find((r) => lower && r.name.trim().toLowerCase() === lower)?.id || (rooms.some((r) => r.id === activeRoomId) ? activeRoomId : rooms[0].id);
+    const chosenRoom = rooms.some((r) => r.id === roomPick) ? roomPick : guess;
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        {rooms.length > 1 && (
+          <select value={chosenRoom} onChange={(e) => setRoomPick(e.target.value)} aria-label="Which Nexus room to join" className={`${ui.field} !w-auto min-w-0 max-w-full flex-1`}>
+            {rooms.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        )}
+        <button onClick={() => onOpenRoom(chosenRoom)} title="Open this room on the Nexus page" className={ui.btn}>
+          <MessagesSquare className="h-4 w-4" /> Join Nexus chat
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div className="flex flex-col gap-3 p-3 sm:p-4 lg:h-full lg:min-h-0">
@@ -303,6 +327,7 @@ export const MeetingsView: React.FC<{ onOpenProject?: (id: string) => void }> = 
                   <div className="min-w-0 flex-1">
                     <h2 className="break-words text-lg font-semibold text-slate-900 dark:text-white">{pickedEvent.title}</h2>
                     <p className="text-sm text-slate-500 dark:text-slate-400">{pickedEvent.sub || 'No time set'} · your own event, saved on this device</p>
+                    <div className="mt-2">{renderJoinChat(pickedEvent.title)}</div>
                   </div>
                   <button onClick={() => setPickedEvent(null)} className="rounded-md border border-slate-300 px-2 py-1 text-xs dark:border-slate-600 dark:text-slate-200">Back to {current.name}</button>
                 </div>

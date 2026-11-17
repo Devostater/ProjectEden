@@ -375,7 +375,7 @@ export default function App() {
             {activeTab === 'updates' && <UpdatesView />}
   
             {activeTab === 'repos' && <ReposView />}
-            {activeTab === 'meetings' && <MeetingsView onOpenProject={(id) => { projectsApi.setActiveId(id); setActiveTab('projects'); }} />}
+            {activeTab === 'meetings' && <MeetingsView onOpenProject={(id) => { projectsApi.setActiveId(id); setActiveTab('projects'); }} rooms={nexusRooms.rooms} activeRoomId={nexusRooms.activeId} onOpenRoom={(id) => { nexusRooms.setActiveId(id); setActiveTab('nexus'); }} />}
             {activeTab === 'devices' && <DevicesView />}
   
             {activeTab === 'remote' && <RemoteView />}

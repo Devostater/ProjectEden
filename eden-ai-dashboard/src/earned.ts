@@ -9,7 +9,8 @@ const UNLOCKED_KEY = 'eden_unlocked';
 const NOTICE_KEY = 'eden_achievement_notices';
 // After 'Start again': the totals seen at that moment, counted from zero from then on (so a reset really resets).
 const BASELINE_KEY = 'eden_activity_baseline';
-// The highest totals seen so far, so 'Start again' can use them as the new zero right away (even before a reload).
+// The latest real totals (a snapshot where something has loaded), so 'Start again' can use the totals of that moment as
+// the new zero right away, even before a reload. Startup zeros (before the hub's data arrives) never replace it.
 const SEEN_KEY = 'eden_activity_seen';
 export const ACTIVITY_EVENT = 'eden-activity';
 export const UNLOCK_EVENT = 'eden-unlocked';
@@ -147,12 +148,13 @@ function readBaseline(): Baseline {
 }
 
 export function recordActivity(seen: Partial<Pick<Activity, (typeof NUMBERS)[number]>> & { page?: string[] }) {
-  // Remember the highest real totals (startup zeros never lower them).
+  // Remember the latest real totals: only a snapshot where something has loaded (startup zeros are skipped).
   try {
-    const top = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}') || {};
-    let grew = false;
-    for (const k of NUMBERS) { const v = seen[k]; if (typeof v === 'number' && isFinite(v) && v > (top[k] || 0)) { top[k] = Math.floor(v); grew = true; } }
-    if (grew) localStorage.setItem(SEEN_KEY, JSON.stringify(top));
+    if (NUMBERS.some((k) => typeof seen[k] === 'number' && (seen[k] as number) > 0)) {
+      const latest: Partial<Record<(typeof NUMBERS)[number], number>> = {};
+      for (const k of NUMBERS) { const v = seen[k]; if (typeof v === 'number' && isFinite(v)) latest[k] = Math.max(0, Math.floor(v)); }
+      localStorage.setItem(SEEN_KEY, JSON.stringify(latest));
+    }
   } catch {}
   // Right after a reset, the first full set of totals becomes the new zero.
   let base = readBaseline();
@@ -192,7 +194,7 @@ export function resetActivity() {
   try {
     localStorage.removeItem(ACTIVITY_KEY);
     localStorage.setItem(UNLOCKED_KEY, '{}'); // empty, not missing: nothing old gets announced again
-    // The new zero is everything counted so far. Only if nothing was ever seen does it wait for the next real totals.
+    // The new zero is the totals right now. Only if nothing has loaded yet does it wait for the next real totals.
     const top = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}') || {};
     const known = NUMBERS.some((k) => typeof top[k] === 'number');
     localStorage.setItem(BASELINE_KEY, JSON.stringify(known ? top : { pending: true }));
