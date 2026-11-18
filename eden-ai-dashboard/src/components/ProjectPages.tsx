@@ -5,6 +5,7 @@ import type { PanelProject } from './BottomPanel.tsx';
 import { FlowTab, ProgressTab, WorkloadTab } from './ProjectVisuals.tsx';
 import { Roadmap, roadmapProgress } from './Roadmap.tsx';
 import { WorkTrail } from './WorkTrail.tsx';
+import { PreviewTab } from './PreviewTab.tsx';
 
 // Mission: the project at a glance. What it's for, what the AI is doing, what's next, what waits on you,
 // and the controls that decide how far the AI may go on its own (Continue/Pause and checkpoints).
@@ -164,13 +165,16 @@ export const JourneyView: React.FC<PanelProject> = (p) => {
 
 // Insights under the board: swipe sideways through pages of numbers and charts.
 export const BoardInsights: React.FC<PanelProject> = (p) => {
+  const scroller = React.useRef<HTMLElement>(null);
+  const [current, setCurrent] = React.useState(0);
+  const FILES_PAGE = 3;
   const pages: [string, React.ReactNode][] = [
     ['Progress', <ProgressTab {...p} />],
     ['Who is working', <WorkloadTab {...p} />],
     ['Latest work', <WorkTrail key={p.project.id} project={p.project} cards={p.cards} agents={p.agents} onOpenCard={p.onOpenCard} />],
+    // The file tree and viewer (same one as the Preview tab). Only opened while this page is showing.
+    ['Files', <div className="h-[20rem]">{current === FILES_PAGE && <PreviewTab key={p.project.id} project={p.project} />}</div>],
   ];
-  const scroller = React.useRef<HTMLElement>(null);
-  const [current, setCurrent] = React.useState(0);
 
   // Which page is closest to the middle of the strip right now.
   const syncCurrent = () => {
