@@ -10,6 +10,33 @@ export interface Pick {
   components: string[]; // React components it sits in, innermost first
   where: string; // nearest named areas around it
   classes: string;
+  // Extra detail so the AI can find and fix the exact element in one go (all optional: older picks lack them).
+  elId?: string; // its id="" attribute
+  path?: string; // where it sits in the page, e.g. main > section.wide > div.tools > button#emAdd
+  html?: string; // its own HTML, shortened
+  styles?: string; // the styles it really has on screen (size, spacing, colours, font)
+  siblings?: string[]; // the elements next to it
+}
+
+// The picked element's extra detail. Kept in step with the copy in previewProxy.ts (PICKER_JS), which runs inside app previews.
+const STYLE_KEYS = ['display', 'position', 'width', 'height', 'padding', 'margin', 'color', 'background-color', 'font-size', 'font-weight', 'border-radius', 'border', 'opacity', 'cursor', 'pointer-events'];
+const short = (el: Element) => {
+  const id = el.id ? `#${el.id}` : '';
+  const cls = typeof (el as HTMLElement).className === 'string' ? (el as HTMLElement).className.split(/\s+/).filter(Boolean).slice(0, 2).map((c) => `.${c}`).join('') : '';
+  return el.tagName.toLowerCase() + (id || cls);
+};
+export type PickDetail = { elId?: string; path: string; html: string; styles: string; siblings: string[] };
+export function detail(el: Element): PickDetail {
+  const parts: string[] = [];
+  for (let p: Element | null = el; p && p.tagName !== 'BODY' && p.tagName !== 'HTML' && parts.length < 5; p = p.parentElement) parts.unshift(short(p));
+  const open = el.outerHTML.slice(0, el.outerHTML.indexOf('>') + 1);
+  const inner = (el as HTMLElement).innerText?.replace(/\s+/g, ' ').trim() || '';
+  const html = el.children.length > 0 || el.outerHTML.length > 400 ? `${open.slice(0, 300)}${inner ? inner.slice(0, 80) + '…' : '…'}</${el.tagName.toLowerCase()}>` : el.outerHTML;
+  const cs = getComputedStyle(el);
+  const styles = STYLE_KEYS.map((k) => [k, cs.getPropertyValue(k)] as const).filter(([, v]) => v && v !== 'none' && v !== 'normal' && v !== 'auto' && v !== '0px')
+    .map(([k, v]) => `${k}: ${v}`).join('; ');
+  const siblings = el.parentElement ? [...el.parentElement.children].filter((s) => s !== el && !s.hasAttribute('data-eden-picker')).slice(0, 4).map(short) : [];
+  return { elId: el.id || undefined, path: parts.join(' > '), html, styles, siblings };
 }
 
 let picks: Pick[] = [];
@@ -41,7 +68,11 @@ export function usePicks(): Pick[] {
 export function picksAsText(list: Pick[] = picks): string {
   if (!list.length) return '';
   return '\n\nElements I picked on screen (change these):\n' + list.map((p, i) =>
-    `${i + 1}. "${p.label}" (<${p.tag}>${p.classes ? ` class="${p.classes}"` : ''})${p.components.length ? `, in component ${p.components.join(' < ')}` : ''}${p.where ? `, area: ${p.where}` : ''}`).join('\n');
+    `${i + 1}. "${p.label}" (<${p.tag}>${p.elId ? ` id="${p.elId}"` : ''}${p.classes ? ` class="${p.classes}"` : ''})${p.components.length ? `, in component ${p.components.join(' < ')}` : ''}${p.where ? `, area: ${p.where}` : ''}`
+    + (p.path ? `\n   path: ${p.path}` : '')
+    + (p.html ? `\n   html: ${p.html}` : '')
+    + (p.styles ? `\n   styles on screen: ${p.styles}` : '')
+    + (p.siblings?.length ? `\n   next to: ${p.siblings.join(', ')}` : '')).join('\n');
 }
 
 const reactComponents = (el: Element): string[] => {
@@ -71,6 +102,7 @@ export function describe(el: Element): Omit<Pick, 'id'> {
     components: reactComponents(el),
     where: where.join(' › '),
     classes: (typeof h.className === 'string' ? h.className : '').split(/\s+/).filter(Boolean).slice(0, 6).join(' '),
+    ...detail(el),
   };
 }
 
