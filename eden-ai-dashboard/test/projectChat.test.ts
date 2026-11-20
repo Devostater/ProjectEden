@@ -17,3 +17,23 @@ test('a reply without markers is unchanged', () => {
   assert.deepEqual(r.items, []);
   assert.equal(r.text, 'No list changes.');
 });
+
+import { takeMeeting, meetingText } from '../projectChat';
+
+test('a [meeting] line sets the time and leaves the reply', () => {
+  const r = takeMeeting('Done, see you then.\n[meeting] 2026-11-17T18:00');
+  assert.equal(r.at, '2026-11-17T18:00');
+  assert.equal(r.text, 'Done, see you then.');
+});
+
+test('a reply without a meeting line is unchanged', () => {
+  const r = takeMeeting('No meeting change.');
+  assert.equal(r.at, null);
+  assert.equal(r.text, 'No meeting change.');
+});
+
+test('meeting text is a real date, never "Today"', () => {
+  const t = meetingText('2026-11-17T18:00');
+  assert.match(t, /Nov 17, 6:00 PM/);
+  assert.doesNotMatch(t, /Today/);
+});

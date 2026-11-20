@@ -57,11 +57,33 @@ function mergeThread(old: Thread, incoming: Thread): Thread {
   return { ...base, messages: missing.length ? [...base.messages, ...missing] : base.messages, updatedAt: Math.max(old.updatedAt, incoming.updatedAt) };
 }
 
+const watchers = new Set<Response>();
+const tell = () => {
+  for (const res of watchers) res.write(`data: ${store.version}\n\n`);
+};
+
+// Add messages to a chat from outside the page (for example LYRA asking EDEN's team a question), creating the chat
+// if needed. Every open page sees it right away, like any other chat.
+export function appendToChat(
+  id: string,
+  title: string,
+  messages: { role: 'user' | 'assistant'; author: string; content: string; error?: string; model?: string; note?: string }[],
+  withIds?: string[],
+) {
+  if (!messages.length) return;
+  const stamp = Date.now();
+  const msgs = messages.map((m, i) => ({ id: `m-${stamp}-${i}`, ...m }));
+  const i = store.threads.findIndex((t) => t.id === id);
+  if (i < 0) store.threads.unshift({ id, title, messages: msgs, updatedAt: stamp, ...(withIds?.length ? { with: withIds } : {}) });
+  else store.threads[i] = { ...store.threads[i], messages: [...store.threads[i].messages, ...msgs].slice(-500), updatedAt: stamp };
+  delete store.deleted[id];
+  store.threads.sort((a, b) => b.updatedAt - a.updatedAt);
+  store.version++;
+  save();
+  tell();
+}
+
 export function registerChatRoutes(app: Express) {
-  const watchers = new Set<Response>();
-  const tell = () => {
-    for (const res of watchers) res.write(`data: ${store.version}\n\n`);
-  };
 
   app.get('/api/chats', (_req, res) => res.json(store));
 
