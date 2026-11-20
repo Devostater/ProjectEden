@@ -3,6 +3,7 @@ import { GoogleGenAI } from '@google/genai';
 import { canUseWeb, generate, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel, costByProvider } from './providers';
 import { registerSettingsRoutes } from './settings';
 import { registerPairing, mayManage } from './pairing';
+import { registerHunterGuard } from './hunterGuard';
 import { registerProjectRoutes, ensureProjects, noteOnCard } from './projects';
 import { registerNewProjectRoutes } from './newproject';
 import { registerToolboxRoutes } from './toolbox';
@@ -407,6 +408,7 @@ async function fetchGitHubRepoSummary(repoTarget: string): Promise<{
 
 async function startServer() {
   const app = express();
+  registerHunterGuard(app, __dirname); // first of all: blocks DNS rebinding and other websites (reports them to HUNTER)
   registerPairing(app); // must come first: guards every route for devices other than this computer
   const PORT = Number(process.env.PORT) || 3000;
 
