@@ -77,6 +77,8 @@ export const PipelineDAGView: React.FC<PipelineDAGViewProps> = ({ pipelines, age
   const [failed, setFailed] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [about, setAbout] = useState(''); // "describe it" text for an AI draft
+  const [drafting, setDrafting] = useState(false);
 
   useEffect(() => {
     if (openId && pipelines.some((p) => p.id === openId)) { setSelectedId(openId); setDraft(null); setPicking(false); }
@@ -122,9 +124,27 @@ export const PipelineDAGView: React.FC<PipelineDAGViewProps> = ({ pipelines, age
       // Same steps in the same order: keep the links it had (some workflows branch). Otherwise link top to bottom.
       const before = pipelines.find((p) => p.id === id);
       const sameSteps = !!before && before.nodes.map((n) => n.id).join() === nodes.map((n) => n.id).join();
-      await onSavePipeline({ id, name, description: draft.description.trim(), nodes, edges: sameSteps ? before.edges : chain(nodes), lastStatus: before?.lastStatus || 'idle' });
+      // Saved here (not through the app's shared helper, which hides failures) so a refused save shows a message.
+      const res = await fetch('/api/pipelines', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name, description: draft.description.trim(), nodes, edges: sameSteps ? before.edges : chain(nodes), lastStatus: before?.lastStatus || 'idle' }) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Could not save the workflow (error ${res.status}).`);
+      onRefreshData?.();
       setDraft(null); setSelectedId(id);
     } catch (e: any) { setError(e?.message || 'Could not save the workflow.'); } finally { setSaving(false); }
+  };
+
+  // "Describe it": the lead drafts the steps; you check and change them before saving.
+  const draftWithAi = async () => {
+    const description = about.trim();
+    if (!description || drafting) return;
+    setDrafting(true); setError('');
+    try {
+      const res = await fetch('/api/pipelines/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ description }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || `Could not draft it (error ${res.status}).`);
+      const nodes: DAGNode[] = (d.steps || []).map((s: any) => (s.save ? saveStep(s.label, s.save) : step(s.label, s.prompt || '', s.agentId || firstAgent)));
+      setDraft({ id: '', name: d.name || '', description: d.description || '', nodes });
+      setPicking(false); setAbout('');
+    } catch (e: any) { setError(e.message); } finally { setDrafting(false); }
   };
 
   const remove = async () => {
@@ -189,6 +209,13 @@ export const PipelineDAGView: React.FC<PipelineDAGViewProps> = ({ pipelines, age
               <h2 className="font-semibold text-slate-900 dark:text-white">New workflow: pick a starting point</h2>
               <button className={ghost} onClick={() => setPicking(false)}><X className="w-3.5 h-3.5" />Cancel</button>
             </div>
+            <div className="mb-4">
+              <label className={label} htmlFor="wfDescribe">Describe it and let your lead draft the steps</label>
+              <textarea id="wfDescribe" className={`${input} min-h-20`} value={about} onChange={(e) => setAbout(e.target.value)} placeholder="e.g. Every week: gather what changed in the game, write a devlog post, check it, save it." />
+              <button className={`${primary} mt-2`} onClick={draftWithAi} disabled={drafting || !about.trim()}>{drafting ? 'Drafting… (up to a minute)' : 'Draft the steps'}</button>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Uses a little AI. You can change everything before saving.</p>
+            </div>
+            <p className={label}>Or start from a template</p>
             <div className="grid sm:grid-cols-3 gap-3">
               {TEMPLATES.map((t) => (
                 <button key={t.name} onClick={() => { setDraft(t.make(firstAgent)); setPicking(false); }} className="text-left p-4 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-indigo-500 hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20">
