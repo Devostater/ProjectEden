@@ -98,9 +98,14 @@ function buildPrompt(project: Project, card: Card, all: Card[] = []): string {
   }
   if (card.notes.length) {
     parts.push('\nNotes on this card so far, oldest first (earlier results and the owner\'s feedback):');
-    for (const n of card.notes.filter((n) => n.kind !== 'error')) {
+    // Token saver: only the newest result is sent in full. Older results are cut short (each revision replaced
+    // them already); the owner's feedback is always kept whole.
+    const shown = card.notes.filter((n) => n.kind !== 'error');
+    const lastResult = [...shown].reverse().find((n) => n.kind !== 'feedback');
+    for (const n of shown) {
       const who = n.kind === 'feedback' ? `The owner's feedback` : n.revised ? `${n.author} (earlier result, marked Revised)` : n.author;
-      parts.push(`--- ${who}:\n${n.text}`);
+      const old = n.kind !== 'feedback' && n !== lastResult && n.text.length > 600;
+      parts.push(`--- ${who}:\n${old ? `${n.text.slice(0, 600)}\n[…older result shortened]` : n.text}`);
     }
     parts.push('\nIf the owner left feedback after the last result, deliver a revised result that addresses it. Give the complete new version, not just the changes.');
   }

@@ -189,7 +189,7 @@ ${cards.join('\n') || '(none)'}
 When the owner wants something added to the to-discuss list, put each item on its own line starting with "[agenda] ".
 When the owner wants to set or move the project's meeting, put one line "[meeting] YYYY-MM-DDTHH:MM" (24-hour local time; today is ${localDay()}). You will host it: at that time a meeting room opens with the team and you lead it.
 Keep replies short and direct. You can only reply with text; never claim to have done anything else.`;
-    const history = chat.messages.slice(-CONTEXT_MESSAGES).map((m) => `${m.role === 'owner' ? 'Owner' : lead.name}: ${m.text}`).join('\n\n');
+    const history = chat.messages.slice(-CONTEXT_MESSAGES).map((m, i, all) => `${m.role === 'owner' ? 'Owner' : lead.name}: ${i < all.length - 6 && m.text.length > 800 ? `${m.text.slice(0, 800)} […]` : m.text}`).join('\n\n'); // token saver: older long messages are cut short
     try {
       const answer = await askTeammate(lead, system, `${history}\n\n${lead.name}:`, { maxTokens: 1500 });
       const { text: afterAgenda, items } = takeAgenda(answer.text || '');
