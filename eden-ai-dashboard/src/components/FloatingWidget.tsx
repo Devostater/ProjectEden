@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { GripHorizontal, Minimize2 } from 'lucide-react';
 
 // A widget that has been "popped out" of the dashboard: it floats above the page, you can drag it
@@ -17,9 +17,19 @@ export function FloatingWidget({ title, x, y, onMove, onDock, children }: Floati
   const grab = useRef<{ dx: number; dy: number } | null>(null);
 
   const clamp = (nx: number, ny: number) => ({
-    x: Math.max(0, Math.min(nx, window.innerWidth - 120)),
+    x: Math.max(0, Math.min(nx, window.innerWidth - 160)),
     y: Math.max(0, Math.min(ny, window.innerHeight - 48)),
   });
+
+  // A saved position can be off-screen (smaller window, another device, a rotated tablet): pull it back into view
+  // now and whenever the window changes size, so the title bar can always be reached.
+  useEffect(() => {
+    const fit = () => { const p = clamp(x, y); if (p.x !== x || p.y !== y) onMove(p.x, p.y); };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [x, y]);
 
   return (
     <div
