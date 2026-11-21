@@ -30,7 +30,19 @@ const PICKER_JS = `(() => {
     while (f && n.length < 4) { const t = f.type; const nm = typeof t === 'function' ? t.displayName || t.name : null; if (nm && /^[A-Z]/.test(nm) && !n.includes(nm)) n.push(nm); f = f.return; } return n; };
   const describe = (el) => { const t = (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
     const where = []; for (let p = el.parentElement; p && where.length < 2; p = p.parentElement) { const nm = p.getAttribute('aria-label') || (/^(H1|H2|H3)$/.test(p.tagName) ? p.textContent : ''); if (nm) where.push(nm.trim().slice(0, 40)); }
-    return { label: t.slice(0, 80) || '(' + el.tagName.toLowerCase() + ')', tag: el.tagName.toLowerCase(), components: comps(el), where: where.join(' › '), classes: (typeof el.className === 'string' ? el.className : '').split(/\\s+/).filter(Boolean).slice(0, 6).join(' '), page: location.pathname }; };
+    return Object.assign({ label: t.slice(0, 80) || '(' + el.tagName.toLowerCase() + ')', tag: el.tagName.toLowerCase(), components: comps(el), where: where.join(' › '), classes: (typeof el.className === 'string' ? el.className : '').split(/\\s+/).filter(Boolean).slice(0, 6).join(' '), page: location.pathname }, detail(el)); };
+  // Same extra detail as detail() in src/picker.ts: id, path in the page, its HTML, styles on screen, neighbours.
+  const KEYS = ['display', 'position', 'width', 'height', 'padding', 'margin', 'color', 'background-color', 'font-size', 'font-weight', 'border-radius', 'border', 'opacity', 'cursor', 'pointer-events'];
+  const short = (el) => { const cls = typeof el.className === 'string' ? el.className.split(/\\s+/).filter(Boolean).slice(0, 2).map((c) => '.' + c).join('') : ''; return el.tagName.toLowerCase() + (el.id ? '#' + el.id : cls); };
+  const detail = (el) => {
+    const parts = []; for (let p = el; p && p.tagName !== 'BODY' && p.tagName !== 'HTML' && parts.length < 5; p = p.parentElement) parts.unshift(short(p));
+    const open = el.outerHTML.slice(0, el.outerHTML.indexOf('>') + 1), inner = (el.innerText || '').replace(/\\s+/g, ' ').trim();
+    const html = el.children.length > 0 || el.outerHTML.length > 400 ? open.slice(0, 300) + (inner ? inner.slice(0, 80) + '…' : '…') + '</' + el.tagName.toLowerCase() + '>' : el.outerHTML;
+    const cs = getComputedStyle(el);
+    const styles = KEYS.map((k) => [k, cs.getPropertyValue(k)]).filter((x) => x[1] && x[1] !== 'none' && x[1] !== 'normal' && x[1] !== 'auto' && x[1] !== '0px').map((x) => x[0] + ': ' + x[1]).join('; ');
+    const siblings = el.parentElement ? Array.from(el.parentElement.children).filter((s) => s !== el).slice(0, 4).map(short) : [];
+    return { elId: el.id || undefined, path: parts.join(' > '), html, styles, siblings };
+  };
   const start = () => { if (stop) return;
     const box = document.createElement('div'); box.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;border:2px solid #6366f1;background:rgba(99,102,241,.12);border-radius:4px;display:none'; document.body.appendChild(box);
     const move = (e) => { const r = e.target.getBoundingClientRect(); Object.assign(box.style, { display: 'block', left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' }); };
