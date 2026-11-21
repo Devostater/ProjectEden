@@ -1116,6 +1116,33 @@ Task:
     res.json({ file: newFile, swarmRun: run });
   });
 
+  // 6a. Draft a workflow from a description. Returns steps only; nothing is saved until the owner presses Save.
+  app.post('/api/pipelines/draft', async (req, res) => {
+    const about = String(req.body?.description || '').trim().slice(0, 1500);
+    if (!about) return res.status(400).json({ error: 'Describe what the workflow should do.' });
+    const lead = store.agents.find((a) => a.id === 'agent-synthesizer') || store.agents[0];
+    if (!lead) return res.status(400).json({ error: 'Add a teammate first.' });
+    const roster = store.agents.map((a) => `- ${a.name} (${a.role})`).join('\n');
+    const system = `You design short workflows: chains of 2 to 6 steps run in order, where each step gets the result of the step before it. Reply with JSON only, no other text:
+{"name":"short name","description":"one sentence","steps":[{"label":"2-4 words","who":"a teammate's exact name","prompt":"what this step should do, 1-3 sentences"}]}
+Pick the best-fitting teammate for each step. To save the final result as a file, end with {"label":"Save to Files","save":"workflows/<short-file-name>.md"}.`;
+    try {
+      const answer = await askTeammate(lead, system, `Teammates:\n${roster}\n\nThe owner wants a workflow that does this:\n${about}`, { maxTokens: 1200 });
+      const cleaned = answer.text.replace(/```(?:json)?/gi, '');
+      const plan = JSON.parse(cleaned.slice(cleaned.indexOf('{'), cleaned.lastIndexOf('}') + 1));
+      const byName = new Map(store.agents.map((a) => [a.name.toLowerCase(), a.id]));
+      const steps = (Array.isArray(plan.steps) ? plan.steps : []).slice(0, 8).map((s: any) =>
+        typeof s?.save === 'string'
+          ? { label: String(s.label || 'Save to Files').slice(0, 60), save: s.save.replace(/[^\w./ -]/g, '').slice(0, 120) || 'workflows/result.md' }
+          : { label: String(s?.label || '').slice(0, 60), agentId: byName.get(String(s?.who || '').trim().toLowerCase()) || lead.id, prompt: String(s?.prompt || '').slice(0, 1500) }
+      ).filter((s: any) => s.label);
+      if (!steps.length) throw new Error('empty');
+      res.json({ name: String(plan.name || '').slice(0, 80), description: String(plan.description || '').slice(0, 300), steps });
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message && err.message !== 'empty' && !/JSON|position/i.test(err.message) ? err.message : 'The draft came back in a form the app could not read. Try again, or start from a template.' });
+    }
+  });
+
   // 6. Create or update a DAG Pipeline
   app.post('/api/pipelines', (req, res) => {
     const payload = req.body as DAGPipeline;
