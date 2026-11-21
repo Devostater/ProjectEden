@@ -136,7 +136,8 @@ export function registerNexusRoutes(app: Express, getStore: () => NexusStore, sa
     room.messages
       .filter((m) => m.role !== 'system')
       .slice(-CONTEXT)
-      .map((m) => `${m.role === 'user' ? 'Owner' : m.author}: ${m.text}`)
+      // Token saver: the last 6 messages in full, older ones cut to their first 800 characters.
+      .map((m, i, all) => `${m.role === 'user' ? 'Owner' : m.author}: ${i < all.length - 6 && m.text.length > 800 ? `${m.text.slice(0, 800)} […]` : m.text}`)
       .join('\n\n');
 
   // Names on a trailing "NEXT: A, B" / "ASK: A" line, matched to members. The line is removed from the text.
