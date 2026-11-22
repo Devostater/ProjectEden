@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import { spawn, execFile } from 'child_process';
 import { generate, lyraConnected, pingLyra } from './providers';
 import { logActivity, fileProblem } from './activity';
-import { mayManage } from './pairing';
+import { mayManage } from './permissions';
 
 // Where LYRA's Nova.bat lives. The owner can set LYRA_START_PATH to its full path; otherwise we look in the usual place.
 function findNovaBat(): string | null {
@@ -237,7 +237,7 @@ export function registerLyraRoutes(app: Express) {
   });
   // ✓ / ✕ one of them. Same rule as other code changes here: this computer, or a paired device with "Code updates" on.
   app.post('/api/lyra/edits/decide', async (req, res) => {
-    if (!mayManage(req)) return res.status(403).json({ error: 'LYRA\'s edits can only be approved from this computer, or from a device with "Code updates" switched on.' });
+    if (!mayManage(req)) return res.status(403).json({ error: 'LYRA\'s edits can only be approved from this computer.' });
     const id = typeof req.body?.id === 'string' ? req.body.id : '';
     if (!id) return res.status(400).json({ error: 'Which edit?' });
     try {
@@ -265,12 +265,12 @@ export function registerLyraRoutes(app: Express) {
   });
 
   // Auto-open LYRA on the tablet when Eden starts. Per PC, in .eden-lyra-autoopen.json (git-ignored), default Off.
-  // Read by scripts/hub-supervisor.mjs at start, so a change takes effect on the next start. This PC or a paired tablet can change it.
+  // Read by scripts/hub-supervisor.mjs at start, so a change takes effect on the next start. This PC can change it.
   const AUTO_OPEN_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-lyra-autoopen.json');
   const readAutoOpen = () => { try { return JSON.parse(fs.readFileSync(AUTO_OPEN_FILE, 'utf8')).autoOpen === true; } catch { return false; } };
   app.get('/api/lyra/auto-open', (_req, res) => res.json({ autoOpen: readAutoOpen() }));
   app.post('/api/lyra/auto-open', (req, res) => {
-    if (!mayManage(req)) return res.status(403).json({ error: 'Auto-open can only be changed on this computer or a paired tablet.' });
+    if (!mayManage(req)) return res.status(403).json({ error: 'Auto-open can only be changed on this computer.' });
     const autoOpen = req.body?.autoOpen === true;
     fs.writeFileSync(AUTO_OPEN_FILE, JSON.stringify({ autoOpen }, null, 2));
     res.json({ autoOpen });

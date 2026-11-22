@@ -11,7 +11,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express } from 'express';
 import { logActivity, fileProblem } from './activity';
-import { mayManage, mayView } from './pairing';
+import { mayManage, mayView } from './permissions';
 import { parseRepo } from './github';
 
 const ROOT = process.env.EDEN_REPOS_ROOT || 'C:\\AZI';
@@ -159,7 +159,7 @@ async function sync(name: string, dir: string): Promise<{ ok: boolean; message: 
 
 export function registerRepoRoutes(app: Express) {
   app.get('/api/repos', async (req, res) => {
-    if (!mayView(req)) return res.status(403).json({ error: 'This device is not paired with the hub.' });
+    if (!mayView(req)) return res.status(403).json({ error: 'Only available on this computer.' });
     const fetchFirst = req.query.fetch === '1';
     const repos = await Promise.all(listRepoDirs().map((r) => info(r.name, r.dir, fetchFirst)));
     res.json({ root: ROOT, repos });

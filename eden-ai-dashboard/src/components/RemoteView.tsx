@@ -92,7 +92,7 @@ export const RemoteView: React.FC = () => {
                   <ol className="list-decimal space-y-1.5 pl-5 text-sm text-slate-700 dark:text-slate-300">
                     <li>Put the phone on the same Wi-Fi as this computer.</li>
                     <li>Point the phone's camera at the QR code and tap the link it shows.</li>
-                    <li>It pairs by itself and stays paired. In Chrome, tap ⋮ → <b>Add to Home screen</b> to keep it like an app.</li>
+                    <li>It pairs automatically for 30 days. In Chrome, tap ⋮ → <b>Add to Home screen</b> to keep it like an app.</li>
                   </ol>
                   {!mainLink && info.addresses.length > 1 && (
                     <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">

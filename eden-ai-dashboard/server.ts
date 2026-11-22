@@ -2,9 +2,11 @@ import { jsonObject, jsonStore } from './jsonStore';
 import express from 'express';
 import { dashboardMode, serveDashboard } from './dashboardSite';
 import { GoogleGenAI } from '@google/genai';
-import { canUseWeb, generate, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel, costByProvider } from './providers';
+import { canUseWeb, generate, replyToTabletChat, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel, costByProvider } from './providers';
 import { registerSettingsRoutes } from './settings';
-import { registerPairing, mayManage } from './pairing';
+import { registerPairing } from './pairing';
+import { registerTabletChat } from './tabletChat';
+import { mayManage, sendApprovedWebhook } from './permissions';
 import { registerHunterGuard } from './hunterGuard';
 import { registerProjectRoutes, ensureProjects, noteOnCard } from './projects';
 import { registerNewProjectRoutes } from './newproject';
@@ -417,6 +419,7 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '5mb' }));
+  registerTabletChat(app, replyToTabletChat);
 
   // 1. Get complete workspace state
   app.get('/api/workspace', (_req, res) => {
@@ -463,7 +466,7 @@ async function startServer() {
   const readChatModel = () => chatModelFile.read()?.model ?? 'online';
   app.get('/api/chat-model', (_req, res) => res.json({ model: readChatModel(), local: localModels() }));
   app.post('/api/chat-model', (req, res) => {
-    if (!mayManage(req)) return res.status(403).json({ error: 'Only this computer or a paired tablet can change the chat model.' });
+    if (!mayManage(req)) return res.status(403).json({ error: 'Only this computer can change the chat model.' });
     const m = req.body?.model;
     const model = m === 'online' || (typeof m === 'string' && localModels().includes(m)) ? m : null;
     if (!model) return res.status(400).json({ error: 'That model is not available on this PC.' });
@@ -582,7 +585,7 @@ async function startServer() {
   registerActivityRoutes(app);
   registerTerminalRoutes(app);
   registerLyraRoutes(app);
-  registerChatRoutes(app); // chats shared by every device
+  registerChatRoutes(app); // owner chat history
   if (!ON_DEVICE) registerRepoRoutes(app); // GitHub repos in the workspace folder (only on the PC)
   registerProfileRoutes(app); // your picture, frame, bio, links and quick commands
   registerPerfRoutes(app); // live CPU, memory, GPU and what Eden uses (Devices > Performance)
@@ -1278,27 +1281,16 @@ Pick the best-fitting teammate for each step. To save the final result as a file
                 node.status = 'completed';
                 nodeOutputs.set(node.id, node.lastOutput);
               } else if (node.type === 'api_webhook') {
-                const targetUrl = node.webhookUrl || 'https://httpbin.org/post';
-                let webhookSummary = '';
-                try {
-                  const whRes = await fetch(targetUrl, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'X-NexusFlow-Pipeline': pipeline.id,
-                    },
-                    body: JSON.stringify({
-                      pipeline: pipeline.name,
-                      node: node.label,
-                      timestamp: new Date().toISOString(),
-                      upstreamPreview: upstreamContext.slice(0, 600),
-                    }),
-                  });
-                  webhookSummary = `Webhook POST -> ${targetUrl} returned HTTP ${whRes.status}. Payload delivered (${upstreamContext.length} chars).`;
-                } catch (whErr: any) {
-                  webhookSummary = `Webhook dispatch to ${targetUrl} logged: ${whErr?.message || 'Completed'}`;
-                }
-                node.lastOutput = webhookSummary;
+                const status = await sendApprovedWebhook(node.webhookUrl, {
+                  'Content-Type': 'application/json',
+                  'X-NexusFlow-Pipeline': pipeline.id,
+                }, JSON.stringify({
+                  pipeline: pipeline.name,
+                  node: node.label,
+                  timestamp: new Date().toISOString(),
+                  upstreamPreview: upstreamContext.slice(0, 600),
+                }));
+                node.lastOutput = `Webhook delivered (HTTP ${status}).`;
                 node.latencyMs = Math.max(60, Date.now() - startMs);
                 node.tokens = 0;
                 node.status = 'completed';

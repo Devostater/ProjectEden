@@ -10,7 +10,8 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import type { Express, Request } from 'express';
+import type { Express } from 'express';
+import { mayManage } from './permissions';
 import { logActivity } from './activity';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -19,21 +20,6 @@ const MAX_OUTPUT = 200000;
 
 export const terminalEnabled = () => process.env.TERMINAL_ENABLED === '1';
 
-function fromThisComputer(req: Request): boolean {
-  const ip = req.socket.remoteAddress || '';
-  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
-}
-
-function fromOwnPage(req: Request): boolean {
-  const origin = req.headers.origin;
-  if (!origin) return false; // browsers always send Origin on POST; anything else is not the hub's page
-  try {
-    return new URL(origin).host === req.headers.host;
-  } catch {
-    return false;
-  }
-}
-
 export function registerTerminalRoutes(app: Express) {
   app.get('/api/terminal', (_req, res) => {
     res.json({ enabled: terminalEnabled(), cwd: ROOT });
@@ -41,11 +27,12 @@ export function registerTerminalRoutes(app: Express) {
 
   app.post('/api/terminal', (req, res) => {
     if (!terminalEnabled()) return res.status(403).json({ error: 'The terminal is turned off. Turn it on in Account → Preferences.' });
-    if (!fromThisComputer(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'Commands can only be run from the hub on this computer.' });
+    if (!mayManage(req)) return res.status(403).json({ error: 'Commands can only be run from the hub on this computer.' });
 
     const command = typeof req.body?.command === 'string' ? req.body.command.trim() : '';
     let cwd = typeof req.body?.cwd === 'string' && req.body.cwd ? req.body.cwd : ROOT;
     if (!command) return res.status(400).json({ error: 'Type a command first.' });
+    if (command.includes('\0')) return res.status(400).json({ error: 'Invalid command.' });
     if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) cwd = ROOT;
 
     // `cd` has to be handled here: each command runs in its own shell, so the folder is remembered by the page.
@@ -58,7 +45,7 @@ export function registerTerminalRoutes(app: Express) {
       return res.json({ output: '', exitCode: 0, cwd: target });
     }
 
-    logActivity('info', `Terminal: ${command}`);
+    logActivity('info', 'Terminal command started.');
     const child = spawn(command, { shell: true, cwd, windowsHide: true });
     let output = '';
     let finished = false;

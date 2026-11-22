@@ -1,5 +1,6 @@
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
+import { TabletChat } from './components/TabletChat.tsx';
 import { ErrorBoundary } from './ErrorBoundary.tsx';
 import './index.css';
 import { setupInstall } from './installApp.ts';
@@ -16,8 +17,19 @@ document.addEventListener('click', (e) => {
   setTimeout(() => button.classList.remove('refresh-spin'), 750);
 });
 
-createRoot(document.getElementById('root')!).render(
-  <ErrorBoundary>
-    <App />
-  </ErrorBoundary>,
-);
+const root = createRoot(document.getElementById('root')!);
+async function start() {
+  try {
+    const response = await fetch('/api/me');
+    if (response.status === 401) {
+      root.render(<p className="p-5"><a href="/">Pair this device with EDEN</a></p>);
+      return;
+    }
+    if (!response.ok) throw new Error();
+    const { local } = await response.json();
+    root.render(<ErrorBoundary>{local === true ? <App /> : <TabletChat />}</ErrorBoundary>);
+  } catch {
+    root.render(<p role="alert" className="p-5">Could not connect to EDEN. Reload to try again.</p>);
+  }
+}
+void start();

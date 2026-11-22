@@ -1,4 +1,4 @@
-// Unified multi-provider LLM layer: LYRA (your own local AI), Claude (Anthropic), Gemini (Google), OpenAI.
+﻿// Unified multi-provider LLM layer: LYRA (your own local AI), Claude (Anthropic), Gemini (Google), OpenAI.
 // Every AI call in the server goes through generate(); the provider is picked from the model id.
 import { GoogleGenAI } from '@google/genai';
 import { spawn, spawnSync } from 'child_process';
@@ -314,9 +314,9 @@ export async function generate(req: GenerateRequest): Promise<GenerateResult> {
   const provider = providerFor(model);
   const mode = providerMode(provider);
   if (mode === 'off') {
-    if (provider === 'extra') throw new Error('That free AI is not available right now (not running or removed). Check Account → Connections → Free AIs.');
+    if (provider === 'extra') throw new Error('That free AI is not available right now (not running or removed). Check Account â†’ Connections â†’ Free AIs.');
     if (provider === 'lyra') throw new Error("LYRA isn't running. Start it with Nova.bat on the PC (it answers on " + LYRA_URL() + ').');
-    throw new Error(`${provider === 'anthropic' ? 'Claude' : provider === 'google' ? 'Gemini' : 'OpenAI'} isn't connected yet. Connect it in Account → Connections.`);
+    throw new Error(`${provider === 'anthropic' ? 'Claude' : provider === 'google' ? 'Gemini' : 'OpenAI'} isn't connected yet. Connect it in Account â†’ Connections.`);
   }
   try {
     let result = await dispatch(provider, mode, model, req);
@@ -340,11 +340,46 @@ export async function generate(req: GenerateRequest): Promise<GenerateResult> {
   }
 }
 
+// Tablet chat uses text APIs only, with no owner context or CLI fallback.
+export async function replyToTabletChat(messages: ChatMessage[]): Promise<string> {
+  const request: GenerateRequest = { messages, maxTokens: 1500 };
+  const local = localModelFor('general');
+  if (local) {
+    try {
+      const result = await dispatch('extra', 'api', local, request);
+      recordUsage('extra', result.tokens || 0);
+      recordSplit(true);
+      return result.text;
+    } catch {
+      // A connected local model can go offline between discovery and the request.
+    }
+  }
+  if (!isOffline()) {
+    const candidates = [
+      ['google', 'gemini-3.5-flash-lite'],
+      ['anthropic', 'claude-haiku-5-5'],
+      ['openai', process.env.OPENAI_MODEL || 'gpt-5'],
+    ] as const;
+    for (const [provider, model] of candidates) {
+      if (providerMode(provider) !== 'api' || providerUnavailable(provider) || isAuraModel(model)) continue;
+      try {
+        const result = await dispatch(provider, 'api', model, request);
+        recordUsage(provider, result.tokens || 0);
+        recordSplit(false);
+        return result.text;
+      } catch (error) {
+        recordFailure(provider, String(error instanceof Error ? error.message : error));
+      }
+    }
+  }
+  throw new Error('No tablet chat provider available.');
+}
+
 const isLocalModel = (id: string) => /^x:(ollama|lmstudio|tablet.*):/.test(id);
 // A local answer is used only if it looks like a real answer; otherwise the cloud answers instead.
 const goodAnswer = (text: string) => {
   const t = text.trim();
-  return t.length >= 2 && !/^(error|i('|’)?m sorry|i cannot|i can('|’)?t|as an ai)/i.test(t);
+  return t.length >= 2 && !/^(error|i('|â€™)?m sorry|i cannot|i can('|â€™)?t|as an ai)/i.test(t);
 };
 
 function dispatch(provider: ProviderId, mode: ProviderMode, model: string, req: GenerateRequest): Promise<GenerateResult> {

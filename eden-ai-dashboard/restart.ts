@@ -7,7 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express } from 'express';
 import { logActivity } from './activity';
-import { mayManage } from './pairing';
+import { mayManage } from './permissions';
 import { activeUpdateNames } from './updates';
 import { runningCardNames } from './cardRunner';
 
@@ -59,7 +59,7 @@ function runningWork() {
 
 export function registerRestartRoutes(app: Express) {
   app.post('/api/stop-server', (req, res) => {
-    if (!mayManage(req)) return res.status(403).json({ error: 'The hub can only be stopped from this computer, or from a device with "Code updates" switched on.' });
+    if (!mayManage(req)) return res.status(403).json({ error: 'The hub can only be stopped from this computer.' });
     logActivity('work', 'Hub server stopping (asked for from Settings).');
     res.json({ ok: true });
     res.on('finish', () => {
@@ -70,12 +70,12 @@ export function registerRestartRoutes(app: Express) {
 
   // Lets the Settings page ask "is anything still running?" before it restarts the hub.
   app.get('/api/restart/status', (req, res) => {
-    if (!mayManage(req)) return res.status(403).json({ error: 'The hub can only be restarted from this computer, or from a device with "Code updates" switched on.' });
+    if (!mayManage(req)) return res.status(403).json({ error: 'The hub can only be restarted from this computer.' });
     res.json(runningWork());
   });
 
   app.post('/api/restart', (req, res) => {
-    if (!mayManage(req)) return res.status(403).json({ error: 'The hub can only be restarted from this computer, or from a device with "Code updates" switched on.' });
+    if (!mayManage(req)) return res.status(403).json({ error: 'The hub can only be restarted from this computer.' });
     // Pressed twice quickly: the restart is already on its way, so don't log it or start it again.
     if (restartRequested) return res.json({ ok: true });
     // Warn first if a restart would cut off work in progress. "force" means the owner has seen the list and wants to go ahead.

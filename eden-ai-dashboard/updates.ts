@@ -23,7 +23,7 @@ import { cliSignedIn, providerUnavailable, recordFailure } from './providers';
 import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
 import { localAgentModel, localClaudeEnv, planClaudeEnv } from './localClaude';
-import { mayView, mayManage } from './pairing';
+import { mayView, mayManage } from './permissions';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STORE = path.join(APP_DIR, '.eden-updates.json');
@@ -600,7 +600,7 @@ let busy = false;
 // A hub update that changes the server part was applied or undone since this copy of the hub started:
 // it only takes effect after a restart (which also clears this).
 let restartPending = false;
-const LOCKED = 'Code updates are kept to this computer. To use them on this device too, switch on "Code updates" for it on the PC (Devices, under Connected over Wi-Fi), or plug it in with USB.';
+const LOCKED = 'Code updates are only available on the computer running the hub.';
 let onApplied: (job: UpdateJob, cb: Codebase) => void = () => {};
 
 async function process_(job: UpdateJob) {

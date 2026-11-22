@@ -1,19 +1,13 @@
-// Phone access. The hub listens on your Wi-Fi so your phone can reach it, which means anyone on the
-// same network could too. So every request that does not come from this computer must carry the
-// pairing code, either once in the address (?pair=CODE, which then sets a cookie) or as that cookie.
-// The code is random, stored in .eden-pairing.json, and can be replaced from the Remote tab, which signs
-// out every paired device. Each paired device gets its own sign-in (a random token in a cookie; only its
-// hash is stored), so Devices can list them by name and sign one out without touching the others.
+// Pair a device with a code from the owner PC, then authenticate it with a revocable cookie.
 import crypto from 'crypto';
-import { jsonObject, jsonStore } from './jsonStore';
-import { fileProblem } from './activity';
+import { jsonObject, jsonStore } from './jsonStore.ts';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { isLocal, mayManage, mayUseTabletRoute } from './permissions.ts';
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-pairing.json');
-const COOKIE = 'eden_pair'; // older shared sign-in (the code itself): still accepted, swapped for a device token
 const DEVICE_COOKIE = 'eden_dev';
 
 export interface RemoteDevice {
@@ -25,53 +19,19 @@ export interface RemoteDevice {
   ip: string;
   pairedAt: string;
   lastSeen: string;
-  // Turned on from this computer, per device: it may ask for, apply and undo code updates, back up and
-  // restart the hub, like the PC itself. Off for every new device.
-  trusted?: boolean;
 }
+
+const SESSION_SECONDS = 30 * 24 * 60 * 60;
+const ATTEMPT_WINDOW_MS = 5 * 60 * 1000;
+const MAX_ATTEMPTS = 5;
 
 function newCode() {
-  // 8 characters, no look-alikes (0/O, 1/I/L), easy to type on a phone.
   const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-  return Array.from(crypto.randomBytes(8), (b) => alphabet[b % alphabet.length]).join('');
+  return Array.from({ length: 8 }, () => alphabet[crypto.randomInt(alphabet.length)]).join('');
 }
 
-const pairingFile = jsonStore<{ code: string; devices?: RemoteDevice[] }>(FILE, (value) =>
-  jsonObject(value) && typeof value.code === 'string' && value.code.length > 0 &&
-  (value.devices === undefined || (Array.isArray(value.devices) && value.devices.every((d) =>
-    jsonObject(d) && typeof d.pairedAt === 'string' &&
-    (d.tokenHashes === undefined || (Array.isArray(d.tokenHashes) && d.tokenHashes.every((token) => typeof token === 'string'))) &&
-    (d.tokenHash === undefined || typeof d.tokenHash === 'string')))), 2);
-const saved = pairingFile.read();
-let code = saved?.code ?? newCode();
-let devices = saved?.devices ?? [];
-// Older entries had a single tokenHash.
-for (const d of devices as any[]) if (!d.tokenHashes) d.tokenHashes = d.tokenHash ? [d.tokenHash] : [], delete d.tokenHash;
-// Merge entries made by the same device at the same moment (a page sending many requests at once used to
-// make one entry per request). Every sign-in is kept, so nothing gets signed out.
-{
-  const merged: RemoteDevice[] = [];
-  for (const d of [...devices].sort((a, b) => a.pairedAt.localeCompare(b.pairedAt))) {
-    const twin = merged.find((m) => m.ip === d.ip && m.agent === d.agent && m.kind === d.kind && Math.abs(new Date(m.pairedAt).getTime() - new Date(d.pairedAt).getTime()) < 5 * 60 * 1000);
-    if (twin) {
-      twin.tokenHashes = [...new Set([...twin.tokenHashes, ...d.tokenHashes])];
-      if (d.lastSeen > twin.lastSeen) twin.lastSeen = d.lastSeen;
-    } else merged.push(d);
-  }
-  devices = merged;
-}
-const savePairing = () => {
-  try {
-    pairingFile.write({ code, devices });
-  } catch (err) {
-    fileProblem('save paired devices', err);
-  }
-};
-if (!saved) savePairing();
+const hash = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
 
-const hash = (t: string) => crypto.createHash('sha256').update(t).digest('hex');
-
-// A readable guess at what the device is, from its browser's description of itself.
 function describe(ua = ''): { name: string; kind: RemoteDevice['kind']; agent: string } {
   const browser = /; wv\)/.test(ua) ? 'Eden app' : /EdgA?\//.test(ua) ? 'Edge' : /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
   if (/iPad/.test(ua)) return { name: 'iPad', kind: 'tablet', agent: browser };
@@ -89,85 +49,7 @@ function describe(ua = ''): { name: string; kind: RemoteDevice['kind']; agent: s
 
 const ipOf = (req: Request) => (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 
-// A page loads many files at once, so one device can arrive with several requests before its new sign-in
-// is stored. Requests from the same address and browser within two minutes share one sign-in.
-const recentlyAdded = new Map<string, { token: string; at: number }>();
-
-function addDevice(req: Request, res: Response) {
-  const ua = String(req.headers['user-agent'] || '');
-  const key = `${ipOf(req)}|${ua}`;
-  const recent = recentlyAdded.get(key);
-  let token: string;
-  if (recent && Date.now() - recent.at < 2 * 60 * 1000) token = recent.token;
-  else {
-    token = crypto.randomBytes(32).toString('hex');
-    recentlyAdded.set(key, { token, at: Date.now() });
-    const d = describe(ua);
-    const now = new Date().toISOString();
-    devices.push({ id: crypto.randomBytes(6).toString('hex'), tokenHashes: [hash(token)], ...d, ip: ipOf(req), pairedAt: now, lastSeen: now });
-    savePairing();
-  }
-  res.setHeader('Set-Cookie', [`${DEVICE_COOKIE}=${token}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax`, `${COOKIE}=; Path=/; Max-Age=0`]);
-}
-
-// "Last seen" is kept in memory and written at most once a minute.
-let dirty = false;
-setInterval(() => {
-  if (dirty) {
-    dirty = false;
-    savePairing();
-  }
-}, 60000).unref?.();
-
-const isLocal = (req: Request) => {
-  const ip = req.socket.remoteAddress || '';
-  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
-};
-
-const cookieOf = (req: Request, name = COOKIE) =>
-  (req.headers.cookie || '')
-    .split(';')
-    .map((c) => c.trim().split('='))
-    .find(([k]) => k === name)?.[1];
-
-const same = (a = '', b = '') => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
-
-// Addresses on this computer that a phone on the same Wi-Fi can use.
 const rank = (ip: string) => (ip.startsWith('192.168.') ? 0 : ip.startsWith('10.') ? 1 : ip.startsWith('100.') ? 2 : 3);
-
-export const pairingCode = () => code;
-
-// The paired device a request comes from (by its own sign-in), if any.
-const deviceOf = (req: Request) => {
-  const token = cookieOf(req, DEVICE_COOKIE);
-  return token ? devices.find((d) => d.tokenHashes.includes(hash(token))) : undefined;
-};
-// A paired device the owner switched "Code updates" on for (Devices, on the PC).
-export const trustedDevice = (req: Request) => !isLocal(req) && !!deviceOf(req)?.trusted;
-// Requests that change things must come from the hub's own page (stops other websites from sending them).
-const fromOwnPage = (req: Request) => {
-  try {
-    return !!req.headers.origin && new URL(req.headers.origin).host === req.headers.host;
-  } catch {
-    return false;
-  }
-};
-// May this request look at the things kept to this computer (code updates, backups)?
-export const mayView = (req: Request) => isLocal(req) || trustedDevice(req);
-// ...and change them?
-export const mayManage = (req: Request) => mayView(req) && fromOwnPage(req);
-
-// True when the request comes from this same computer, even if the hub was opened through its Wi-Fi
-// address (for example http://192.168.1.20:3000) instead of "localhost". Only this computer can send
-// a request that appears to come from its own address, so this is safe for showing the pairing code.
-const fromThisComputer = (req: Request) => {
-  if (isLocal(req)) return true;
-  const ip = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
-  if (!ip) return false;
-  return Object.values(os.networkInterfaces())
-    .flat()
-    .some((n) => !!n && n.address === ip);
-};
 
 export function lanAddresses(port: number): string[] {
   return Object.values(os.networkInterfaces())
@@ -186,82 +68,156 @@ button{width:100%;padding:12px;border:0;border-radius:10px;background:#4f46e5;co
 <body><form method="get"><h1>Eden AI Hub</h1><p>Scan the QR code, or enter the pairing code shown on your computer in the hub's Remote tab.</p>
 <input name="pair" autocomplete="off" autocapitalize="characters" required><button>Connect</button></form></body></html>`;
 
-export function registerPairing(app: Express) {
-  // Runs before every route.
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    if (isLocal(req)) return next();
-    const fromQuery = typeof req.query.pair === 'string' ? req.query.pair.trim().toUpperCase() : '';
-    if (fromQuery && same(fromQuery, code)) {
-      // Already paired (scanning the code again): keep its sign-in instead of adding a duplicate.
-      const existing = devices.find((d) => d.tokenHashes.includes(hash(cookieOf(req, DEVICE_COOKIE) || '')));
-      if (!existing) addDevice(req, res);
-      // Drop the code from the address so it doesn't sit in history.
-      return res.redirect(req.path);
+function readPairing(file: string) {
+  return jsonStore<{ code: string; devices?: RemoteDevice[] }>(file, (value) =>
+    jsonObject(value) && typeof value.code === 'string' && value.code.length > 0 &&
+    (value.devices === undefined || (Array.isArray(value.devices) && value.devices.every((device) =>
+      jsonObject(device) && typeof device.pairedAt === 'string' &&
+      (device.tokenHashes === undefined || (Array.isArray(device.tokenHashes) &&
+        device.tokenHashes.every((token) => typeof token === 'string'))) &&
+      (device.tokenHash === undefined || typeof device.tokenHash === 'string')))),
+    // An older backup may contain a revoked session or a replaced code.
+    2, () => ({ code: newCode(), devices: [] }));
+}
+
+const defaultPairing = () => pairing ??= createPairing(FILE, Date.now);
+let pairing: ReturnType<typeof createPairing> | undefined;
+export const pairingCode = () => defaultPairing().code();
+
+function createPairing(file: string, now: () => number) {
+  const store = readPairing(file);
+  const saved = store.read();
+  let code = saved?.code ?? newCode();
+  let devices = (saved?.devices ?? []).map((device: RemoteDevice & { tokenHash?: string; trusted?: boolean }) => {
+    const { tokenHash, trusted, ...current } = device;
+    return { ...current, tokenHashes: current.tokenHashes ?? (tokenHash ? [tokenHash] : []) };
+  });
+  if (!saved) store.write({ code, devices });
+
+  let dirty = false;
+  let attempts = new Map<string, number>();
+  let retryAt = 0;
+  let totalWrong = 0;
+
+  const expires = (device: RemoteDevice) => Date.parse(device.pairedAt) + SESSION_SECONDS * 1000;
+  const deviceOf = (req: Request) => {
+    const token = req.headers.cookie?.match(/(?:^|;\s*)eden_dev=([a-f0-9]{64})(?:;|$)/)?.[1];
+    if (!token) return;
+    const digest = hash(token);
+    return devices.find((device) => expires(device) > now() && device.tokenHashes.includes(digest));
+  };
+  const save = (nextCode: string, nextDevices: RemoteDevice[]) => {
+    try {
+      store.write({ code: nextCode, devices: nextDevices });
+      code = nextCode;
+      devices = nextDevices;
+      dirty = false;
+      return true;
+    } catch (error) {
+      console.error('[EDEN pairing] Could not save paired devices:', error instanceof Error ? error.message : String(error));
+      return false;
     }
-    const token = cookieOf(req, DEVICE_COOKIE);
-    const device = token ? devices.find((d) => d.tokenHashes.includes(hash(token))) : undefined;
-    if (device) {
-      const now = Date.now();
-      if (now - new Date(device.lastSeen).getTime() > 30000 || device.ip !== ipOf(req)) {
-        device.lastSeen = new Date(now).toISOString();
-        device.ip = ipOf(req);
-        dirty = true;
-      }
-      return next();
-    }
-    // Paired before devices had their own sign-in: give it one now, without asking again.
-    if (same(cookieOf(req), code)) {
-      addDevice(req, res);
-      return next();
-    }
-    if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'This device is not paired with the hub.' });
-    res.status(401).type('html').send(LOCKED_PAGE);
-  });
+  };
 
-  // Only shown on this computer.
-  app.get('/api/pairing', (req, res) => {
-    if (!fromThisComputer(req)) return res.status(403).json({ error: 'Only available on the computer running the hub.' });
-    res.json({ code, addresses: lanAddresses(Number(process.env.PORT) || 3000) });
-  });
+  return {
+    code: () => code,
+    register(app: Express) {
+      const timer = setInterval(() => { if (dirty) save(code, devices); }, 60000);
+      timer.unref();
 
-  app.post('/api/pairing/reset', (req, res) => {
-    if (!fromThisComputer(req)) return res.status(403).json({ error: 'Only available on the computer running the hub.' });
-    code = newCode();
-    devices = []; // a new code signs out every paired device
-    savePairing();
-    res.json({ code, addresses: lanAddresses(Number(process.env.PORT) || 3000) });
-  });
+      app.use((req: Request, res: Response, next: NextFunction) => {
+        if (isLocal(req)) return next();
+        res.set({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+        const device = deviceOf(req);
+        if (req.method === 'GET' && (req.path === '/' || req.path === '/index.html') && req.query.pair !== undefined) {
+          const time = now();
+          if (time >= retryAt) {
+            attempts = new Map();
+            totalWrong = 0;
+            retryAt = time + ATTEMPT_WINDOW_MS;
+          }
+          const ip = ipOf(req);
+          if ((attempts.get(ip) ?? 0) >= MAX_ATTEMPTS || totalWrong >= 100) {
+            res.set('Retry-After', String(Math.ceil((retryAt - time) / 1000)));
+            return res.status(429).send('Too many pairing attempts. Try again in a few minutes.');
+          }
+          const candidate = typeof req.query.pair === 'string' ? req.query.pair.trim().toUpperCase() : '';
+          if (!crypto.timingSafeEqual(Buffer.from(hash(candidate), 'hex'), Buffer.from(hash(code), 'hex'))) {
+            attempts.set(ip, (attempts.get(ip) ?? 0) + 1);
+            totalWrong++;
+            return res.status(401).type('html').send(LOCKED_PAGE);
+          }
+          if (!device) {
+            const token = crypto.randomBytes(32).toString('hex');
+            const iso = new Date(time).toISOString();
+            const entry = { id: crypto.randomBytes(6).toString('hex'), tokenHashes: [hash(token)],
+              ...describe(req.get('user-agent')), ip, pairedAt: iso, lastSeen: iso };
+            if (!save(code, [...devices.filter((other) => expires(other) > time), entry])) {
+              return res.status(503).send('Could not save this pairing.');
+            }
+            res.cookie(DEVICE_COOKIE, token, { path: '/', maxAge: SESSION_SECONDS * 1000,
+              httpOnly: true, sameSite: 'lax', secure: req.secure });
+          }
+          return res.redirect('/');
+        }
+        if (!device) {
+          if (req.path.toLowerCase().startsWith('/api/')) return res.status(401).json({ error: 'This device is not paired with the hub.' });
+          return res.status(401).type('html').send(LOCKED_PAGE);
+        }
+        if (!mayUseTabletRoute(req)) return res.status(403).json({ error: 'This feature is only available on the computer running the hub.' });
+        if (now() - Date.parse(device.lastSeen) > 30000 || device.ip !== ipOf(req)) {
+          device.lastSeen = new Date(now()).toISOString();
+          device.ip = ipOf(req);
+          dirty = true;
+        }
+        return next();
+      });
 
-  // What this browser is to the hub: the computer itself, or a paired device (and what it may do).
-  app.get('/api/me', (req, res) => {
-    const d = isLocal(req) ? undefined : deviceOf(req);
-    res.json({ local: isLocal(req), device: d ? { id: d.id, name: d.name, kind: d.kind } : undefined, codeUpdates: mayView(req) });
-  });
+      const ownerInfo = () => ({ code, addresses: lanAddresses(Number(process.env.PORT) || 3000) });
+      app.get('/api/pairing', (_req, res) => res.set('Cache-Control', 'no-store').json(ownerInfo()));
 
-  // Devices paired over Wi-Fi (or Tailscale). Managed only from this computer.
-  app.get('/api/remote-devices', (req, res) => {
-    if (!fromThisComputer(req)) return res.status(403).json({ error: 'Only available on the computer running the hub.' });
-    const now = Date.now();
-    res.json({
-      devices: [...devices]
-        .sort((a, b) => b.lastSeen.localeCompare(a.lastSeen))
-        .map(({ tokenHashes, ...d }) => ({ ...d, online: now - new Date(d.lastSeen).getTime() < 2 * 60 * 1000 })),
-    });
-  });
-  app.post('/api/remote-devices/:id/:action', express.json(), (req, res) => {
-    if (!fromThisComputer(req)) return res.status(403).json({ error: 'Only available on the computer running the hub.' });
-    const d = devices.find((x) => x.id === req.params.id);
-    if (!d) return res.status(404).json({ error: 'That device is no longer paired.' });
-    if (req.params.action === 'rename') {
-      const name = String(req.body?.name || '').trim().slice(0, 40);
-      if (!name) return res.status(400).json({ error: 'Give it a name.' });
-      d.name = name;
-    } else if (req.params.action === 'forget') {
-      devices = devices.filter((x) => x !== d);
-    } else if (req.params.action === 'trust') {
-      d.trusted = req.body?.trusted === true;
-    } else return res.status(400).json({ error: 'Unknown action.' });
-    savePairing();
-    res.json({ ok: true });
-  });
+      app.post('/api/pairing/reset', (req, res) => {
+        if (!mayManage(req)) return res.status(403).json({ error: 'Use the hub page on this computer.' });
+        if (!save(newCode(), [])) return res.status(503).json({ error: 'Could not reset pairing.' });
+        res.set('Cache-Control', 'no-store').json(ownerInfo());
+      });
+
+      app.get('/api/me', (req, res) => {
+        const local = isLocal(req);
+        const device = local ? undefined : deviceOf(req);
+        res.set('Cache-Control', 'no-store').json({ local,
+          device: device && { id: device.id, name: device.name, kind: device.kind }, codeUpdates: local });
+      });
+
+      app.get('/api/remote-devices', (_req, res) => {
+        const time = now();
+        res.json({ devices: devices.filter((device) => expires(device) > time)
+          .sort((a, b) => b.lastSeen.localeCompare(a.lastSeen))
+          .map(({ tokenHashes, ...device }) => ({ ...device, online: time - Date.parse(device.lastSeen) < 120000 })) });
+      });
+
+      app.post('/api/remote-devices/:id/:action', express.json(), (req, res) => {
+        if (!mayManage(req)) return res.status(403).json({ error: 'Use the hub page on this computer.' });
+        const device = devices.find((entry) => entry.id === req.params.id);
+        if (!device) return res.status(404).json({ error: 'That device is no longer paired.' });
+
+        let nextDevices: RemoteDevice[];
+        if (req.params.action === 'rename') {
+          const name = String(req.body?.name || '').trim().slice(0, 40);
+          if (!name) return res.status(400).json({ error: 'Give it a name.' });
+          nextDevices = devices.map((entry) => entry === device ? { ...entry, name } : entry);
+        } else if (req.params.action === 'forget') {
+          nextDevices = devices.filter((entry) => entry !== device);
+        } else return res.status(400).json({ error: 'Unknown action.' });
+
+        if (!save(code, nextDevices)) return res.status(503).json({ error: 'Could not save the device change.' });
+        res.json({ ok: true });
+      });
+    },
+  };
+}
+
+export function registerPairing(app: Express, options?: { file: string; now: () => number }) {
+  const state = options ? createPairing(options.file, options.now) : defaultPairing();
+  state.register(app);
 }

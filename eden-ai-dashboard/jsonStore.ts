@@ -21,7 +21,7 @@ export function jsonObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-export function jsonStore<T>(file: string, accepts: (value: unknown) => boolean, space?: number) {
+export function jsonStore<T>(file: string, accepts: (value: unknown) => boolean, space?: number, recover?: (previous: T) => T) {
   const backup = `${file}.last-good`;
 
   function readCopy(source: string): { raw: string; value: T } | undefined {
@@ -54,9 +54,11 @@ export function jsonStore<T>(file: string, accepts: (value: unknown) => boolean,
       return current;
     }
     if (previous) {
-      replaceFile(file, previous.raw);
+      const recovered = recover ? recover(previous.value) : previous.value;
+      const raw = recover ? JSON.stringify(recovered, null, space) : previous.raw;
+      replaceFile(file, raw);
       console.warn(`[EDEN saves] Restored ${file} from ${backup}.`);
-      return previous;
+      return { raw, value: recovered };
     }
 
     // Recovery artifacts persist across restarts, even after a damaged store was moved aside.
