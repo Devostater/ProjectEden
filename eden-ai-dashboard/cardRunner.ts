@@ -1,6 +1,6 @@
 // The card runner: when a card sits in "Ready" with a teammate assigned, that teammate's AI does the
 // work, the result is added to the card as a note, and the card moves to "Review" for the owner.
-import { canUseWeb, generate, providerFor, providerUnavailable, fallbackModels, providerLabel, providerUsage, defaultModel, estimateCost, type ProviderId } from './providers';
+import { UnconfirmedPaidRequestError, canUseWeb, generate, providerFor, providerUnavailable, fallbackModels, providerLabel, providerUsage, defaultModel, estimateCost, type ProviderId } from './providers';
 import type { Agent, Project, Card } from './src/types/index';
 import { logActivity } from './activity';
 import { aiPaused } from './control';
@@ -77,6 +77,7 @@ export async function askTeammate(
       lastError = 'The AI returned an empty answer.';
     } catch (err: any) {
       lastError = err?.message || 'failed';
+      if (err instanceof UnconfirmedPaidRequestError) break;
     }
   }
   throw new Error(lastError);
@@ -169,6 +170,7 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
       lastError = 'The AI returned an empty answer.';
     } catch (err: any) {
       lastError = err?.message || 'failed';
+      if (err instanceof UnconfirmedPaidRequestError) break;
     }
   }
 

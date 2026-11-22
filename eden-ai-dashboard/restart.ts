@@ -1,5 +1,5 @@
 // "Restart hub": starts a fresh copy of the hub and closes this one, so you don't have to close and reopen Start Eden.
-// The new copy waits a few seconds first, so this one has let go of its port by then.
+// The supervisor waits for this process to exit and checks the port before launching.
 // Only the hub's own page can do this: on the computer running the hub, or on a paired device with "Code updates" switched on.
 import { spawn } from 'child_process';
 import fs from 'fs';
@@ -16,16 +16,17 @@ const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 function startNewCopy() {
   // The supervisor (scripts/hub-supervisor.mjs) starts the hub and keeps it running; plain "npm start" is the fallback.
   const command = fs.existsSync(path.join(APP_DIR, 'scripts', 'hub-supervisor.mjs')) ? 'node scripts/hub-supervisor.mjs' : 'npm start';
+  const env = { ...process.env, EDEN_PREVIOUS_HUB_PID: String(process.pid) };
   if (process.platform === 'win32') {
     // Opens a new window for the hub, like Start Eden does.
     spawn('cmd', ['/c', `start "EDEN AI Dashboard Server" cmd /c "timeout /t 4 /nobreak >nul & ${command}"`], {
-      cwd: APP_DIR,
+      cwd: APP_DIR, env,
       detached: true,
       stdio: 'ignore',
       windowsHide: false,
     }).unref();
   } else {
-    spawn('sh', ['-c', `sleep 4 && ${command}`], { cwd: APP_DIR, detached: true, stdio: 'ignore' }).unref();
+    spawn('sh', ['-c', `sleep 4 && ${command}`], { cwd: APP_DIR, env, detached: true, stdio: 'ignore' }).unref();
   }
 }
 

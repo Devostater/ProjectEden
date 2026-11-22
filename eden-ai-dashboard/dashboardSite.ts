@@ -14,3 +14,11 @@ export function serveDashboard(app: express.Express, root: string) {
   if (!build) throw new Error('No EDEN dashboard build found. Run npm run build and start EDEN again.');
   app.use(express.static(build, { dotfiles: 'ignore' }));
 }
+
+export function registerHealthRoute(app: express.Express, dev: boolean) {
+  app.get('/health', (_req, res) => {
+    res.set('Cache-Control', 'no-store')
+      .set('X-Eden-Mode', dev ? 'development' : 'production')
+      .json({ ok: true, pid: process.pid });
+  });
+}

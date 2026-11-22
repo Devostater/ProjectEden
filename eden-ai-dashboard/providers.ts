@@ -1,7 +1,7 @@
 ﻿// Unified multi-provider LLM layer: LYRA (your own local AI), Claude (Anthropic), Gemini (Google), OpenAI.
 // Every AI call in the server goes through generate(); the provider is picked from the model id.
-import { GoogleGenAI } from '@google/genai';
-import { spawn, spawnSync } from 'child_process';
+import { ApiError, GoogleGenAI } from '@google/genai';
+import { execFile, spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -31,8 +31,6 @@ export async function pingLyra() {
     lyraUp = false;
   }
 }
-pingLyra();
-setInterval(pingLyra, 30000).unref?.();
 export const lyraConnected = () => lyraUp;
 
 export interface ModelInfo {
@@ -80,44 +78,46 @@ const hasKey = (v?: string) => !!v && !/^MY_[A-Z_]+$/.test(v);
 //   Gemini  -> Gemini CLI   (`gemini`, Google account login, free tier)
 //   OpenAI  -> Codex CLI    (`codex`, ChatGPT plan login)
 const CLI: Record<ProviderId, string> = { lyra: '', anthropic: 'claude', google: 'gemini', openai: 'codex', extra: '' };
-const cliCache: Partial<Record<ProviderId, boolean>> = {};
+const cliProviders = ['anthropic', 'google', 'openai'] as const;
+const cliStatus = new Map<ProviderId, { installed: boolean; signedIn: boolean }>();
+let refreshInFlight: Promise<void> | undefined;
 
-export function cliInstalled(p: ProviderId, refresh = false): boolean {
-  if (p === 'lyra' || p === 'extra') return false;
-  if (refresh || cliCache[p] === undefined) {
-    const r = spawnSync(`${CLI[p]} --version`, { shell: true, timeout: 15000, windowsHide: true });
-    cliCache[p] = r.status === 0;
-  }
-  return cliCache[p]!;
+function runStatusCommand(command: string, timeout: number) {
+  return new Promise<{ ok: boolean; output: string }>((resolve) => {
+    execFile(command, { shell: true, timeout, windowsHide: true }, (error, stdout, stderr) => {
+      resolve({ ok: !error, output: error ? '' : stdout + stderr });
+    });
+  });
 }
 
-// Installed is not enough: the tool must also be signed in to your plan.
-const signedInCache: Partial<Record<ProviderId, boolean>> = {};
-const checkedAt: Partial<Record<ProviderId, number>> = {};
-const RECHECK_MS = 2 * 60 * 1000;
-
-export function cliSignedIn(p: ProviderId, refresh = false): boolean {
-  if (!cliInstalled(p, refresh)) return false;
-  if (refresh || signedInCache[p] === undefined || Date.now() - (checkedAt[p] || 0) > RECHECK_MS) {
-    checkedAt[p] = Date.now();
-    const run = (cmd: string) => spawnSync(cmd, { shell: true, timeout: 20000, windowsHide: true, encoding: 'utf-8' });
-    if (p === 'anthropic') {
-      const r = run('claude auth status');
+export function refreshProviderStatus(run = runStatusCommand): Promise<void> {
+  refreshInFlight ??= Promise.all(cliProviders.map(async (provider) => {
+    const { ok: installed } = await run(CLI[provider] + ' --version', 15000);
+    let signedIn = installed;
+    if (installed && provider === 'anthropic') {
+      const auth = await run('claude auth status', 20000);
       try {
-        signedInCache[p] = JSON.parse(r.stdout).loggedIn === true;
+        signedIn = auth.ok && JSON.parse(auth.output).loggedIn === true;
       } catch {
-        signedInCache[p] = r.status === 0 && !/"loggedIn":\s*false|not logged in/i.test(r.stdout + r.stderr);
+        signedIn = auth.ok && !/"loggedIn":\s*false|not logged in/i.test(auth.output);
       }
-    } else if (p === 'openai') {
-      const r = run('codex login status');
-      const out = `${r.stdout}${r.stderr}`;
-      signedInCache[p] = r.status === 0 && /logged in/i.test(out) && !/not logged in/i.test(out);
-    } else {
-      signedInCache[p] = true; // The Gemini CLI has no status command; a failed call marks it unavailable instead.
+    } else if (installed && provider === 'openai') {
+      const auth = await run('codex login status', 20000);
+      signedIn = auth.ok && /logged in/i.test(auth.output) && !/not logged in/i.test(auth.output);
     }
-  }
-  return signedInCache[p]!;
+    cliStatus.set(provider, { installed, signedIn });
+  })).then(() => {}).finally(() => { refreshInFlight = undefined; });
+  return refreshInFlight;
 }
+
+export function startProviderStatusRefresh() {
+  void pingLyra();
+  setInterval(pingLyra, 30_000).unref();
+  void refreshProviderStatus();
+  setInterval(refreshProviderStatus, 2 * 60 * 1000).unref();
+}
+
+export const cliSignedIn = (provider: ProviderId) => cliStatus.get(provider)?.signedIn ?? false;
 
 export type ProviderMode = 'subscription' | 'api' | 'off';
 
@@ -141,14 +141,8 @@ export function providerStatus(): Record<ProviderId, boolean> {
   };
 }
 
-export function providerDetails(refresh = false) {
-  return (['anthropic', 'google', 'openai'] as ProviderId[]).map((p) => {
-    if (refresh) {
-      cliSignedIn(p, true);
-      clearUnavailable();
-    }
-    return { provider: p, cli: CLI[p], cliInstalled: cliInstalled(p), mode: providerMode(p) };
-  });
+export function providerDetails() {
+  return cliProviders.map((p) => ({ provider: p, cli: CLI[p], cliInstalled: cliStatus.get(p)?.installed ?? false, mode: providerMode(p) }));
 }
 
 function flatten(req: GenerateRequest, opts: { tools?: boolean; web?: boolean } = {}): string {
@@ -175,7 +169,7 @@ function runCli(cmd: string, input: string, cwd: string, timeoutMs = 180000): Pr
     let err = '';
     const timer = setTimeout(() => {
       child.kill();
-      reject(new Error('Subscription CLI timed out'));
+      reject(new UnconfirmedPaidRequestError('The subscription CLI timed out. Its provider may still have processed this request.'));
     }, timeoutMs);
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
@@ -322,15 +316,6 @@ export async function generate(req: GenerateRequest): Promise<GenerateResult> {
     let result = await dispatch(provider, mode, model, req);
     recordUsage(provider, result.tokens || 0);
     recordSplit(isLocalModel(model));
-    // Gemini just turned out not to have Google Search on this key: Claude does the research this time too.
-    if (req.web && provider === 'google' && !result.usedWeb && !geminiCanSearch() && claudeCanResearch()) {
-      try {
-        const researched = await dispatch('anthropic', providerMode('anthropic'), RESEARCH_MODEL, req);
-        recordUsage('anthropic', researched.tokens || 0);
-        recordSplit(false);
-        result = researched;
-      } catch {}
-    }
     // LYRA and others that look things up themselves: say so when the answer lists its sources.
     if (req.web && result.usedWeb === undefined && /sources?\b/i.test(result.text) && /https?:\/\//.test(result.text)) result = { ...result, usedWeb: true };
     return result;
@@ -369,6 +354,7 @@ export async function replyToTabletChat(messages: ChatMessage[]): Promise<string
         return result.text;
       } catch (error) {
         recordFailure(provider, String(error instanceof Error ? error.message : error));
+        if (error instanceof UnconfirmedPaidRequestError) throw error;
       }
     }
   }
@@ -386,14 +372,7 @@ function dispatch(provider: ProviderId, mode: ProviderMode, model: string, req: 
   if (provider === 'lyra') return callLyra(req);
   if (provider === 'extra') return callExtra(model, { system: req.system, messages: toMessages(req), maxTokens: req.maxTokens }).then((r) => ({ ...r, provider: 'extra' as ProviderId }));
   if (mode === 'subscription' || isAuraModel(model)) return callSubscription(provider, model, req);
-  switch (provider) {
-    case 'anthropic':
-      return callClaude(model, req);
-    case 'openai':
-      return callOpenAI(model, req);
-    default:
-      return callGemini(model, req);
-  }
+  return generatePaid(provider, model, req);
 }
 
 // ---- Usage tracking -------------------------------------------------------------------------
@@ -553,7 +532,6 @@ const DEFAULT_DAILY_LIMIT = 100;
 export function providerUsage(refresh = false) {
   const real = realLimits(refresh);
   if (refresh) {
-    for (const p of ['anthropic', 'openai'] as ProviderId[]) cliSignedIn(p, true);
     clearUnavailable();
     clearLimitNotes();
   }
@@ -732,50 +710,64 @@ function geminiErrorMessage(err: any): string {
   }
 }
 
-// If Google says the model is busy (503) or over quota (429), retry once on the lighter model.
-async function callGemini(model: string, req: GenerateRequest): Promise<GenerateResult> {
-  try {
-    return await callGeminiOnce(model, req);
-  } catch (err: any) {
-    const msg = geminiErrorMessage(err);
-    const busy = /\b(503|429)\b|UNAVAILABLE|high demand|quota/i.test(String(err?.message || err));
-    if (busy && model !== GEMINI_FALLBACK) {
-      try {
-        return await callGeminiOnce(GEMINI_FALLBACK, req);
-      } catch (err2: any) {
-        throw new Error(`Gemini is busy right now: ${geminiErrorMessage(err2)}`);
-      }
-    }
-    throw new Error(`Gemini: ${msg}`);
+class PaidRequestRejected extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
   }
 }
 
-async function callGeminiOnce(model: string, req: GenerateRequest): Promise<GenerateResult> {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  // Some Gemini models accept the request but never answer; give up instead of hanging.
-  const timeout = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error(`Gemini (${model}) didn't answer within 90 seconds. Try another Gemini model.`)), 90000)
-  );
-  const ask = (web: boolean) =>
-    ai.models.generateContent({
+// An accepted request can still complete upstream after EDEN stops waiting.
+export class UnconfirmedPaidRequestError extends Error {}
+
+export async function generatePaid(
+  provider: 'anthropic' | 'google' | 'openai', model: string, req: GenerateRequest, timeoutMs = 90_000,
+): Promise<GenerateResult> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  const name = { anthropic: 'Claude', google: 'Gemini', openai: 'OpenAI' }[provider];
+  try {
+    if (provider === 'anthropic') return await callClaude(model, req, signal);
+    if (provider === 'openai') return await callOpenAI(model, req, signal);
+    return await callGemini(model, req, signal);
+  } catch (error) {
+    if (signal.aborted) {
+      throw new UnconfirmedPaidRequestError(
+        `${name} timed out after ${timeoutMs / 1000} seconds. The provider may still finish and charge for this request.`,
+      );
+    }
+    const message = `${name}: ${provider === 'google' ? geminiErrorMessage(error) : String(error instanceof Error ? error.message : error)}`;
+    const status = error instanceof ApiError || error instanceof PaidRequestRejected ? error.status : undefined;
+    if (status !== undefined && status >= 400 && status < 500 && status !== 408) throw new Error(message);
+    throw new UnconfirmedPaidRequestError(message + ' The provider may still have processed this request.', { cause: error });
+  }
+}
+
+async function callGemini(model: string, req: GenerateRequest, signal: AbortSignal): Promise<GenerateResult> {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, httpOptions: { retryOptions: { attempts: 1 }, fetch: (url, init) => fetch(url, { ...init, redirect: 'error' }) } });
+  const ask = (model: string, web: boolean) => {
+    signal.throwIfAborted();
+    return ai.models.generateContent({
       model,
       contents: toMessages(req).map((m) => ({
         role: m.role === 'assistant' ? 'model' : 'user',
         parts: [{ text: m.content }],
       })),
-      config: { ...(req.system ? { systemInstruction: req.system } : {}), ...(web ? { tools: [{ googleSearch: {} }] } : {}) },
+      config: { abortSignal: signal, ...(req.system ? { systemInstruction: req.system } : {}), ...(web ? { tools: [{ googleSearch: {} }] } : {}) },
     });
+  };
   const withSearch = !!req.web && geminiCanSearch();
   let response: Awaited<ReturnType<typeof ask>>;
   try {
-    response = await Promise.race([timeout, ask(withSearch)]);
-  } catch (err: any) {
-    const message = String(err?.message || err);
-    if (!withSearch || /didn't answer within/.test(message)) throw err;
-    // Google Search was refused (not part of this key's plan, or this model can't): remember that and answer without
-    // it. If Gemini really is out of quota, the plain try fails too and is reported as usual.
-    if (/RESOURCE_EXHAUSTED|quota|\b429\b|search|grounding|tool/i.test(message)) geminiSearchOffUntil = Date.now() + 12 * 60 * 60 * 1000;
-    response = await Promise.race([timeout, ask(false)]);
+    response = await ask(model, withSearch);
+  } catch (error) {
+    if (!(error instanceof ApiError) || signal.aborted) throw error;
+    // Retry only explicit rejections, at most once, within the original time limit.
+    if (withSearch && (error.status === 400 || error.status === 403) && /search|grounding|tool/i.test(geminiErrorMessage(error))) {
+      geminiSearchOffUntil = Date.now() + 12 * 60 * 60 * 1000;
+      response = await ask(model, false);
+    } else if (error.status === 429 && model !== GEMINI_FALLBACK) {
+      model = GEMINI_FALLBACK;
+      response = await ask(model, withSearch);
+    } else throw error;
   }
   let text = response.text ?? '';
   // The pages Google Search gave the model. Listed under the answer, unless the model already wrote its own list.
@@ -791,9 +783,11 @@ async function callGeminiOnce(model: string, req: GenerateRequest): Promise<Gene
   };
 }
 
-async function callClaude(model: string, req: GenerateRequest): Promise<GenerateResult> {
+async function callClaude(model: string, req: GenerateRequest, signal: AbortSignal): Promise<GenerateResult> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
+    signal,
+    redirect: 'error',
     headers: {
       'content-type': 'application/json',
       'x-api-key': process.env.ANTHROPIC_API_KEY!,
@@ -807,7 +801,7 @@ async function callClaude(model: string, req: GenerateRequest): Promise<Generate
     }),
   });
   const data: any = await res.json();
-  if (!res.ok) throw new Error(`Claude error: ${data?.error?.message || res.statusText}`);
+  if (!res.ok) throw new PaidRequestRejected(res.status, data?.error?.message || res.statusText);
   const text = (data.content || [])
     .filter((b: any) => b.type === 'text')
     .map((b: any) => b.text)
@@ -820,12 +814,14 @@ async function callClaude(model: string, req: GenerateRequest): Promise<Generate
   };
 }
 
-async function callOpenAI(model: string, req: GenerateRequest): Promise<GenerateResult> {
+async function callOpenAI(model: string, req: GenerateRequest, signal: AbortSignal): Promise<GenerateResult> {
   const messages: any[] = [];
   if (req.system) messages.push({ role: 'system', content: req.system });
   messages.push(...toMessages(req));
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
+    signal,
+    redirect: 'error',
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -833,7 +829,7 @@ async function callOpenAI(model: string, req: GenerateRequest): Promise<Generate
     body: JSON.stringify({ model, messages, max_completion_tokens: req.maxTokens ?? 4096 }),
   });
   const data: any = await res.json();
-  if (!res.ok) throw new Error(`OpenAI error: ${data?.error?.message || res.statusText}`);
+  if (!res.ok) throw new PaidRequestRejected(res.status, data?.error?.message || res.statusText);
   return {
     text: data.choices?.[0]?.message?.content ?? '',
     tokens: data.usage?.total_tokens,

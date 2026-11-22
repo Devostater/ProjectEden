@@ -1,11 +1,12 @@
 ﻿import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { applyWithRecovery } from '../scripts/recover.mjs';
 
@@ -55,7 +56,8 @@ test('supervisor stops after three broken boots and offline recovery restores th
   write('dist/index.html', 'broken dashboard');
   write('dist/assets/app.js', 'broken asset');
   write('.eden-dist-last-good/index.html', 'unrelated older build');
-  write('node_modules/tsx/dist/cli.mjs', 'process.exit(1);');
+  write('node_modules/tsx/package.json', '{"main":"index.mjs"}');
+  write('node_modules/tsx/index.mjs', '');
   const cli = (...args: string[]) => run(process.execPath, ['scripts/recover.mjs', ...args], options);
 
   await assert.rejects(cli('--force'), /Close EDEN/);
@@ -108,4 +110,69 @@ test('recovery refuses a mismatched update and a damaged build even with force',
   });
   assert.equal(read('server.ts'), 'working server');
   assert.equal(read('unrelated.ts'), 'owner work outside the update');
+});
+
+test('the supervisor waits for the old hub to exit and for the port to become free', { timeout: 15_000 }, async (t) => {
+  const { root, write, read } = disposableCopy(t);
+  const { server: blocker, port } = await availablePort(t);
+  blocker.close();
+  await once(blocker, 'close');
+  write('node_modules/tsx/package.json', '{"main":"index.mjs"}');
+  write('node_modules/tsx/index.mjs', '');
+  write('server.ts', [
+    "import fs from 'node:fs';",
+    "import http from 'node:http';",
+    "const first = !fs.existsSync('first');",
+    "const hub = http.createServer((_req, res) => res.end('fake hub'));",
+    "hub.listen(Number(process.env.PORT), '0.0.0.0', () => fs.writeFileSync(first ? 'first' : 'second', String(process.pid)));",
+    "setInterval(() => {",
+    "  if (first && fs.existsSync('release-port') && hub.listening) hub.close(() => fs.writeFileSync('released', 'yes'));",
+    "  if (first && fs.existsSync('exit-first')) process.exit(0);",
+    "  if (!first && fs.existsSync('stop')) process.exit(64);",
+    "}, 50);",
+  ].join('\n'));
+
+  const keeper = spawn(process.execPath, ['scripts/hub-supervisor.mjs'], {
+    cwd: root, env: { ...process.env, PORT: String(port) }, stdio: 'ignore',
+  });
+  const closed = once(keeper, 'close');
+  const exists = (name: string) => fs.existsSync(path.join(root, name));
+  const waitFor = async (ready: () => boolean) => {
+    for (let i = 0; i < 100 && !ready(); i++) await delay(50);
+    assert(ready(), exists('.eden-logs/hub.log') ? read('.eden-logs/hub.log') : 'Supervisor did not start');
+  };
+  try {
+    await waitFor(() => exists('first'));
+    write('release-port', 'yes');
+    await waitFor(() => exists('released'));
+    await delay(1650);
+    assert.equal(exists('second'), false, 'the first process still owns the run');
+
+    blocker.listen(port, '127.0.0.1');
+    await once(blocker, 'listening');
+    write('exit-first', 'yes');
+    await waitFor(() => read('.eden-logs/hub.log').includes('exit code 0'));
+    await delay(1800);
+    assert.equal(exists('second'), false, 'another listener still owns the port');
+    blocker.close();
+    await once(blocker, 'close');
+
+    await waitFor(() => exists('second'));
+    assert.notEqual(read('first'), read('second'));
+    write('stop', 'yes');
+    assert.deepEqual(await closed, [0, null]);
+  } finally {
+    if (keeper.exitCode === null && keeper.signalCode === null) {
+      write('exit-first', 'yes');
+      write('stop', 'yes');
+      // Stop the disposable server even if the supervisor has not yet seen the marker.
+      for (const name of ['first', 'second']) {
+        if (exists(name)) {
+          try { process.kill(Number(read(name))); } catch {}
+        }
+      }
+      keeper.kill();
+      await closed;
+    }
+  }
 });

@@ -6,7 +6,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
-import { providerDetails, providerUsage, usageTotals } from './providers';
+import { clearUnavailable, refreshProviderStatus, providerDetails, providerUsage, usageTotals } from './providers';
 import { PRESETS, scanExtraAIs, addExtraAI, setExtraEnabled, removeExtraAI, extraSummary } from './extraAI';
 
 const ENV_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '.env.local');
@@ -121,13 +121,19 @@ export function registerSettingsRoutes(app: Express) {
     }
   });
 
-  app.get('/api/provider-usage', (req, res) => {
-    res.json({ usage: providerUsage(req.query.refresh === '1'), totals: usageTotals() });
+  app.get('/api/provider-usage', async (req, res) => {
+    const refresh = req.query.refresh === '1';
+    if (refresh) await refreshProviderStatus();
+    res.json({ usage: providerUsage(refresh), totals: usageTotals() });
   });
 
-  app.get('/api/settings', (req, res) => {
+  app.get('/api/settings', async (req, res) => {
+    if (req.query.refresh === '1') {
+      await refreshProviderStatus();
+      clearUnavailable();
+    }
     res.json({
-      providers: providerDetails(req.query.refresh === '1'),
+      providers: providerDetails(),
       settings: SETTING_KEYS.map((s) => {
         const v = process.env[s.key];
         const set = !isPlaceholder(v);

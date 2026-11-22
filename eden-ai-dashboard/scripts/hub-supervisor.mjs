@@ -7,6 +7,9 @@
 // Add --open to also open the Eden AI Hub app window.
 import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
+import net from 'node:net';
+import { networkInterfaces } from 'node:os';
+import { setTimeout as delay } from 'node:timers/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { findBuild } from './build-paths.mjs';
@@ -17,7 +20,7 @@ process.title = 'Devostater - Eden AI Hub - keeper (closing this window stops Ed
 
 const APP = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PORT = Number(process.env.PORT) || 3000;
-const HEALTH = `http://127.0.0.1:${PORT}/api/models`;
+const HEALTH = `http://127.0.0.1:${PORT}/health`;
 const LOG_DIR = path.join(APP, '.eden-logs');
 const LOG = path.join(LOG_DIR, 'hub.log');
 const LOCK = path.join(LOG_DIR, 'supervisor.pid');
@@ -40,24 +43,48 @@ function log(line) {
 }
 
 async function probeHub(timeout = 4000) {
+  let response;
   try {
-    const r = await fetch(HEALTH, { signal: AbortSignal.timeout(timeout) });
-    return r.headers.get('x-eden-mode') === 'production' && r.status < 500 ? 'production' : 'other';
+    response = await fetch(HEALTH, { signal: AbortSignal.timeout(timeout), redirect: 'error' });
+    if (response.status === 200 && response.headers.get('x-eden-mode') === 'production') {
+      const health = await response.json();
+      if (health.ok === true && Number.isSafeInteger(health.pid) && health.pid > 0) return health.pid;
+    }
   } catch {
-    return 'offline';
+    return response ? 'other' : 'offline';
+  } finally {
+    if (response?.body && !response.bodyUsed) await response.body.cancel().catch(() => {});
   }
+  return 'other';
 }
 
 async function answering(timeout) {
-  return (await probeHub(timeout)) === 'production';
+  return typeof await probeHub(timeout) === 'number';
+}
+
+function canBind(host) {
+  return new Promise((resolve) => {
+    const probe = net.createServer((socket) => socket.destroy());
+    probe.once('error', () => resolve(false));
+    probe.listen({ port: PORT, host, exclusive: true }, () => probe.close((error) => resolve(!error)));
+  });
+}
+
+async function portFree() {
+  // Windows can allow a wildcard bind alongside an existing address-specific listener.
+  const addresses = new Set(['127.0.0.1']);
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) if (entry.family === 'IPv4') addresses.add(entry.address);
+  }
+  return (await Promise.all([...addresses].map(canBind))).every(Boolean) && await canBind('0.0.0.0');
 }
 
 function alive(pid) {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return error.code !== 'ESRCH';
   }
 }
 
@@ -96,6 +123,17 @@ if (recoveryRunning()) {
   log('EDEN recovery is running. Start EDEN after it finishes.');
   process.exit(1);
 }
+// An unsupervised Settings restart tells us which process must go away first.
+const previousPid = Number(process.env.EDEN_PREVIOUS_HUB_PID);
+delete HUB_ENV.EDEN_PREVIOUS_HUB_PID;
+if (Number.isSafeInteger(previousPid) && previousPid > 0) {
+  const until = Date.now() + 15000;
+  while (alive(previousPid) && Date.now() < until) await delay(250);
+  if (alive(previousPid)) {
+    log('The previous hub process is still running. Automatic restart stopped.');
+    process.exit(1);
+  }
+}
 const runningHub = await probeHub();
 if (runningHub === 'other') {
   log(`Port ${PORT} is already serving a hub or another app without EDEN production mode. Close it and start EDEN again.`);
@@ -106,7 +144,7 @@ try {
   // A supervisor can still own the hub while it is booting or between retries.
   if (other && other !== process.pid && alive(other)) {
     log(`Already being kept running (supervisor ${other}).`);
-    if (OPEN_APP && runningHub === 'production') {
+    if (OPEN_APP && typeof runningHub === 'number') {
       openApp();
       await openLyraOnTablet();
     }
@@ -116,10 +154,10 @@ try {
 } catch {}
 // A hub started some other way (an old window, a developer tool) isn't touched: it is watched, and when it
 // stops, the hub is started here, so from now on it is kept running like any other.
-let adopted = false;
-if (runningHub === 'production') {
+let adoptedPid = null;
+if (typeof runningHub === 'number') {
   log('The hub is already running (started some other way). Keeping watch: if it stops, it is started again here.');
-  adopted = true;
+  adoptedPid = runningHub;
 }
 fs.writeFileSync(LOCK, String(process.pid));
 function releaseLock() {
@@ -133,7 +171,7 @@ if (recoveryRunning()) {
   process.exit(1);
 }
 const recoveryHint = 'With EDEN closed, run Recover Eden.bat, then run Start Eden.bat.';
-if (!adopted && !findBuild(APP)) {
+if (!adoptedPid && !findBuild(APP)) {
   log('No dashboard build found. Building EDEN for production.');
   const result = spawnSync(process.execPath, ['scripts/build-dashboard.mjs'], {
     cwd: APP, env: HUB_ENV, stdio: 'inherit', windowsHide: true,
@@ -157,13 +195,22 @@ let bootFailures = 0;
 let booted = false;
 let stopping = false;
 
-function start() {
+async function start() {
+  const until = Date.now() + 15000;
+  while (!stopping && !(await portFree())) {
+    if (Date.now() >= until) {
+      log('Port ' + PORT + ' is still in use. Automatic restart stopped. Close the process using it and start EDEN again.');
+      process.exit(1);
+    }
+    await delay(250);
+  }
+  if (stopping) return;
   startedAt = Date.now();
   booted = false;
   misses = 0;
   log('Starting the hub…');
-  const tsx = path.join(APP, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-  child = spawn(process.execPath, [tsx, 'server.ts'], { cwd: APP, env: HUB_ENV, windowsHide: true });
+  // Use the loader in the server process itself so the child PID owns the listener.
+  child = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], { cwd: APP, env: HUB_ENV, windowsHide: true });
   const pipe = (stream, tag) => {
     let buf = '';
     stream.on('data', (d) => {
@@ -200,18 +247,16 @@ function start() {
 // Health check: restart if it hasn't answered for ~90 seconds (after giving it time to start).
 let misses = 0;
 setInterval(async () => {
-  if (adopted && !child) {
-    // Watching a hub this supervisor didn't start: take over once it has been gone for about a minute.
-    if (await answering(8000)) return void (misses = 0);
-    if (++misses < 2) return;
-    misses = 0;
-    adopted = false;
-    log('The hub that was started some other way has stopped. Starting it here.');
+  if (adoptedPid) {
+    // An adopted hub is never killed by this supervisor. Wait for its actual process to exit.
+    if (alive(adoptedPid)) return;
+    adoptedPid = null;
+    log('The hub that was started some other way has exited. Starting it here.');
     return start();
   }
   const checkedChild = child;
   if (!checkedChild) return;
-  const healthy = await answering(10000);
+  const healthy = (await probeHub(10000)) === checkedChild.pid;
   if (child !== checkedChild || stopping) return;
   if (healthy) {
     booted = true;
@@ -222,7 +267,7 @@ setInterval(async () => {
   if (Date.now() - startedAt < 60000) return;
   misses++;
   if (misses >= 3) {
-    log('The hub stopped answering for about 90 seconds. Restarting it.');
+    log('The hub stopped answering for about 90 seconds. Stopping it before restart.');
     misses = 0;
     child?.kill();
   }
@@ -238,6 +283,6 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 process.on('SIGHUP', shutdown);
 
-if (!adopted) start();
+if (!adoptedPid) start();
 if (OPEN_APP) openLyraOnTablet();
 if (OPEN_APP) openApp(); // shows "Starting the hub…" until it answers, then loads by itself

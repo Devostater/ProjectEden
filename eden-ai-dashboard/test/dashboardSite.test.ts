@@ -7,7 +7,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import express from 'express';
-import { dashboardMode, serveDashboard } from '../dashboardSite.ts';
+import { dashboardMode, registerHealthRoute, serveDashboard } from '../dashboardSite.ts';
 import { findBuild, RECOVERY_BUILD } from '../scripts/build-paths.mjs';
 
 test('only explicit development mode selects the loopback Vite server', () => {
@@ -27,6 +27,7 @@ test('the production site serves build files and returns 404 for private files',
   }
 
   const app = express();
+  registerHealthRoute(app, false);
   serveDashboard(app, root);
   const server = app.listen(0, '127.0.0.1');
   t.after(() => new Promise<void>((resolve, reject) => {
@@ -36,6 +37,11 @@ test('the production site serves build files and returns 404 for private files',
   const address = server.address();
   assert(address && typeof address === 'object');
   const base = `http://127.0.0.1:${address.port}`;
+  const health = await fetch(base + '/health');
+  assert.equal(health.status, 200);
+  assert.equal(health.headers.get('x-eden-mode'), 'production');
+  assert.equal(health.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await health.json(), { ok: true, pid: process.pid });
   for (const url of ['/', '/assets/app.js']) {
     const response = await fetch(base + url);
     assert.equal(response.status, 200, url);
@@ -88,9 +94,7 @@ test('the supervisor refuses to adopt a legacy or development listener', async (
   }
 
   const app = express();
-  app.get('/api/models', (_req, res) => {
-    res.set('X-Eden-Mode', 'development').json([]);
-  });
+  registerHealthRoute(app, true);
   const server = app.listen(0, '127.0.0.1');
   t.after(() => new Promise<void>((resolve, reject) => {
     server.close(error => error ? reject(error) : resolve());

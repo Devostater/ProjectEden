@@ -1,8 +1,8 @@
 import { jsonObject, jsonStore } from './jsonStore';
 import express from 'express';
-import { dashboardMode, serveDashboard } from './dashboardSite';
+import { dashboardMode, registerHealthRoute, serveDashboard } from './dashboardSite';
 import { GoogleGenAI } from '@google/genai';
-import { canUseWeb, generate, replyToTabletChat, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel, costByProvider } from './providers';
+import { UnconfirmedPaidRequestError, startProviderStatusRefresh, canUseWeb, generate, replyToTabletChat, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel, costByProvider } from './providers';
 import { registerSettingsRoutes } from './settings';
 import { registerPairing } from './pairing';
 import { registerTabletChat } from './tabletChat';
@@ -418,6 +418,7 @@ async function startServer() {
   registerPairing(app); // must come first: guards every route for devices other than this computer
   const PORT = Number(process.env.PORT) || 3000;
 
+  registerHealthRoute(app, dev);
   app.use(express.json({ limit: '5mb' }));
   registerTabletChat(app, replyToTabletChat);
 
@@ -547,6 +548,7 @@ async function startServer() {
           };
         } catch (err: any) {
           lastError = err?.message || 'failed';
+          if (err instanceof UnconfirmedPaidRequestError) break;
         }
       }
       logActivity('error', `${agent?.name || 'Assistant'} could not reply in chat: ${lastError}`);
@@ -1551,6 +1553,7 @@ Pick the best-fitting teammate for each step. To save the final result as a file
   }
 
   const httpServer = app.listen(PORT, host, () => {
+    startProviderStatusRefresh();
     console.log(`NexusFlow AI Server running on http://localhost:${PORT}`);
   });
   // If the port is already taken, another copy of the hub is almost certainly running. This copy can never
