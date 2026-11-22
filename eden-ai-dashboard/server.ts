@@ -1,3 +1,4 @@
+import { jsonObject, jsonStore } from './jsonStore';
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
 import { canUseWeb, generate, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel, costByProvider } from './providers';
@@ -201,49 +202,50 @@ const INITIAL_FILES: HostedFile[] = [];
 const INITIAL_SWARM_RUNS: SwarmRun[] = [];
 const INITIAL_USAGE_LOGS: UsageMetric[] = [];
 
+const workspaceFile = jsonStore<WorkspaceStore>(STORE_PATH, (value) =>
+  jsonObject(value) &&
+  Array.isArray(value.agents) && value.agents.every(jsonObject) &&
+  Array.isArray(value.pipelines) && value.pipelines.every(jsonObject) &&
+  Array.isArray(value.swarmRuns) && Array.isArray(value.files) && Array.isArray(value.usageLogs), 2);
+
 function loadStore(): WorkspaceStore {
-  try {
-    if (fs.existsSync(STORE_PATH)) {
-      const raw = fs.readFileSync(STORE_PATH, 'utf-8');
-      const loaded = JSON.parse(raw) as WorkspaceStore;
-      // Move agents off Gemini models that are retired or unavailable on the free tier.
-      const RETIRED: Record<string, string> = {
-        'gemini-3.8-flash': 'gemini-3.6-flash',
-        'gemini-3.1-flash-lite': 'gemini-3.5-flash-lite',
-      };
-      for (const a of loaded.agents) if (RETIRED[a.model]) a.model = RETIRED[a.model];
-      // Starter team changed: update the starter agents' roles and instructions (usage stats are kept),
-      // add any new ones, and swap the starter pipelines. Agents and pipelines you created are untouched.
-      if (loaded.teamVersion !== TEAM_VERSION) {
-        const formerLyra = loaded.agents.find((a) => a.id === 'agent-audio');
-        if (formerLyra && !loaded.agents.some((a) => a.id === 'agent-deputy')) formerLyra.id = 'agent-deputy';
-        for (const seed of INITIAL_AGENTS) {
-          const existing = loaded.agents.find((a) => a.id === seed.id);
-          if (existing) {
-            const { totalTokens, totalRuns, avgLatencyMs } = existing;
-            Object.assign(existing, seed, { totalTokens, totalRuns, avgLatencyMs });
-          } else {
-            loaded.agents.push(seed);
-          }
+  const loaded = workspaceFile.read();
+  if (loaded) {
+    // Move agents off Gemini models that are retired or unavailable on the free tier.
+    const RETIRED: Record<string, string> = {
+      'gemini-3.8-flash': 'gemini-3.6-flash',
+      'gemini-3.1-flash-lite': 'gemini-3.5-flash-lite',
+    };
+    for (const a of loaded.agents) if (RETIRED[a.model]) a.model = RETIRED[a.model];
+    // Starter team changed: update the starter agents' roles and instructions (usage stats are kept),
+    // add any new ones, and swap the starter pipelines. Agents and pipelines you created are untouched.
+    if (loaded.teamVersion !== TEAM_VERSION) {
+      const formerLyra = loaded.agents.find((a) => a.id === 'agent-audio');
+      if (formerLyra && !loaded.agents.some((a) => a.id === 'agent-deputy')) formerLyra.id = 'agent-deputy';
+      for (const seed of INITIAL_AGENTS) {
+        const existing = loaded.agents.find((a) => a.id === seed.id);
+        if (existing) {
+          const { totalTokens, totalRuns, avgLatencyMs } = existing;
+          Object.assign(existing, seed, { totalTokens, totalRuns, avgLatencyMs });
+        } else {
+          loaded.agents.push(seed);
         }
-        const order = (id: string) => {
-          const i = INITIAL_AGENTS.findIndex((s) => s.id === id);
-          return i < 0 ? 999 : i;
-        };
-        loaded.agents.sort((a, b) => order(a.id) - order(b.id));
-        loaded.pipelines = [
-          ...INITIAL_PIPELINES,
-          ...loaded.pipelines.filter(
-            (p) => p.id !== 'pipe-offer-launch' && !INITIAL_PIPELINES.some((s) => s.id === p.id)
-          ),
-        ];
-        loaded.teamVersion = TEAM_VERSION;
-        saveStore(loaded);
       }
-      return loaded;
+      const order = (id: string) => {
+        const i = INITIAL_AGENTS.findIndex((s) => s.id === id);
+        return i < 0 ? 999 : i;
+      };
+      loaded.agents.sort((a, b) => order(a.id) - order(b.id));
+      loaded.pipelines = [
+        ...INITIAL_PIPELINES,
+        ...loaded.pipelines.filter(
+          (p) => p.id !== 'pipe-offer-launch' && !INITIAL_PIPELINES.some((s) => s.id === p.id)
+        ),
+      ];
+      loaded.teamVersion = TEAM_VERSION;
+      saveStore(loaded);
     }
-  } catch (err) {
-    console.error('Failed to read store, using defaults:', err);
+    return loaded;
   }
   const initial: WorkspaceStore = {
     agents: INITIAL_AGENTS,
@@ -259,7 +261,7 @@ function loadStore(): WorkspaceStore {
 
 function saveStore(store: WorkspaceStore) {
   try {
-    fs.writeFileSync(STORE_PATH, JSON.stringify(store, null, 2), 'utf-8');
+    workspaceFile.write(store);
   } catch (err) {
     console.error('Failed to write store:', err);
   }
@@ -454,14 +456,16 @@ async function startServer() {
   // Chat model quickbar: hub-wide choice of Online (the usual AIs) or one model on this PC.
   // Kept in .eden-chat-model.json (git-ignored), default Online. A local choice never falls back to online.
   const CHAT_MODEL_FILE = path.join(__dirname, '.eden-chat-model.json');
-  const readChatModel = (): string => { try { const v = JSON.parse(fs.readFileSync(CHAT_MODEL_FILE, 'utf8')).model; return typeof v === 'string' && v ? v : 'online'; } catch { return 'online'; } };
+  const chatModelFile = jsonStore<{ model: string }>(CHAT_MODEL_FILE, (value) =>
+    jsonObject(value) && typeof value.model === 'string' && value.model.length > 0, 2);
+  const readChatModel = () => chatModelFile.read()?.model ?? 'online';
   app.get('/api/chat-model', (_req, res) => res.json({ model: readChatModel(), local: localModels() }));
   app.post('/api/chat-model', (req, res) => {
     if (!mayManage(req)) return res.status(403).json({ error: 'Only this computer or a paired tablet can change the chat model.' });
     const m = req.body?.model;
     const model = m === 'online' || (typeof m === 'string' && localModels().includes(m)) ? m : null;
     if (!model) return res.status(400).json({ error: 'That model is not available on this PC.' });
-    fs.writeFileSync(CHAT_MODEL_FILE, JSON.stringify({ model }, null, 2));
+    chatModelFile.write({ model });
     res.json({ model });
   });
 

@@ -10,7 +10,7 @@
 //
 // Model ids look like "x:<provider id>:<model>", e.g. "x:ollama:qwen3.5:4b".
 // When one model hits its limit it is rested for a while and the next free one is used.
-import fs from 'fs';
+import { jsonObject, jsonStore } from './jsonStore';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -50,15 +50,13 @@ export const PRESETS: { id: string; name: string; baseUrl: string; signup: strin
   { id: 'github', name: 'GitHub Models', baseUrl: 'https://models.github.ai/inference', signup: 'https://github.com/settings/personal-access-tokens', note: 'Free with a GitHub account (token with "Models" permission).' },
 ];
 
-let providers: ExtraProvider[] = [];
-try {
-  providers = JSON.parse(fs.readFileSync(FILE, 'utf-8'));
-} catch (err: any) {
-  fileProblem('load your free and extra AIs', err);
-}
+const providerFile = jsonStore<ExtraProvider[]>(FILE, (value) =>
+  Array.isArray(value) && value.every((p) => jsonObject(p) && typeof p.id === 'string' &&
+    typeof p.baseUrl === 'string' && Array.isArray(p.models)), 2);
+let providers = providerFile.read() ?? [];
 const save = () => {
   try {
-    fs.writeFileSync(FILE, JSON.stringify(providers, null, 2), 'utf-8');
+    providerFile.write(providers);
   } catch (err: any) {
     fileProblem('save your free and extra AIs', err);
   }

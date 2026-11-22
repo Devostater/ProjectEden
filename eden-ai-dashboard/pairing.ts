@@ -5,7 +5,8 @@
 // out every paired device. Each paired device gets its own sign-in (a random token in a cookie; only its
 // hash is stored), so Devices can list them by name and sign one out without touching the others.
 import crypto from 'crypto';
-import fs from 'fs';
+import { jsonObject, jsonStore } from './jsonStore';
+import { fileProblem } from './activity';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -35,13 +36,15 @@ function newCode() {
   return Array.from(crypto.randomBytes(8), (b) => alphabet[b % alphabet.length]).join('');
 }
 
-let code = '';
-let devices: RemoteDevice[] = [];
-try {
-  const saved = JSON.parse(fs.readFileSync(FILE, 'utf-8'));
-  code = saved.code || '';
-  devices = Array.isArray(saved.devices) ? saved.devices : [];
-} catch {}
+const pairingFile = jsonStore<{ code: string; devices?: RemoteDevice[] }>(FILE, (value) =>
+  jsonObject(value) && typeof value.code === 'string' && value.code.length > 0 &&
+  (value.devices === undefined || (Array.isArray(value.devices) && value.devices.every((d) =>
+    jsonObject(d) && typeof d.pairedAt === 'string' &&
+    (d.tokenHashes === undefined || (Array.isArray(d.tokenHashes) && d.tokenHashes.every((token) => typeof token === 'string'))) &&
+    (d.tokenHash === undefined || typeof d.tokenHash === 'string')))), 2);
+const saved = pairingFile.read();
+let code = saved?.code ?? newCode();
+let devices = saved?.devices ?? [];
 // Older entries had a single tokenHash.
 for (const d of devices as any[]) if (!d.tokenHashes) d.tokenHashes = d.tokenHash ? [d.tokenHash] : [], delete d.tokenHash;
 // Merge entries made by the same device at the same moment (a page sending many requests at once used to
@@ -59,13 +62,12 @@ for (const d of devices as any[]) if (!d.tokenHashes) d.tokenHashes = d.tokenHas
 }
 const savePairing = () => {
   try {
-    fs.writeFileSync(FILE, JSON.stringify({ code, devices }, null, 2), 'utf-8');
-  } catch {}
+    pairingFile.write({ code, devices });
+  } catch (err) {
+    fileProblem('save paired devices', err);
+  }
 };
-if (!code) {
-  code = newCode();
-  savePairing();
-}
+if (!saved) savePairing();
 
 const hash = (t: string) => crypto.createHash('sha256').update(t).digest('hex');
 

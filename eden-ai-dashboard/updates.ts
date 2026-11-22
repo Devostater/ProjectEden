@@ -1,3 +1,4 @@
+import { jsonObject, jsonStore } from './jsonStore';
 // Code updates: the AI changes code safely, in the hub itself or in another codebase (such as LYRA).
 //
 //   1. You describe the change. The hub makes a separate copy of that codebase (a git worktree outside
@@ -73,13 +74,10 @@ const lyraPreset = (): Codebase => ({
   protect: ['data/ (personal data and settings)', 'tools/', 'node_modules', 'tablet-pin.txt', 'tablet-session.txt', '*.nova-bak and *.forge-bak files'],
 });
 
+const codebaseFile = jsonStore<Codebase[]>(CODEBASES_FILE, (value) =>
+  Array.isArray(value) && value.every((c) => jsonObject(c) && typeof c.id === 'string' && typeof c.dir === 'string'), 2);
 function loadCodebases(): Codebase[] {
-  let extra: Codebase[] = [];
-  try {
-    extra = JSON.parse(fs.readFileSync(CODEBASES_FILE, 'utf-8'));
-  } catch (err: any) {
-    fileProblem('load your saved codebases', err);
-  }
+  const extra = codebaseFile.read() ?? [];
   const list = [HUB, ...extra.filter((c) => c.id !== 'hub')];
   if (!list.some((c) => c.id === 'lyra') && fs.existsSync(path.join(LYRA_DIR, 'server.js'))) list.push(lyraPreset());
   return list;
@@ -87,7 +85,7 @@ function loadCodebases(): Codebase[] {
 let codebases = loadCodebases();
 const saveCodebases = () => {
   try {
-    fs.writeFileSync(CODEBASES_FILE, JSON.stringify(codebases.filter((c) => c.id !== 'hub'), null, 2), 'utf-8');
+    codebaseFile.write(codebases.filter((c) => c.id !== 'hub'));
   } catch (err: any) {
     fileProblem('save your codebases', err);
   }
@@ -163,16 +161,13 @@ interface UpdateJob {
   restore?: { ref: string; commit: string; files: string[]; backup?: string; at: string };
 }
 
-let jobs: UpdateJob[] = [];
-try {
-  jobs = JSON.parse(fs.readFileSync(STORE, 'utf-8'));
-} catch (err: any) {
-  fileProblem('load your saved code updates', err);
-}
+const jobFile = jsonStore<UpdateJob[]>(STORE, (value) =>
+  Array.isArray(value) && value.every((job) => jsonObject(job) && typeof job.id === 'string'), 2);
+let jobs = jobFile.read() ?? [];
 
 const save = () => {
   try {
-    fs.writeFileSync(STORE, JSON.stringify(jobs.slice(-50), null, 2), 'utf-8');
+    jobFile.write(jobs.slice(-50));
   } catch (err: any) {
     fileProblem('save your code updates', err);
   }
@@ -768,12 +763,10 @@ interface BackupInfo {
   changed: boolean; // false when nothing had changed since the previous backup
   auto: boolean;
 }
-let lastBackup: BackupInfo | null = null;
-try {
-  lastBackup = JSON.parse(fs.readFileSync(BACKUP_FILE, 'utf-8'));
-} catch (err: any) {
-  fileProblem('load the last backup details', err);
-}
+const backupFile = jsonStore<BackupInfo>(BACKUP_FILE, (value) =>
+  jsonObject(value) && typeof value.at === 'string' && typeof value.files === 'number' &&
+  typeof value.changed === 'boolean' && typeof value.auto === 'boolean', 2);
+let lastBackup = backupFile.read() ?? null;
 let backingUp = false;
 
 function makeBackup(): { files: number; changed: boolean } {
@@ -811,7 +804,7 @@ function runBackup(auto: boolean): BackupInfo {
     const { files, changed } = makeBackup();
     lastBackup = { at: now(), files, changed, auto };
     try {
-      fs.writeFileSync(BACKUP_FILE, JSON.stringify(lastBackup, null, 2), 'utf-8');
+      backupFile.write(lastBackup);
     } catch (err: any) {
       fileProblem('save the last backup details', err);
     }
@@ -1222,16 +1215,14 @@ interface IdeaSet {
   error?: string;
   dismissed: string[];
 }
-let ideaSets: Record<string, IdeaSet> = {};
-try {
-  ideaSets = JSON.parse(fs.readFileSync(IDEAS_FILE, 'utf-8'));
-  for (const s of Object.values(ideaSets)) s.running = false;
-} catch (err: any) {
-  fileProblem('load your saved update ideas', err);
-}
+const ideaFile = jsonStore<Record<string, IdeaSet>>(IDEAS_FILE, (value) =>
+  jsonObject(value) && Object.values(value).every((set) =>
+    jsonObject(set) && Array.isArray(set.ideas) && Array.isArray(set.dismissed)), 2);
+const ideaSets = ideaFile.read() ?? {};
+for (const s of Object.values(ideaSets)) s.running = false;
 const saveIdeas = () => {
   try {
-    fs.writeFileSync(IDEAS_FILE, JSON.stringify(ideaSets, null, 2), 'utf-8');
+    ideaFile.write(ideaSets);
   } catch (err: any) {
     fileProblem('save your update ideas', err);
   }

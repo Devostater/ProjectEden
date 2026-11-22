@@ -2,7 +2,7 @@
 // moment one changes (a new message, a reply, a rename, a delete), so the PC, tablet and phone all show
 // the same conversations. Pages send only the chats they changed; the newer copy of each chat wins, and
 // messages from both copies are kept, so two devices writing at once don't lose anything.
-import fs from 'fs';
+import { jsonObject, jsonStore } from './jsonStore';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express, Response } from 'express';
@@ -27,12 +27,13 @@ interface Store {
   version: number;
 }
 
-let store: Store = { threads: [], deleted: {}, version: 0 };
-try {
-  store = { ...store, ...JSON.parse(fs.readFileSync(FILE, 'utf-8')) };
-} catch (err: any) {
-  if (err?.code !== 'ENOENT') fileProblem('load the shared chats', err);
-}
+const valid = (t: any): t is Thread => t && typeof t.id === 'string' && Array.isArray(t.messages) && typeof t.updatedAt === 'number';
+const chatFile = jsonStore<Partial<Store>>(FILE, (value) =>
+  jsonObject(value) &&
+  (value.threads === undefined || (Array.isArray(value.threads) && value.threads.every(valid))) &&
+  (value.deleted === undefined || jsonObject(value.deleted)) &&
+  (value.version === undefined || typeof value.version === 'number'));
+const store: Store = { threads: [], deleted: {}, version: 0, ...chatFile.read() };
 
 let saveTimer: NodeJS.Timeout | null = null;
 const save = () => {
@@ -40,14 +41,12 @@ const save = () => {
   saveTimer = setTimeout(() => {
     saveTimer = null;
     try {
-      fs.writeFileSync(FILE, JSON.stringify(store), 'utf-8');
+      chatFile.write(store);
     } catch (err: any) {
       fileProblem('save the shared chats', err);
     }
   }, 300);
 };
-
-const valid = (t: any): t is Thread => t && typeof t.id === 'string' && Array.isArray(t.messages) && typeof t.updatedAt === 'number';
 
 // Newer copy wins for the title and settings; messages from both are kept, in order.
 function mergeThread(old: Thread, incoming: Thread): Thread {

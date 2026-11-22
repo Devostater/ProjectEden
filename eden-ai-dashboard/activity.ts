@@ -1,7 +1,7 @@
 // Activity log: a short running record of what the hub and the AI team are doing, shown in the
 // bottom panel. The last 500 lines are saved to activity-log.json in your user folder (.eden-hub, next to
 // the backups) and read back at launch, so the log survives a restart.
-import fs from 'fs';
+import { jsonStore } from './jsonStore';
 import os from 'os';
 import path from 'path';
 import type { Express } from 'express';
@@ -60,6 +60,7 @@ const MAX = 500;
 const SHORT_TEXT = 300; // characters shown on the line by default
 const FULL_TEXT = 1000; // most characters kept of one message
 const LOG_FILE = path.join(os.homedir(), '.eden-hub', 'activity-log.json');
+const activityFile = jsonStore<Entry[]>(LOG_FILE, Array.isArray);
 const entries: Entry[] = [];
 let nextId = 1;
 let sessionStart = 1; // the first line id written in this launch; anything before it is from an earlier session
@@ -70,10 +71,7 @@ function saveNow() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = null;
   try {
-    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
-    const tmp = `${LOG_FILE}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(entries.slice(-MAX)), 'utf-8');
-    fs.renameSync(tmp, LOG_FILE);
+    activityFile.write(entries.slice(-MAX));
   } catch (err: any) {
     fileProblem('save the activity log', err);
   }
@@ -122,25 +120,20 @@ const listeners: ((kind: ActivityKind, text: string) => void)[] = [];
 export const onActivity = (fn: (kind: ActivityKind, text: string) => void) => void listeners.push(fn);
 
 // Load the saved lines from the last launch. Ids carry on after the saved ones, so `since` keeps working.
-// (This sits below `listeners` and `reported` because a load problem is itself written to the log.)
-try {
-  const saved = JSON.parse(fs.readFileSync(LOG_FILE, 'utf-8'));
-  const kinds = ['info', 'work', 'done', 'error'];
-  if (Array.isArray(saved)) {
-    for (const e of saved) {
-      if (e && Number.isInteger(e.id) && e.id > 0 && typeof e.at === 'string' && kinds.includes(e.kind) && typeof e.text === 'string') {
-        // Older logs have no `full`; ignore it if it's anything but text.
-        if (typeof e.full !== 'string') delete e.full;
-        else e.full = e.full.slice(0, FULL_TEXT);
-        entries.push(e as Entry);
-      }
+const saved = activityFile.read();
+const kinds = ['info', 'work', 'done', 'error'];
+if (Array.isArray(saved)) {
+  for (const e of saved) {
+    if (e && Number.isInteger(e.id) && e.id > 0 && typeof e.at === 'string' && kinds.includes(e.kind) && typeof e.text === 'string') {
+      // Older logs have no `full`; ignore it if it's anything but text.
+      if (typeof e.full !== 'string') delete e.full;
+      else e.full = e.full.slice(0, FULL_TEXT);
+      entries.push(e as Entry);
     }
-    entries.splice(0, Math.max(0, entries.length - MAX));
-    nextId = entries.reduce((m, e) => Math.max(m, e.id), 0) + 1;
-    sessionStart = nextId;
   }
-} catch (err: any) {
-  if (err?.code !== 'ENOENT') fileProblem('load the activity log', err);
+  entries.splice(0, Math.max(0, entries.length - MAX));
+  nextId = entries.reduce((m, e) => Math.max(m, e.id), 0) + 1;
+  sessionStart = nextId;
 }
 
 // The latest lines (for the AI suggesting app updates: what went wrong recently).
