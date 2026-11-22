@@ -24,6 +24,7 @@ import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
 import { localAgentModel, localClaudeEnv, planClaudeEnv } from './localClaude';
 import { mayView, mayManage } from './permissions';
+import { applyWithRecovery } from './scripts/recover.mjs';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STORE = path.join(APP_DIR, '.eden-updates.json');
@@ -1087,12 +1088,20 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
       return res.status(500).json({ error: `Nothing was changed, because a restore point could not be saved first. (${err.message})` });
     }
     try {
-      applyPatch(cb, job.diff);
+      const diff = job.diff;
+      if (cb.id === 'hub') {
+        const root = repoRoot(cb);
+        const paths = restore.files.map(file => path.relative(APP_DIR, path.resolve(root, file)).split(path.sep).join('/'));
+        applyWithRecovery(APP_DIR, job.id, restore.commit, paths, () => applyPatch(cb, diff));
+      } else {
+        applyPatch(cb, diff);
+      }
     } catch (err: any) {
       try {
         git(['update-ref', '-d', ref], repoRoot(cb));
       } catch {}
-      return doesNotFit(err);
+      if (cb.id !== 'hub') return doesNotFit(err);
+      return res.status(500).json({ error: `Could not apply the hub update with offline recovery. (${err.message})` });
     }
     job.restore = restore;
     job.status = 'applied';

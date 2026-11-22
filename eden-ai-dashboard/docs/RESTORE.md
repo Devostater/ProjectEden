@@ -14,3 +14,9 @@ EDEN checks that each new backup ZIP can be unpacked and contains the expected f
 The command leaves your running copy and live files alone. Use it with ZIPs made by your EDEN install. Keep the ZIP and the restored folder private because they can contain chats and API keys. Remove the scratch folder when you are done.
 
 A backup ZIP contains a copy of the dashboard files and saved data from that time. **Code history → Undo** rolls back a code update. Use the ZIP to recover saved data such as projects and chats.
+
+## Undo an update when EDEN cannot start
+
+Close EDEN and its supervisor window. Run **Recover Eden.bat** in the dashboard folder, then run **Start Eden.bat** after recovery succeeds. The supervisor stops after three consecutive failed boots and prints the recovery command in its log.
+
+Recovery restores the files touched by the latest applied EDEN update and the dashboard build saved just before it. If you edited any of those files since Apply, review and save your edits first. To explicitly replace those edits, run `node scripts/recover.mjs --force` in the dashboard folder. Updates applied before offline recovery was added have no paired build for this command.

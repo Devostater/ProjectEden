@@ -10,6 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { findBuild } from './build-paths.mjs';
+import { livePid, RECOVERY_LOCK } from './recover.mjs';
 
 // Console handle: who and what is running in this window, so it's easy to tell apart from other consoles.
 process.title = 'Devostater - Eden AI Hub - keeper (closing this window stops Eden)';
@@ -20,6 +21,7 @@ const HEALTH = `http://127.0.0.1:${PORT}/api/models`;
 const LOG_DIR = path.join(APP, '.eden-logs');
 const LOG = path.join(LOG_DIR, 'hub.log');
 const LOCK = path.join(LOG_DIR, 'supervisor.pid');
+const MAX_BOOT_FAILURES = 3;
 const STOP_CODE = 64; // the hub exits with this when asked to stop (restart.ts)
 const OPEN_APP = process.argv.includes('--open');
 const HUB_ENV = { ...process.env, NODE_ENV: 'production', EDEN_SUPERVISED: '1' };
@@ -89,6 +91,11 @@ async function openLyraOnTablet() {
 }
 
 // ---- one copy only ----
+const recoveryRunning = () => livePid(path.join(APP, RECOVERY_LOCK));
+if (recoveryRunning()) {
+  log('EDEN recovery is running. Start EDEN after it finishes.');
+  process.exit(1);
+}
 const runningHub = await probeHub();
 if (runningHub === 'other') {
   log(`Port ${PORT} is already serving a hub or another app without EDEN production mode. Close it and start EDEN again.`);
@@ -96,17 +103,16 @@ if (runningHub === 'other') {
 }
 try {
   const other = Number(fs.readFileSync(LOCK, 'utf-8'));
-  // Only trust the lock if the hub is actually answering: after a hard stop (Task Manager, crash, power loss)
-  // the lock is left behind, and Windows can reuse that process ID for an unrelated program.
-  if (other && other !== process.pid && alive(other) && runningHub === 'production') {
+  // A supervisor can still own the hub while it is booting or between retries.
+  if (other && other !== process.pid && alive(other)) {
     log(`Already being kept running (supervisor ${other}).`);
-    if (OPEN_APP) {
+    if (OPEN_APP && runningHub === 'production') {
       openApp();
       await openLyraOnTablet();
     }
     process.exit(0);
   }
-  if (other && other !== process.pid) log(`Found a leftover lock (process ${other}) with no hub answering. Taking over.`);
+  if (other && other !== process.pid) log(`Found a leftover lock (process ${other}). Taking over.`);
 } catch {}
 // A hub started some other way (an old window, a developer tool) isn't touched: it is watched, and when it
 // stops, the hub is started here, so from now on it is kept running like any other.
@@ -115,6 +121,18 @@ if (runningHub === 'production') {
   log('The hub is already running (started some other way). Keeping watch: if it stops, it is started again here.');
   adopted = true;
 }
+fs.writeFileSync(LOCK, String(process.pid));
+function releaseLock() {
+  try {
+    if (Number(fs.readFileSync(LOCK, 'utf-8')) === process.pid) fs.rmSync(LOCK);
+  } catch {}
+}
+process.on('exit', releaseLock);
+if (recoveryRunning()) {
+  log('EDEN recovery is running. Start EDEN after it finishes.');
+  process.exit(1);
+}
+const recoveryHint = 'With EDEN closed, run Recover Eden.bat, then run Start Eden.bat.';
 if (!adopted && !findBuild(APP)) {
   log('No dashboard build found. Building EDEN for production.');
   const result = spawnSync(process.execPath, ['scripts/build-dashboard.mjs'], {
@@ -122,24 +140,27 @@ if (!adopted && !findBuild(APP)) {
   });
   if (result.status !== 0 || !findBuild(APP)) {
     log(`Could not build the EDEN dashboard${result.error ? `: ${result.error.message}` : '.'}`);
+    log(recoveryHint);
     process.exit(1);
   }
 }
-fs.writeFileSync(LOCK, String(process.pid));
 
 // Whatever goes wrong in here, keep supervising; and always leave a line saying why this stopped.
 process.on('uncaughtException', (err) => log(`Supervisor error (carrying on): ${err?.stack || err}`));
 process.on('unhandledRejection', (err) => log(`Supervisor error (carrying on): ${err?.stack || err}`));
-process.on('exit', (code) => log(`The supervisor stopped (code ${code}). The hub is no longer being kept running; open Eden to start it again.`));
+process.on('exit', (code) => log(`The supervisor stopped (code ${code}). The hub is no longer being kept running.`));
 
 // ---- run and watch ----
 let child = null;
 let startedAt = 0;
-let quickCrashes = 0;
+let bootFailures = 0;
+let booted = false;
 let stopping = false;
 
 function start() {
   startedAt = Date.now();
+  booted = false;
+  misses = 0;
   log('Starting the hub…');
   const tsx = path.join(APP, 'node_modules', 'tsx', 'dist', 'cli.mjs');
   child = spawn(process.execPath, [tsx, 'server.ts'], { cwd: APP, env: HUB_ENV, windowsHide: true });
@@ -157,24 +178,22 @@ function start() {
   };
   pipe(child.stdout, '  hub:');
   pipe(child.stderr, '  hub error:');
-  child.on('exit', (code, signal) => {
+  child.on('error', error => log(`Could not start the hub: ${error.message}`));
+  child.on('close', (code, signal) => {
     child = null;
     if (stopping) return;
     if (code === STOP_CODE) {
       // "Stop the server" in Settings: stop for real. Open Eden or Start Eden starts it again.
       log('The hub was stopped from Settings. Not restarting it; open Eden to start it again.');
-      try {
-        if (Number(fs.readFileSync(LOCK, 'utf-8')) === process.pid) fs.rmSync(LOCK);
-      } catch {}
       return void setTimeout(() => process.exit(0), 300);
     }
     const ranFor = Math.round((Date.now() - startedAt) / 1000);
     log(`The hub stopped (${signal ? `signal ${signal}` : `exit code ${code}`}) after ${ranFor}s.${code === 0 ? ' (It asked to restart.)' : ''}`);
-    quickCrashes = code !== 0 && ranFor < 30 ? quickCrashes + 1 : 0;
-    // Crashing straight away again and again: wait longer, so the PC isn't kept busy.
-    const wait = quickCrashes >= 3 ? 60000 : code === 0 ? 1500 : 3000;
-    if (quickCrashes >= 3) log('It keeps stopping right after starting. Waiting a minute before trying again; see the lines above for the reason.');
-    setTimeout(start, wait);
+    if (!booted && ++bootFailures >= MAX_BOOT_FAILURES) {
+      log(`EDEN failed to boot ${bootFailures} times. Automatic restarts have stopped. ${recoveryHint}`);
+      process.exit(1);
+    }
+    setTimeout(() => { if (!stopping) start(); }, code === 0 ? 1500 : 3000);
   });
 }
 
@@ -190,11 +209,17 @@ setInterval(async () => {
     log('The hub that was started some other way has stopped. Starting it here.');
     return start();
   }
-  if (!child || Date.now() - startedAt < 60000) return;
-  if (await answering(10000)) {
+  const checkedChild = child;
+  if (!checkedChild) return;
+  const healthy = await answering(10000);
+  if (child !== checkedChild || stopping) return;
+  if (healthy) {
+    booted = true;
+    bootFailures = 0;
     misses = 0;
     return;
   }
+  if (Date.now() - startedAt < 60000) return;
   misses++;
   if (misses >= 3) {
     log('The hub stopped answering for about 90 seconds. Restarting it.');
@@ -207,9 +232,6 @@ const shutdown = () => {
   stopping = true;
   log('Closing (the hub stops too).');
   child?.kill();
-  try {
-    if (Number(fs.readFileSync(LOCK, 'utf-8')) === process.pid) fs.rmSync(LOCK);
-  } catch {}
   setTimeout(() => process.exit(0), 500);
 };
 process.on('SIGINT', shutdown);

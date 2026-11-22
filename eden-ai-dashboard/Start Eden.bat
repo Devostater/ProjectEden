@@ -58,7 +58,8 @@ if errorlevel 1 (
         echo.
         findstr /c:"error TS1" "%TEMP%\eden-check.txt"
         echo.
-        echo Fix or undo the file named above, then run Start Eden again.
+        echo If this followed an EDEN update, close EDEN and run Recover Eden.bat.
+        echo Then run Start Eden again.
         goto fail
     )
     echo WARNING: the code check found problems. Starting anyway:
