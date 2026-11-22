@@ -80,7 +80,7 @@ test('paired access denies each private route and defaults to deny even with sav
     ['pairing code', 'GET', '/api/pairing'],
     ['device administration', 'POST', '/api/remote-devices/tablet/trust'],
     ['pipeline webhook capability', 'POST', '/api/pipelines/test/execute'],
-    ['preview proxy', 'GET', '/api/projects/project/live'],
+    ['preview proxy', 'POST', '/api/projects/project/live'],
     ['future API', 'GET', '/api/new-feature'],
     ['non-build files', 'GET', '/assets/private.json'],
     ['unsupported method', 'PUT', '/api/me'],

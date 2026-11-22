@@ -240,7 +240,7 @@ const ProjectDialog: React.FC<{ project: Project | null; api: ProjectsApi; onClo
         </div>
         <div>
           <label htmlFor="pd-preview" className={labelClass}>Live app address (optional)</label>
-          <input id="pd-preview" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} placeholder="http://localhost:5173: the app while it runs, shown in the App tab" className={inputClass} />
+          <input id="pd-preview" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} placeholder="https://preview.example.com (owner approval required)" className={inputClass} />
         </div>
         <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200" title="Cards in Ready with a teammate assigned are worked on automatically">
           <input type="checkbox" checked={autoRunOn} onChange={(e) => setAutoRunOn(e.target.checked)} className="h-4 w-4 accent-indigo-600" />

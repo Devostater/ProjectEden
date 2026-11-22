@@ -581,7 +581,7 @@ async function startServer() {
   registerProjectRoutes(app, () => store, () => saveStore(store));
   registerPlannerRoutes(app, () => store);
   registerProjectChat(app, () => store); // ongoing project chat with Chief + to-discuss list
-  registerPreviewProxy(app, () => store); // App tab: the project's running app, with the picker inside
+  const closePreviews = registerPreviewProxy(app, () => store);
   registerActivityRoutes(app);
   registerTerminalRoutes(app);
   registerLyraRoutes(app);
@@ -1555,6 +1555,7 @@ Pick the best-fitting teammate for each step. To save the final result as a file
   });
   // If the port is already taken, another copy of the hub is almost certainly running. This copy can never
   // serve anything, so say so plainly and stop (code 64 tells the supervisor not to keep restarting it).
+  httpServer.once('close', () => void closePreviews());
   httpServer.on('error', (err: any) => {
     if (err?.code === 'EADDRINUSE') {
       const msg = `The hub could not start because port ${PORT} is already in use, most likely by another copy of the hub that is still running. Close the other Eden window (or restart the PC) and start the hub again.`;
