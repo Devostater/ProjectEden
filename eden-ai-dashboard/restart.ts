@@ -14,8 +14,8 @@ import { runningCardNames } from './cardRunner';
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 function startNewCopy() {
-  // The supervisor (scripts/hub-supervisor.mjs) starts the hub and keeps it running; plain "npm run dev" is the fallback.
-  const command = fs.existsSync(path.join(APP_DIR, 'scripts', 'hub-supervisor.mjs')) ? 'node scripts/hub-supervisor.mjs' : 'npm run dev';
+  // The supervisor (scripts/hub-supervisor.mjs) starts the hub and keeps it running; plain "npm start" is the fallback.
+  const command = fs.existsSync(path.join(APP_DIR, 'scripts', 'hub-supervisor.mjs')) ? 'node scripts/hub-supervisor.mjs' : 'npm start';
   if (process.platform === 'win32') {
     // Opens a new window for the hub, like Start Eden does.
     spawn('cmd', ['/c', `start "EDEN AI Dashboard Server" cmd /c "timeout /t 4 /nobreak >nul & ${command}"`], {

@@ -137,7 +137,7 @@ async function buildPack(): Promise<string> {
   const stage = path.join(HOME_DIR, 'pack', 'stage');
   fs.rmSync(stage, { recursive: true, force: true });
   fs.mkdirSync(stage, { recursive: true });
-  const vite = await run('npx', ['vite', 'build'], { cwd: APP_DIR, timeout: 180000, shell: true });
+  const vite = await run(process.execPath, ['scripts/build-dashboard.mjs'], { cwd: APP_DIR, timeout: 180000 });
   if (!vite.ok) throw new Error(`Couldn't build the pages: ${(vite.err || vite.out).slice(-300)}`);
   const esbuild: any = await import('esbuild');
   await esbuild.build({

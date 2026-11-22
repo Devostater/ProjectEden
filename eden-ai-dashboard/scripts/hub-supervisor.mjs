@@ -5,10 +5,11 @@
 //   - only one copy runs; a hub that was started some other way is watched, and started here when it stops
 // Started by "Open Eden" (hidden) or "Start Eden.bat" (in a window, with the log on screen).
 // Add --open to also open the Eden AI Hub app window.
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { findBuild } from './build-paths.mjs';
 
 // Console handle: who and what is running in this window, so it's easy to tell apart from other consoles.
 process.title = 'Devostater - Eden AI Hub - keeper (closing this window stops Eden)';
@@ -21,6 +22,7 @@ const LOG = path.join(LOG_DIR, 'hub.log');
 const LOCK = path.join(LOG_DIR, 'supervisor.pid');
 const STOP_CODE = 64; // the hub exits with this when asked to stop (restart.ts)
 const OPEN_APP = process.argv.includes('--open');
+const HUB_ENV = { ...process.env, NODE_ENV: 'production', EDEN_SUPERVISED: '1' };
 
 fs.mkdirSync(LOG_DIR, { recursive: true });
 
@@ -35,13 +37,17 @@ function log(line) {
   } catch {}
 }
 
-async function answering(timeout = 4000) {
+async function probeHub(timeout = 4000) {
   try {
     const r = await fetch(HEALTH, { signal: AbortSignal.timeout(timeout) });
-    return r.status < 500;
+    return r.headers.get('x-eden-mode') === 'production' && r.status < 500 ? 'production' : 'other';
   } catch {
-    return false;
+    return 'offline';
   }
+}
+
+async function answering(timeout) {
+  return (await probeHub(timeout)) === 'production';
 }
 
 function alive(pid) {
@@ -83,11 +89,16 @@ async function openLyraOnTablet() {
 }
 
 // ---- one copy only ----
+const runningHub = await probeHub();
+if (runningHub === 'other') {
+  log(`Port ${PORT} is already serving a hub or another app without EDEN production mode. Close it and start EDEN again.`);
+  process.exit(1);
+}
 try {
   const other = Number(fs.readFileSync(LOCK, 'utf-8'));
   // Only trust the lock if the hub is actually answering: after a hard stop (Task Manager, crash, power loss)
   // the lock is left behind, and Windows can reuse that process ID for an unrelated program.
-  if (other && other !== process.pid && alive(other) && (await answering(6000))) {
+  if (other && other !== process.pid && alive(other) && runningHub === 'production') {
     log(`Already being kept running (supervisor ${other}).`);
     if (OPEN_APP) {
       openApp();
@@ -100,9 +111,19 @@ try {
 // A hub started some other way (an old window, a developer tool) isn't touched: it is watched, and when it
 // stops, the hub is started here, so from now on it is kept running like any other.
 let adopted = false;
-if (await answering()) {
+if (runningHub === 'production') {
   log('The hub is already running (started some other way). Keeping watch: if it stops, it is started again here.');
   adopted = true;
+}
+if (!adopted && !findBuild(APP)) {
+  log('No dashboard build found. Building EDEN for production.');
+  const result = spawnSync(process.execPath, ['scripts/build-dashboard.mjs'], {
+    cwd: APP, env: HUB_ENV, stdio: 'inherit', windowsHide: true,
+  });
+  if (result.status !== 0 || !findBuild(APP)) {
+    log(`Could not build the EDEN dashboard${result.error ? `: ${result.error.message}` : '.'}`);
+    process.exit(1);
+  }
 }
 fs.writeFileSync(LOCK, String(process.pid));
 
@@ -121,7 +142,7 @@ function start() {
   startedAt = Date.now();
   log('Starting the hub…');
   const tsx = path.join(APP, 'node_modules', 'tsx', 'dist', 'cli.mjs');
-  child = spawn(process.execPath, [tsx, 'server.ts'], { cwd: APP, env: { ...process.env, EDEN_SUPERVISED: '1' }, windowsHide: true });
+  child = spawn(process.execPath, [tsx, 'server.ts'], { cwd: APP, env: HUB_ENV, windowsHide: true });
   const pipe = (stream, tag) => {
     let buf = '';
     stream.on('data', (d) => {

@@ -1,5 +1,6 @@
 import { jsonObject, jsonStore } from './jsonStore';
 import express from 'express';
+import { dashboardMode, serveDashboard } from './dashboardSite';
 import { GoogleGenAI } from '@google/genai';
 import { canUseWeb, generate, models, defaultModel, providerStatus, providerFor, providerUnavailable, fallbackModels, providerLabel, costByProvider } from './providers';
 import { registerSettingsRoutes } from './settings';
@@ -409,6 +410,7 @@ async function fetchGitHubRepoSummary(repoTarget: string): Promise<{
 }
 
 async function startServer() {
+  const { dev, host } = dashboardMode(process.argv.slice(2));
   const app = express();
   registerHunterGuard(app, __dirname); // first of all: blocks DNS rebinding and other websites (reports them to HUNTER)
   registerPairing(app); // must come first: guards every route for devices other than this computer
@@ -610,6 +612,7 @@ async function startServer() {
   startCardRunner(() => store, () => saveStore(store));
 
   app.get('/api/models', (_req, res) => {
+    res.set('X-Eden-Mode', dev ? 'development' : 'production');
     res.json({ models: models(), providers: providerStatus(), defaultModel: defaultModel() });
   });
 
@@ -1530,15 +1533,11 @@ Pick the best-fitting teammate for each step. To save the final result as a file
     }
   });
 
-  // Vite middleware for development or static serving for production
-  if (process.env.NODE_ENV !== 'production') {
+  if (dev) {
     // Loaded only here, so the packed hub (for phones and tablets) doesn't need Vite.
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      // The page uses no .env values. Without this, saving a setting (which rewrites .env.local)
-      // makes the dev server reload the whole page.
-      envDir: false,
-      server: { middlewareMode: true },
+      server: { host, middlewareMode: true },
       appType: 'custom',
     });
     app.use(vite.middlewares);
@@ -1556,14 +1555,10 @@ Pick the best-fitting teammate for each step. To save the final result as a file
       }
     });
   } else {
-    const distPath = path.join(__dirname, 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+    serveDashboard(app, __dirname);
   }
 
-  const httpServer = app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = app.listen(PORT, host, () => {
     console.log(`NexusFlow AI Server running on http://localhost:${PORT}`);
   });
   // If the port is already taken, another copy of the hub is almost certainly running. This copy can never
@@ -1582,4 +1577,7 @@ Pick the best-fitting teammate for each step. To save the final result as a file
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});

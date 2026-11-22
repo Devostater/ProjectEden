@@ -68,10 +68,11 @@ if errorlevel 1 (
 )
 
 echo.
-echo Starting EDEN AI Dashboard...
+echo Starting EDEN AI Dashboard in production mode...
 echo The hub restarts by itself if it stops. Its log is in .eden-logs\hub.log
 echo Close this window to stop the hub.
 echo.
+set "NODE_ENV=production"
 node scripts\hub-supervisor.mjs --open
 if errorlevel 1 goto fail
 
