@@ -63,7 +63,7 @@ export const BackupsCard: React.FC = () => {
     setNote(null);
     try {
       const r = await api<{ sizeMb: number }>('POST', '/api/backups');
-      setNote({ ok: true, text: `Backed up (${r.sizeMb} MB).` });
+      setNote({ ok: true, text: `Backup saved and checked (${r.sizeMb} MB).` });
       await load();
     } catch (err: any) {
       setNote({ ok: false, text: err.message });
@@ -130,7 +130,7 @@ export const BackupsCard: React.FC = () => {
           </details>
         )}
         <p className="text-xs text-slate-500">Two kinds of backup: these zip files hold everything (code, projects, team, chats, settings and keys); “Code history” only keeps the hub's code in its own saved history, with no data or keys.</p>
-        <p className="text-xs text-slate-500">Saved in {data.folder}. To restore, unzip one over the hub folder (close the hub first).</p>
+        <p className="text-xs text-slate-500">Saved in {data.folder}. See docs/RESTORE.md in the dashboard folder to restore a backup into a new folder.</p>
       </div>
     </div>
   );

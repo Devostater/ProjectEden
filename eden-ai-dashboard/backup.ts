@@ -9,18 +9,19 @@
 // Left out: node_modules, built files, logs and the Android build folders (all can be rebuilt).
 import { spawn } from 'child_process';
 import fs from 'fs';
+import { randomUUID } from 'node:crypto';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
 import { logActivity } from './activity';
 import { pcBusy } from './busy';
+import { createBackupArchive, publishVerifiedBackup, requiredBackupFiles } from './scripts/backup-archive.mjs';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const BACKUP_DIR = path.join(os.homedir(), '.eden-hub', 'backups');
 const KEEP = 14;
 const DAY = 24 * 60 * 60 * 1000;
-const EXCLUDE = ['node_modules', './dist', './.eden-logs', './mobile/android/app/build', './mobile/android/.gradle', './mobile/android/build', '*.apk', '*.zip'];
 
 let running = false;
 let lastError = '';
@@ -72,21 +73,9 @@ export function checkCopyFolder(dir: string): string {
   return '';
 }
 
-// The zip must exist and have something in it, otherwise the "backup" would give false comfort.
-function checkZip(file: string, label: string) {
-  let size = 0;
-  try {
-    size = fs.statSync(file).size;
-  } catch {
-    throw new Error(`${label} was not written (the file is missing).`);
-  }
-  if (size <= 0) throw new Error(`${label} is empty (0 MB), so it can't be used.`);
-  return size;
-}
-
 // Copies the new zip to the extra folder and keeps only the newest KEEP there. Never throws: the
 // backup in the hub's own folder already worked, so a problem here is reported but doesn't undo it.
-async function copyToExtraFolder(source: string, name: string) {
+async function copyToExtraFolder(source: string, name: string, required: string[]) {
   const dir = copyFolder();
   lastCopyError = '';
   if (!dir) return;
@@ -94,16 +83,14 @@ async function copyToExtraFolder(source: string, name: string) {
   try {
     const problem = checkCopyFolder(dir);
     if (problem) throw new Error(problem);
-    const size = checkZip(source, 'The backup');
     const dest = path.join(dir, name);
     // Copy under a temporary name first so a half-copied file is never mistaken for a backup.
     await fs.promises.copyFile(source, part);
-    if (checkZip(part, 'The copy') !== size) throw new Error('The copy is a different size from the original.');
-    fs.renameSync(part, dest);
-    for (const old of list(dir).slice(KEEP)) fs.rmSync(path.join(dir, old.name), { force: true });
+    await publishVerifiedBackup(part, dest, required);
+    for (const old of list(dir).filter((backup) => backup.name !== name).slice(KEEP - 1)) fs.rmSync(path.join(dir, old.name), { force: true });
     logActivity('done', `Copied backup to ${dir}`);
   } catch (err: any) {
-    fs.rmSync(part, { force: true });
+    await fs.promises.rm(part, { force: true }).catch(() => {});
     lastCopyError = err.message;
     logActivity('error', `Couldn't copy the backup to ${dir}: ${err.message}`);
   }
@@ -113,37 +100,29 @@ export async function backupNow(auto = false): Promise<{ name: string; sizeMb: n
   if (running) throw new Error('A backup is already running.');
   running = true;
   lastError = '';
-  fs.mkdirSync(BACKUP_DIR, { recursive: true });
-  const name = `eden-hub-${stamp()}${auto ? '-auto' : ''}.zip`;
+  const name = `eden-hub-${stamp()}-${randomUUID().slice(0, 8)}${auto ? '-auto' : ''}.zip`;
   const out = path.join(BACKUP_DIR, name);
+  let staging: string | undefined;
   try {
-    // Windows' own tar writes zip files (-a picks the format from the .zip name).
-    const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'zip';
-    const args = process.platform === 'win32' ? ['-a', '-c', '-f', out, ...EXCLUDE.flatMap((e) => ['--exclude', e]), '-C', APP_DIR, '.'] : ['-r', '-q', out, '.', ...EXCLUDE.flatMap((e) => ['-x', `${e.replace(/^\.\//, '')}/*`])];
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(tar, args, { cwd: APP_DIR, windowsHide: true });
-      let err = '';
-      child.stderr.on('data', (d) => (err += d));
-      const timer = setTimeout(() => child.kill(), 10 * 60 * 1000);
-      child.on('error', reject);
-      child.on('close', (code) => {
-        clearTimeout(timer);
-        code === 0 ? resolve() : reject(new Error(err.trim().split('\n').slice(-1)[0] || `stopped with code ${code}`));
-      });
-    });
-    // Fail loudly if the zip is missing or empty, before any older backup is pruned.
-    const bytes = checkZip(out, 'The backup');
-    for (const old of list().slice(KEEP)) fs.rmSync(path.join(BACKUP_DIR, old.name), { force: true });
+    await fs.promises.mkdir(BACKUP_DIR, { recursive: true });
+    staging = await fs.promises.mkdtemp(path.join(BACKUP_DIR, '.eden-staging-'));
+    const pending = path.join(staging, name);
+    const required = await requiredBackupFiles(APP_DIR);
+    await createBackupArchive(APP_DIR, pending);
+    const bytes = await publishVerifiedBackup(pending, out, required);
+    for (const old of list().filter((backup) => backup.name !== name).slice(KEEP - 1)) {
+      fs.rmSync(path.join(BACKUP_DIR, old.name), { force: true });
+    }
     const sizeMb = Math.round((bytes / 1024 / 1024) * 10) / 10;
     logActivity('done', `Full backup zip saved (${sizeMb} MB${auto ? ', daily' : ''}).`);
-    await copyToExtraFolder(out, name);
+    await copyToExtraFolder(out, name, required);
     return { name, sizeMb };
   } catch (err: any) {
-    fs.rmSync(out, { force: true });
     lastError = err.message;
     logActivity('error', `Full backup zip didn't finish: ${err.message}`);
     throw err;
   } finally {
+    if (staging) await fs.promises.rm(staging, { recursive: true, force: true }).catch(() => {});
     running = false;
   }
 }
