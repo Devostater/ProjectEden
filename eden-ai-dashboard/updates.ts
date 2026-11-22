@@ -18,6 +18,7 @@ import type { Express, Request } from 'express';
 import { logActivity, recentActivity, fileProblem } from './activity';
 import { holdForApply } from './control';
 import { recheckWaiting } from './updateOverlap';
+import { mayOverrideUpdateCheck, runReleaseGate, updateCheckIssue, type UpdateCheck } from './updateReleaseGate';
 import { cliSignedIn, providerUnavailable, recordFailure } from './providers';
 import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
@@ -144,7 +145,7 @@ interface UpdateJob {
   lastAiMessage?: string; // the last thing the AI said in words (about 400 characters), to explain a run that changed nothing
   diff?: string; // the change, as a patch against the codebase's git repository
   files?: { path: string; added: number; removed: number }[];
-  check?: { ok: boolean; output: string };
+  check?: UpdateCheck;
   needsRestart?: boolean;
   error?: string;
   interruptions?: number; // how many times the hub closed while this was running
@@ -554,8 +555,16 @@ async function runTypeCheck(appDir: string) {
   return { ok: r.status === 0, out: r.out, problems: typeProblems(r.out) };
 }
 
-async function runCheck(cb: Codebase, appDir: string, files: string[], baselineFailed: string[] = [], baselineTypeProblems: string[] = []): Promise<{ ok: boolean; output: string }> {
+async function runCheck(cb: Codebase, appDir: string, files: string[], baselineFailed: string[] = [], baselineTypeProblems: string[] = []): Promise<UpdateCheck> {
   const clean = (s: string) => s.replace(new RegExp(appDir.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&'), 'g'), '').trim().slice(-6000);
+  if (cb.id === 'hub') {
+    const check = await runReleaseGate((script) =>
+      runCommand('npm', script === 'test' ? ['test'] : ['run', script], {
+        cwd: appDir, shell: true, timeout: 8 * 60 * 1000, env: { ...process.env, CI: '1' },
+      }),
+    );
+    return { ...check, output: clean(check.output) };
+  }
   if (cb.check === 'tsc') {
     const t = await runTypeCheck(appDir);
     if (t.ok) return { ok: true, output: 'The type check found no problems.' };
@@ -616,7 +625,7 @@ async function process_(job: UpdateJob) {
         if (baselineFailed.length) job.log.push(`Already failing before any change: ${baselineFailed.join('; ')}`);
       }
       let baselineTypeProblems: string[] = [];
-      if (cb.check === 'tsc') {
+      if (cb.check === 'tsc' && cb.id !== 'hub') {
         job.log.push(`Running ${cb.name}'s type check once first, to see what is already wrong (about a minute)`);
         save();
         baselineTypeProblems = (await runTypeCheck(copy.appDir)).problems;
@@ -636,7 +645,7 @@ async function process_(job: UpdateJob) {
       }
       if (!job.files?.length) throw new Error(`The AI finished without changing anything.${job.lastAiMessage ? ` It said: "${job.lastAiMessage}"` : ''}`);
       job.status = 'checking';
-      job.log.push(cb.check === 'tsc' ? 'Running the type check' : 'Checking the code and running the tests');
+      job.log.push(cb.id === 'hub' ? 'Running the type check, tests and production build' : cb.check === 'tsc' ? 'Running the type check' : 'Checking the code and running the tests');
       save();
       job.check = await runCheck(cb, copy.appDir, job.files.map((f) => f.path), baselineFailed, baselineTypeProblems);
       job.status = 'ready';
@@ -1035,6 +1044,10 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     const cb = job && findCodebase(job.codebaseId);
     if (!job || !job.diff || !cb) return res.status(404).json({ error: 'Update not found.' });
     if (job.status !== 'ready' && job.status !== 'undone') return res.status(400).json({ error: 'This update has already been dealt with.' });
+    const checkIssue = updateCheckIssue(cb.id, job.check);
+    if (checkIssue && !mayOverrideUpdateCheck(isLocal(req), req.body?.overrideChecks)) {
+      return res.status(409).json({ error: `${checkIssue} Applying anyway requires explicit confirmation on the owner PC.` });
+    }
     const doesNotFit = (err: any) => {
       job.stale = true; // lets "Try again" start a fresh update on the current code
       save();
@@ -1083,6 +1096,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     }
     job.restore = restore;
     job.status = 'applied';
+    if (checkIssue) job.log.push('Applied after the owner confirmed a release check override on the PC.');
     delete job.stale;
     delete job.olderBase;
     delete job.olderBaseSameFiles;
@@ -1141,7 +1155,7 @@ export function registerUpdateRoutes(app: Express, hooks: { onApplied?: (info: {
     const noLongerFits = (!!job.stale || !!job.olderBase) && (job.status === 'ready' || job.status === 'undone');
     // A finished update whose checks failed can be redone in one step ("Ask the AI to fix it"): like every retry,
     // the old one is only cleared once the new one has started, so a refused retry never loses the finished change.
-    const checksFailed = job.status === 'ready' && !!job.check && !job.check.ok;
+    const checksFailed = (job.status === 'ready' || job.status === 'undone') && !!updateCheckIssue(job.codebaseId, job.check);
     if (job.status !== 'failed' && job.status !== 'discarded' && !noLongerFits && !checksFailed) {
       return res.status(400).json({ error: 'Only a failed or discarded update, one whose checks failed, or one that no longer fits the code, can be tried again.' });
     }

@@ -6,6 +6,7 @@ import { Formatted } from './ChatView.tsx';
 import { NextUpdate, type CodebaseInfo } from './NextUpdate.tsx';
 import { diagnose, applyFix, canFix, planFixAll, type Fix } from '../updateFixes.ts';
 import { markUpdatesSeen, refreshUpdatesFeed } from '../readyUpdates.ts';
+import { updateCheckIssue, type UpdateCheck } from '../../updateReleaseGate.ts';
 
 interface Job {
   id: string;
@@ -18,7 +19,7 @@ interface Job {
   summary?: string;
   lastAiMessage?: string; // the last thing the AI said in words (already included in the error text when nothing changed)
   files?: { path: string; added: number; removed: number }[];
-  check?: { ok: boolean; output: string };
+  check?: UpdateCheck;
   needsRestart?: boolean;
   error?: string;
   hasDiff?: boolean;
@@ -283,12 +284,12 @@ export const UpdatesView: React.FC = () => {
     }
   };
 
-  const act = async (job: Job, action: 'apply' | 'undo' | 'discard') => {
+  const act = async (job: Job, action: 'apply' | 'undo' | 'discard', overrideChecks = false) => {
     setError('');
     setNote('');
     setActing(job.id);
     try {
-      const d = await post(`/api/updates/${job.id}/${action}`);
+      const d = await post(`/api/updates/${job.id}/${action}`, overrideChecks ? { overrideChecks: true } : undefined);
       if (action !== 'discard') {
         const hub = (job.codebaseId || 'hub') === 'hub';
         setNote(
@@ -307,9 +308,10 @@ export const UpdatesView: React.FC = () => {
     }
   };
 
-  // Updates that "Apply all" will apply: ready, with their changes, and their checks did not fail. Oldest first.
-  const applyable = jobs.filter((j) => j.status === 'ready' && j.hasDiff && j.check?.ok !== false).reverse();
-  const skippedFailed = jobs.filter((j) => j.status === 'ready' && j.hasDiff && j.check?.ok === false).length;
+  const readyWithDiff = jobs.filter((j) => j.status === 'ready' && j.hasDiff);
+  const applyable = readyWithDiff.filter((j) => !updateCheckIssue(j.codebaseId || 'hub', j.check)).reverse();
+  const skippedChecks = readyWithDiff.length - applyable.length;
+  const confirmOverride = !!confirmApply && !!updateCheckIssue(confirmApply.codebaseId || 'hub', confirmApply.check);
 
   // Applies them one at a time through the same safe route as the single button (each saves its own restore point).
   const applyAll = async () => {
@@ -526,7 +528,7 @@ export const UpdatesView: React.FC = () => {
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
             <span className="min-w-0 flex-1">
               {applyable.length} updates are ready to apply.
-              {skippedFailed > 0 && ` ${skippedFailed} whose checks failed will be left for you to look at.`}
+              {skippedChecks > 0 && ` ${skippedChecks} with check issues need individual review.`}
             </span>
             <button
               onClick={() => setConfirmAll(true)}
@@ -594,6 +596,8 @@ export const UpdatesView: React.FC = () => {
           const percent = progressOf(job);
           const overdue = job.status !== 'queued' && elapsed > estimateMs;
           const fix = diagnose(job, jobs);
+          const canApply = (job.status === 'ready' || job.status === 'undone') && job.hasDiff;
+          const checkIssue = canApply ? updateCheckIssue(job.codebaseId || 'hub', job.check) : undefined;
           // Two or more updates waiting for review share one row in Active. Press it to see them one by one.
           const readyJobs = jobs.filter((j) => j.status === 'ready');
           const grouped = tab === 'active' && job.status === 'ready' && readyJobs.length > 1;
@@ -765,11 +769,12 @@ export const UpdatesView: React.FC = () => {
                     </div>
                   )}
 
-                  {job.check && (
+                  {checkIssue && job.check?.ok !== false && <p className="text-sm text-red-600 dark:text-red-400">{checkIssue}</p>}
+                  {job.check && (!checkIssue || !job.check.ok) && (
                     <div className={`flex items-start gap-2 rounded-lg px-3 py-2 text-sm ${job.check.ok ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200' : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200'}`}>
                       {job.check.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}
                       <div className="min-w-0">
-                        {job.check.ok ? 'Checks passed.' : 'Checks failed: applying this would likely break it.'}
+                        {job.check.ok ? 'Checks passed.' : 'Checks failed. Applying anyway requires confirmation on the owner PC.'}
                         {!job.check.ok && <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap text-xs">{job.check.output}</pre>}
                       </div>
                     </div>
@@ -795,13 +800,13 @@ export const UpdatesView: React.FC = () => {
                   )}
 
                   <div className="flex flex-wrap items-center gap-2">
-                    {(job.status === 'ready' || job.status === 'undone') && job.hasDiff && (
+                    {canApply && (!remote || !checkIssue) && (
                       <button
-                        onClick={() => (remote ? setConfirmApply(job) : act(job, 'apply'))}
+                        onClick={() => (remote || checkIssue ? setConfirmApply(job) : act(job, 'apply'))}
                         disabled={acting === job.id}
-                        className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${job.check?.ok === false ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
+                        className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${checkIssue ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
                       >
-                        <Check className="h-4 w-4" /> {job.check?.ok === false ? 'Apply anyway' : 'Apply to the app'}
+                        <Check className="h-4 w-4" /> {checkIssue ? 'Review override' : 'Apply to the app'}
                       </button>
                     )}
                     {job.status === 'applied' && job.hasDiff && (
@@ -810,7 +815,7 @@ export const UpdatesView: React.FC = () => {
                       </button>
                     )}
                     {/* The fix box above already offers running it again, so "Try again" only shows when it doesn't. */}
-                    {(job.status === 'failed' || job.status === 'discarded' || ((job.stale || job.olderBase) && (job.status === 'ready' || job.status === 'undone'))) && !(fix && fix.action !== 'discard') && (
+                    {(job.status === 'failed' || job.status === 'discarded' || checkIssue || ((job.stale || job.olderBase) && (job.status === 'ready' || job.status === 'undone'))) && !(fix && fix.action !== 'discard') && (
                       <button
                         onClick={() => retry(job)}
                         disabled={acting === job.id || !claudeReady}
@@ -845,12 +850,12 @@ export const UpdatesView: React.FC = () => {
             className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-slate-900"
           >
             <h2 id="apply-title" className="flex items-center gap-2 text-lg font-semibold text-slate-900 dark:text-white">
-              <Check className="h-5 w-5 text-emerald-500" /> Apply this to the app on your PC?
+              <Check className="h-5 w-5 text-emerald-500" /> {confirmOverride ? 'Override the update checks?' : 'Apply this to the app on your PC?'}
             </h2>
             <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">“{confirmApply.request.length > 140 ? `${confirmApply.request.slice(0, 140)}…` : confirmApply.request}”</p>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
               {confirmApply.files?.length || 'The'} changed file{confirmApply.files?.length === 1 ? ' is' : 's are'} copied into the real code on the PC. A restore point is saved first, so Undo puts everything back.
-              {confirmApply.check?.ok === false && ' The checks failed for this one, so it may break the app.'}
+              {confirmOverride && ' This update has no passing release check and may break the app.'}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button autoFocus onClick={() => setConfirmApply(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
@@ -860,11 +865,11 @@ export const UpdatesView: React.FC = () => {
                 onClick={() => {
                   const job = confirmApply;
                   setConfirmApply(null);
-                  act(job, 'apply');
+                  act(job, 'apply', confirmOverride);
                 }}
-                className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500"
+                className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white ${confirmOverride ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
               >
-                <Check className="h-4 w-4" /> Yes, apply it
+                <Check className="h-4 w-4" /> {confirmOverride ? 'Apply anyway' : 'Yes, apply it'}
               </button>
             </div>
           </div>
@@ -929,7 +934,7 @@ export const UpdatesView: React.FC = () => {
             </ul>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
               They are applied one after another, oldest first. Each one saves its own restore point first, so you can still Undo any of them. If one no longer fits, it is skipped and the others carry on.
-              {skippedFailed > 0 && ` ${skippedFailed} update${skippedFailed === 1 ? ' whose checks' : 's whose checks'} failed ${skippedFailed === 1 ? 'is' : 'are'} not included.`}
+              {skippedChecks > 0 && ` ${skippedChecks} with check issues need individual review.`}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button autoFocus onClick={() => setConfirmAll(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
