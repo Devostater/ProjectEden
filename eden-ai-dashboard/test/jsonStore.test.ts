@@ -98,3 +98,14 @@ test('a missing primary is restored from its last-good copy', (t) => {
   assert.deepEqual(open().read(), { version: 1 });
   assert.equal(fs.readFileSync(file, 'utf8'), '{"version":1}');
 });
+
+test('a damaged primary and damaged recovery copy cannot be replaced with starter data', (t) => {
+  const { dir, file, open } = fixture(t);
+  t.mock.method(console, 'error', () => {});
+  fs.writeFileSync(file, '{"version":');
+  fs.writeFileSync(file + '.last-good', '{"version":"wrong type"}');
+  assert.throws(() => open().read(), /No usable copy/);
+  assert.throws(() => open().write({ version: 1 }), /No usable copy/);
+  const preserved = fs.readdirSync(dir).map(name => fs.readFileSync(path.join(dir, name), 'utf8'));
+  assert.deepEqual(preserved.sort(), ['{"version":', '{"version":"wrong type"}'].sort());
+});

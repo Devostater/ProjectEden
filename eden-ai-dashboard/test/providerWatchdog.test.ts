@@ -6,6 +6,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { generatePaid, providerDetails, refreshProviderStatus, UnconfirmedPaidRequestError } from '../providers.ts';
 
+const fakeKeys = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY'];
+test.beforeEach(() => {
+  for (const key of fakeKeys) process.env[key] = 'fake-test-key';
+});
+test.afterEach(() => {
+  for (const key of fakeKeys) delete process.env[key];
+});
+
 test('provider status reads the cache while a single background refresh is pending', async () => {
   const before = providerDetails();
   let commands = 0;
@@ -26,12 +34,6 @@ test('provider status reads the cache while a single background refresh is pendi
 });
 
 test('each paid provider aborts a stalled response body and reports a timeout without resending', async (t) => {
-  const previousKey = process.env.GEMINI_API_KEY;
-  process.env.GEMINI_API_KEY = 'fake-test-key';
-  t.after(() => {
-    if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousKey;
-  });
   for (const provider of ['anthropic', 'openai', 'google'] as const) {
     let requests = 0;
     let aborted = false;
@@ -63,12 +65,6 @@ test('each paid provider aborts a stalled response body and reports a timeout wi
 });
 
 test('Gemini retries one explicit quota rejection and never retries an ambiguous 503', async (t) => {
-  const previousKey = process.env.GEMINI_API_KEY;
-  process.env.GEMINI_API_KEY = 'fake-test-key';
-  t.after(() => {
-    if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = previousKey;
-  });
   let requests: string[] = [];
   let status = 429;
   t.mock.method(globalThis, 'fetch', async (url: string) => {
@@ -87,6 +83,21 @@ test('Gemini retries one explicit quota rejection and never retries an ambiguous
   status = 503;
   await assert.rejects(generatePaid('google', 'fake-model', { prompt: 'test', web: true }), UnconfirmedPaidRequestError);
   assert.equal(requests.length, 1);
+});
+
+test('paid HTTP adapters distinguish explicit authorization rejection from an uncertain response', async (t) => {
+  let status = 401;
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () =>
+    Response.json({ error: { message: 'fixture failure' } }, { status }));
+  for (const provider of ['anthropic', 'openai'] as const) {
+    status = 401;
+    await assert.rejects(generatePaid(provider, 'fake-model', { prompt: 'fixture' }),
+      (error: unknown) => error instanceof Error && !(error instanceof UnconfirmedPaidRequestError)
+        && error.message.includes('fixture failure'));
+    status = 408;
+    await assert.rejects(generatePaid(provider, 'fake-model', { prompt: 'fixture' }), UnconfirmedPaidRequestError);
+  }
+  assert.equal(fetchMock.mock.callCount(), 4);
 });
 
 test('tablet chat reports an unconfirmed request without exposing provider details', async (t) => {

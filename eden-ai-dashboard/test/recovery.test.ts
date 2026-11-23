@@ -42,6 +42,28 @@ async function availablePort(t: TestContext) {
   return { server, port: address.port };
 }
 
+test('a failed recovery-point publication rolls back Apply and retains the previous recovery point', (t) => {
+  const { root, write, read } = disposableCopy(t);
+  applyWithRecovery(root, 'previous', 'original', ['server.ts'], () => write('server.ts', 'first update'));
+  const point = path.join(root, '.eden-offline-restore');
+  const manifest = read('.eden-offline-restore/point.json');
+  const rename = fs.renameSync;
+  t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => {
+    if (to === point && !String(from).endsWith('-previous')) throw new Error('publication failed');
+    return rename(from, to);
+  });
+  assert.throws(() => applyWithRecovery(root, 'next', 'second', ['server.ts', 'retired.ts', 'new.ts'], () => {
+    write('server.ts', 'second update');
+    fs.unlinkSync(path.join(root, 'retired.ts'));
+    write('new.ts', 'new module');
+  }), /publication failed/);
+  assert.equal(read('server.ts'), 'first update');
+  assert.equal(read('retired.ts'), 'working module');
+  assert.equal(fs.existsSync(path.join(root, 'new.ts')), false);
+  assert.equal(read('.eden-offline-restore/point.json'), manifest);
+  assert.equal(read('dist/index.html'), 'working dashboard');
+});
+
 test('supervisor stops after three broken boots and offline recovery restores the paired files and build', async (t) => {
   const { root, write, read } = disposableCopy(t);
   const { server, port } = await availablePort(t);

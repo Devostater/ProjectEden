@@ -43,8 +43,8 @@ function isPlaceholder(v?: string) {
   return !v || /^MY_[A-Z_]+$/.test(v);
 }
 
-function writeEnvLocal(updates: Record<string, string>) {
-  let lines = fs.existsSync(ENV_PATH) ? fs.readFileSync(ENV_PATH, 'utf-8').split(/\r?\n/) : [];
+function writeEnvLocal(file: string, updates: Record<string, string>) {
+  let lines = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8').split(/\r?\n/) : [];
   for (const [key, value] of Object.entries(updates)) {
     const line = value ? `${key}="${value.replace(/["\r\n]/g, '')}"` : null;
     const idx = lines.findIndex((l) => l.startsWith(`${key}=`));
@@ -56,7 +56,7 @@ function writeEnvLocal(updates: Record<string, string>) {
     }
   }
   lines = lines.filter((l, i) => l.trim() || i < lines.length - 1);
-  fs.writeFileSync(ENV_PATH, lines.join('\n') + '\n', 'utf-8');
+  fs.writeFileSync(file, lines.join('\n') + '\n', 'utf-8');
 }
 
 // The sign-in command for each AI's own tool. These are fixed: the page can only choose which one.
@@ -74,7 +74,7 @@ function fromOwnPage(req: Request): boolean {
   }
 }
 
-export function registerSettingsRoutes(app: Express) {
+export function registerSettingsRoutes(app: Express, { file = ENV_PATH, env = process.env } = {}) {
   // Opens the AI tool's own sign-in in a new window on this computer. The owner finishes it in their
   // browser; the hub never sees the password. Only this computer, and only the hub's own page, may ask.
   app.post('/api/connect/:provider/signin', (req, res) => {
@@ -135,7 +135,7 @@ export function registerSettingsRoutes(app: Express) {
     res.json({
       providers: providerDetails(),
       settings: SETTING_KEYS.map((s) => {
-        const v = process.env[s.key];
+        const v = env[s.key];
         const set = !isPlaceholder(v);
         return { ...s, set, preview: set ? (s.secret ? mask(v!) : v) : '' };
       }),
@@ -154,13 +154,13 @@ export function registerSettingsRoutes(app: Express) {
     // Windows accepts / in folder paths, and a backslash followed by n or t would be misread when the file is loaded again.
     if (updates.BACKUP_COPY_DIR) updates.BACKUP_COPY_DIR = updates.BACKUP_COPY_DIR.replace(/\\/g, '/');
     try {
-      writeEnvLocal(updates);
+      writeEnvLocal(file, updates);
     } catch (err: any) {
       return res.status(500).json({ error: `Could not write .env.local: ${err?.message}` });
     }
     for (const [k, v] of Object.entries(updates)) {
-      if (v) process.env[k] = v;
-      else delete process.env[k];
+      if (v) env[k] = v;
+      else delete env[k];
     }
     res.json({ ok: true });
   });
