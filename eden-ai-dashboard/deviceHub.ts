@@ -11,6 +11,7 @@
 // Moving it copies the data across and pauses the AI on the other hub, so two hubs never work the same cards.
 // On a device hub, Claude and ChatGPT (subscription tools) and Ollama aren't available; Gemini, Google AI
 // Studio and free AIs with keys are. While the device is plugged in, it can also reach LYRA on this PC.
+import { hubPort, DEFAULT_OLLAMA_PORT } from './config.mjs';
 import { spawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -339,9 +340,9 @@ export async function tabletAIs(): Promise<{ serial: string; name: string; baseU
     const has = await termux(d.serial, 'command -v ollama', 15000);
     if (!/ollama/.test(has.out)) continue;
     // Start it if it isn't running (setsid, so it keeps running after this command ends).
-    await termux(d.serial, 'curl -s -m 2 127.0.0.1:11434/api/version >/dev/null || (OLLAMA_HOST=127.0.0.1:11434 OLLAMA_KEEP_ALIVE=10m OLLAMA_NUM_PARALLEL=1 setsid nohup ollama serve > ~/ollama.log 2>&1 < /dev/null &); echo ok', 20000);
+    await termux(d.serial, `curl -s -m 2 127.0.0.1:${DEFAULT_OLLAMA_PORT}/api/version >/dev/null || (OLLAMA_HOST=127.0.0.1:${DEFAULT_OLLAMA_PORT} OLLAMA_KEEP_ALIVE=10m OLLAMA_NUM_PARALLEL=1 setsid nohup ollama serve > ~/ollama.log 2>&1 < /dev/null &); echo ok`, 20000);
     const port = TABLET_AI_PORT(d.serial);
-    await adbRun(d.serial, ['forward', `tcp:${port}`, 'tcp:11434'], 15000);
+    await adbRun(d.serial, ['forward', `tcp:${port}`, `tcp:${DEFAULT_OLLAMA_PORT}`], 15000);
     tabletPorts.set(port, d.serial);
     out.push({ serial: d.serial, name: d.name || d.model || 'tablet', baseUrl: `http://127.0.0.1:${port}/v1` });
   }
@@ -353,7 +354,7 @@ const tabletPorts = new Map<number, string>();
 export async function ensureTabletRoute(baseUrl: string) {
   const port = Number(baseUrl.match(/:(\d+)\//)?.[1]);
   const serial = tabletPorts.get(port);
-  if (serial) await adbRun(serial, ['forward', `tcp:${port}`, 'tcp:11434'], 10000);
+  if (serial) await adbRun(serial, ['forward', `tcp:${port}`, `tcp:${DEFAULT_OLLAMA_PORT}`], 10000);
 }
 
 export function registerDeviceHubRoutes(app: Express) {
@@ -362,7 +363,7 @@ export function registerDeviceHubRoutes(app: Express) {
 
   app.get('/api/hub/info', (req, res) => {
     if (!hubCall(req)) return res.status(403).json({ error: 'Not allowed.' });
-    res.json({ onDevice: ON_DEVICE, port: Number(process.env.PORT) || 3000 });
+    res.json({ onDevice: ON_DEVICE, port: hubPort() });
   });
   app.get('/api/hub/export', (req, res) => {
     if (!hubCall(req)) return res.status(403).json({ error: 'Not allowed.' });

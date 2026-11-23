@@ -1,4 +1,5 @@
 // Pair a device with a code from the owner PC, then authenticate it with a revocable cookie.
+import { hubPort } from './config.mjs';
 import crypto from 'crypto';
 import { jsonObject, jsonStore } from './jsonStore.ts';
 import os from 'os';
@@ -173,7 +174,7 @@ function createPairing(file: string, now: () => number) {
         return next();
       });
 
-      const ownerInfo = () => ({ code, addresses: lanAddresses(Number(process.env.PORT) || 3000) });
+      const ownerInfo = () => ({ code, addresses: lanAddresses(hubPort()) });
       app.get('/api/pairing', (_req, res) => res.set('Cache-Control', 'no-store').json(ownerInfo()));
 
       app.post('/api/pairing/reset', (req, res) => {

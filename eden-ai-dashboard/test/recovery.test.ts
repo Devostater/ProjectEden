@@ -24,6 +24,7 @@ function disposableCopy(t: TestContext) {
   for (const script of ['recover.mjs', 'build-paths.mjs', 'hub-supervisor.mjs']) {
     write(`scripts/${script}`, fs.readFileSync(path.join(import.meta.dirname, '../scripts', script), 'utf8'));
   }
+  write('config.mjs', fs.readFileSync(new URL('../config.mjs', import.meta.url), 'utf8'));
   write('dist/index.html', 'working dashboard');
   write('dist/assets/app.js', 'working asset');
   write('server.ts', 'working server');

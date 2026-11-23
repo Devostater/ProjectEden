@@ -1,6 +1,7 @@
 // LYRA panel: lets the owner talk to LYRA directly from the bottom panel, without picking a teammate.
 // Like the terminal, it only answers from this computer and from the hub's own page.
-import type { Express, Request, Response } from 'express';
+import { DEFAULT_LYRA_PORT, lyraUrl } from './config.mjs';
+import type { Express, Response } from 'express';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -8,7 +9,7 @@ import { fileURLToPath } from 'url';
 import { spawn, execFile } from 'child_process';
 import { generate, lyraConnected, pingLyra } from './providers';
 import { logActivity, fileProblem } from './activity';
-import { mayManage } from './permissions';
+import { mayManage, mayUseLyraFromOwnHost } from './permissions';
 
 // Where LYRA's Nova.bat lives. The owner can set LYRA_START_PATH to its full path; otherwise we look in the usual place.
 function findNovaBat(): string | null {
@@ -29,25 +30,9 @@ function findNovaBat(): string | null {
   return null;
 }
 
-function fromThisComputer(req: Request): boolean {
-  const ip = req.socket.remoteAddress || '';
-  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
-}
-
-function fromOwnPage(req: Request): boolean {
-  const origin = req.headers.origin;
-  if (!origin) return false;
-  try {
-    return new URL(origin).host === req.headers.host;
-  } catch {
-    return false;
-  }
-}
-
 // LYRA's own API on this computer (same address the provider layer uses).
-const LYRA = () => (process.env.LYRA_URL || 'http://127.0.0.1:4777').replace(/\/+$/, '');
 async function lyraJson(p: string, body?: unknown, ms = 8000): Promise<any> {
-  const r = await fetch(LYRA() + p, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(ms) });
+  const r = await fetch(lyraUrl() + p, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(ms) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `LYRA answered ${r.status}`);
   return j;
@@ -173,7 +158,7 @@ export function registerLyraRoutes(app: Express) {
 
   // Start the conversation over, on every device.
   app.delete('/api/lyra/conversation', (req, res) => {
-    if (!fromThisComputer(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'The LYRA conversation can only be cleared from the hub on this computer.' });
+    if (!mayUseLyraFromOwnHost(req)) return res.status(403).json({ error: 'The LYRA conversation can only be cleared from the hub on this computer.' });
     convo.messages = [];
     changed();
     res.json({ ok: true });
@@ -204,7 +189,7 @@ export function registerLyraRoutes(app: Express) {
         tasks,
         made,
         projects: ((proj && proj.projects) || []).map((p: string) => ({ path: p, name: p.split(/[\\/]/).filter(Boolean).pop() })),
-        lyraPort: Number(new URL(LYRA()).port) || 4777,
+        lyraPort: Number(new URL(lyraUrl()).port) || DEFAULT_LYRA_PORT,
       });
     } catch (err: any) {
       res.json({ connected: false, error: String(err?.message || err) });
@@ -216,7 +201,7 @@ export function registerLyraRoutes(app: Express) {
     const p = String(req.query.p || '');
     if (!/^\/(sprites|media)\/[\w./%-]+\.(png|jpe?g|webp|gif)$/i.test(p) || p.includes('..')) return res.status(400).end();
     try {
-      const r = await fetch(LYRA() + p, { signal: AbortSignal.timeout(8000) });
+      const r = await fetch(lyraUrl() + p, { signal: AbortSignal.timeout(8000) });
       if (!r.ok) return res.status(r.status).end();
       res.setHeader('content-type', r.headers.get('content-type') || 'image/png');
       res.setHeader('cache-control', 'private, max-age=3600');
@@ -251,7 +236,7 @@ export function registerLyraRoutes(app: Express) {
 
   // Give LYRA a task: she works on it in the background (her 📋 Tasks) and proposes edits for you to approve in LYRA.
   app.post('/api/lyra/task', async (req, res) => {
-    if (!fromThisComputer(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'Tasks for LYRA can only be given from the hub on this computer.' });
+    if (!mayUseLyraFromOwnHost(req)) return res.status(403).json({ error: 'Tasks for LYRA can only be given from the hub on this computer.' });
     const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
     if (!text) return res.status(400).json({ error: 'Write what LYRA should do.' });
     const project = typeof req.body?.project === 'string' && req.body.project ? req.body.project : null;
@@ -283,7 +268,7 @@ export function registerLyraRoutes(app: Express) {
 
   // Opens Nova.bat in its own window on this computer, which starts LYRA.
   app.post('/api/lyra/start', async (req, res) => {
-    if (!fromThisComputer(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'LYRA can only be started from the hub on this computer.' });
+    if (!mayUseLyraFromOwnHost(req)) return res.status(403).json({ error: 'LYRA can only be started from the hub on this computer.' });
     await pingLyra();
     if (lyraConnected()) return res.json({ ok: true, already: true });
     if (process.platform !== 'win32') return res.status(400).json({ error: 'Starting LYRA from here only works on the Windows computer.' });
@@ -302,11 +287,11 @@ export function registerLyraRoutes(app: Express) {
 
   // Stops LYRA: closes whatever is listening on her port on this computer (and the programs it started).
   app.post('/api/lyra/stop', async (req, res) => {
-    if (!fromThisComputer(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'LYRA can only be stopped from the hub on this computer.' });
+    if (!mayUseLyraFromOwnHost(req)) return res.status(403).json({ error: 'LYRA can only be stopped from the hub on this computer.' });
     await pingLyra();
     if (!lyraConnected()) return res.json({ ok: true, already: true });
     if (process.platform !== 'win32') return res.status(400).json({ error: 'Stopping LYRA from here only works on the Windows computer.' });
-    const port = Number(new URL(LYRA()).port) || 4777;
+    const port = Number(new URL(lyraUrl()).port) || DEFAULT_LYRA_PORT;
     try {
       const found: string = await new Promise((resolve, reject) =>
         execFile('powershell.exe', ['-NoProfile', '-Command', `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique) -join ','`], { timeout: 10000, windowsHide: true }, (err, out) => (err ? reject(err) : resolve(String(out).trim()))),
@@ -329,7 +314,7 @@ export function registerLyraRoutes(app: Express) {
   });
 
   app.post('/api/lyra/chat', async (req, res) => {
-    if (!fromThisComputer(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'LYRA can only be talked to from the hub on this computer.' });
+    if (!mayUseLyraFromOwnHost(req)) return res.status(403).json({ error: 'LYRA can only be talked to from the hub on this computer.' });
     const text = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
     if (!text) return res.status(400).json({ error: 'Type a message first.' });
     // Earlier turns come from the conversation the hub keeps (the same one every device sees).
@@ -345,7 +330,7 @@ export function registerLyraRoutes(app: Express) {
 
   // The Retry button on a LYRA error in the activity log: sends that same message to LYRA again.
   app.post('/api/lyra/retry', async (req, res) => {
-    if (!fromThisComputer(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'LYRA can only be talked to from the hub on this computer.' });
+    if (!mayUseLyraFromOwnHost(req)) return res.status(403).json({ error: 'LYRA can only be talked to from the hub on this computer.' });
     const id = typeof req.body?.id === 'string' ? req.body.id : '';
     const at = convo.messages.findIndex((m) => m.id === id && m.role === 'user');
     if (at < 0) return res.status(404).json({ error: 'That message is no longer in the LYRA chat. Type it again.' });

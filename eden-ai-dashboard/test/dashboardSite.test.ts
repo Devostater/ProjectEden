@@ -89,6 +89,7 @@ test('the supervisor refuses to adopt a legacy or development listener', async (
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const scripts = path.join(root, 'scripts');
   fs.mkdirSync(scripts);
+  fs.copyFileSync(new URL('../config.mjs', import.meta.url), path.join(root, 'config.mjs'));
   for (const name of ['hub-supervisor.mjs', 'build-paths.mjs', 'recover.mjs']) {
     fs.copyFileSync(path.resolve(import.meta.dirname, '../scripts', name), path.join(scripts, name));
   }

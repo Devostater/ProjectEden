@@ -1,5 +1,6 @@
 ﻿// Unified multi-provider LLM layer: LYRA (your own local AI), Claude (Anthropic), Gemini (Google), OpenAI.
 // Every AI call in the server goes through generate(); the provider is picked from the model id.
+import { lyraUrl } from './config.mjs';
 import { ApiError, GoogleGenAI } from '@google/genai';
 import { execFile, spawn } from 'child_process';
 import fs from 'fs';
@@ -21,11 +22,10 @@ export type ProviderId = 'lyra' | 'anthropic' | 'google' | 'openai' | 'extra';
 // LYRA (Forge, Nova.bat) runs on this PC. EDEN sends it the conversation and LYRA's Auto mode picks
 // the model: free local/cloud models first, paid ones only if you allowed them in LYRA (with LYRA's
 // spending caps). LYRA counts as connected while it answers on LYRA_URL.
-const LYRA_URL = () => (process.env.LYRA_URL || 'http://127.0.0.1:4777').replace(/\/+$/, '');
 let lyraUp = false;
 export async function pingLyra() {
   try {
-    const r = await fetch(`${LYRA_URL()}/api/cloud`, { signal: AbortSignal.timeout(4000) });
+    const r = await fetch(`${lyraUrl()}/api/cloud`, { signal: AbortSignal.timeout(4000) });
     lyraUp = r.ok;
   } catch {
     lyraUp = false;
@@ -309,7 +309,7 @@ export async function generate(req: GenerateRequest): Promise<GenerateResult> {
   const mode = providerMode(provider);
   if (mode === 'off') {
     if (provider === 'extra') throw new Error('That free AI is not available right now (not running or removed). Check Account â†’ Connections â†’ Free AIs.');
-    if (provider === 'lyra') throw new Error("LYRA isn't running. Start it with Nova.bat on the PC (it answers on " + LYRA_URL() + ').');
+    if (provider === 'lyra') throw new Error("LYRA isn't running. Start it with Nova.bat on the PC (it answers on " + lyraUrl() + ').');
     throw new Error(`${provider === 'anthropic' ? 'Claude' : provider === 'google' ? 'Gemini' : 'OpenAI'} isn't connected yet. Connect it in Account â†’ Connections.`);
   }
   try {
@@ -648,7 +648,7 @@ async function callLyra(req: GenerateRequest): Promise<GenerateResult> {
   }
   let res: Response;
   try {
-    res = await fetch(LYRA_URL() + '/api/chat', {
+    res = await fetch(lyraUrl() + '/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ model: 'auto', mode: 'chat', project: null, trust: 'ask', history }),

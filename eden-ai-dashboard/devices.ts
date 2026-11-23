@@ -2,6 +2,7 @@
 // For each one the hub can route its own address (and LYRA's) through the cable, so the device opens
 // http://localhost:3000 and counts as this computer: no Wi-Fi and no pairing code needed.
 // Devices connect by themselves when plugged in (unless you pressed Disconnect on them).
+import { hubPort, DEFAULT_HUB_PORT, DEFAULT_LYRA_PORT } from './config.mjs';
 import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
@@ -13,7 +14,7 @@ import { lanAddresses, pairingCode } from './pairing';
 import { ensureLyraRunning } from './lyra';
 
 const FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-devices.json');
-const PORTS = [3000, 4777, 24678]; // the hub, LYRA, and the page's live-update connection
+const PORTS = [DEFAULT_HUB_PORT, DEFAULT_LYRA_PORT, 24678]; // the hub, LYRA, and the page's live-update connection
 
 const ADB_CANDIDATES = [
   path.join(process.env.LOCALAPPDATA || '', 'Android', 'Sdk', 'platform-tools', 'adb.exe'),
@@ -125,13 +126,13 @@ function details(serial: string): Partial<DeviceInfo> {
 
 function routed(serial: string): boolean {
   const list = adb(['-s', serial, 'reverse', '--list']).out;
-  return list.includes('tcp:3000 tcp:3000');
+  return list.includes(`tcp:${DEFAULT_HUB_PORT} tcp:${DEFAULT_HUB_PORT}`);
 }
 
 // Remote setup: open the hub's Wi-Fi link (with the pairing code) on the device once, so its browser is
 // paired and the hub keeps working there over Wi-Fi after the cable comes out.
 function setupWifi(serial: string): boolean {
-  const address = lanAddresses(Number(process.env.PORT) || 3000)[0];
+  const address = lanAddresses(hubPort())[0];
   if (!address) return false;
   const r = adb(['-s', serial, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', `${address}/?pair=${pairingCode()}`]);
   if (!r.ok) return false;
@@ -259,7 +260,7 @@ export function registerDeviceRoutes(app: Express) {
     for (const t of tablets) {
       if (!connect(t.serial)) continue;
       adb(['-s', t.serial, 'shell', 'input', 'keyevent', 'KEYCODE_WAKEUP']);
-      const url = 'http://localhost:4777/?eden';
+      const url = `http://localhost:${DEFAULT_LYRA_PORT}/?eden`;
       // LYRA installed as an app (a Chrome "WebAPK"): open that app, brought to the front. A plain link
       // would go to Chrome and can stay behind whatever is on screen.
       const app = adb(['-s', t.serial, 'shell', 'cmd', 'package', 'query-activities', '--brief', '-a', 'android.intent.action.VIEW', '-d', url]).out.match(/(org\.chromium\.webapk\.[\w.]+)\//)?.[1];
@@ -307,7 +308,7 @@ export function registerDeviceRoutes(app: Express) {
       return setupWifi(serial) ? res.json({ ok: true }) : res.status(400).json({ error: "This computer isn't on Wi-Fi right now, or the device couldn't open the link." });
     }
     if (action === 'open' || action === 'open-lyra') {
-      const url = action === 'open' ? 'http://localhost:3000/' : 'http://localhost:4777/';
+      const url = action === 'open' ? `http://localhost:${DEFAULT_HUB_PORT}/` : `http://localhost:${DEFAULT_LYRA_PORT}/`;
       const r = adb(['-s', serial, 'shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', url]);
       return r.ok ? res.json({ ok: true }) : res.status(500).json({ error: r.err || 'Could not open it on the device.' });
     }

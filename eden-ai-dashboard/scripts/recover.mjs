@@ -1,3 +1,4 @@
+import { hubPort } from '../config.mjs';
 ﻿import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -143,7 +144,7 @@ function portInUse(port) {
   });
 }
 
-export async function recover(app, { force = false, port = Number(process.env.PORT) || 3000 } = {}) {
+export async function recover(app, { force = false, port = hubPort() } = {}) {
   const lock = path.join(app, RECOVERY_LOCK);
   if (entry(lock) && !livePid(lock) && fs.readFileSync(lock, 'utf8').trim()) fs.unlinkSync(lock);
   fs.writeFileSync(lock, String(process.pid), { flag: 'wx' });

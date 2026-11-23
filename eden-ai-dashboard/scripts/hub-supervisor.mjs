@@ -5,6 +5,7 @@
 //   - only one copy runs; a hub that was started some other way is watched, and started here when it stops
 // Started by "Open Eden" (hidden) or "Start Eden.bat" (in a window, with the log on screen).
 // Add --open to also open the Eden AI Hub app window.
+import { hubPort } from '../config.mjs';
 import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import net from 'node:net';
@@ -19,7 +20,7 @@ import { livePid, RECOVERY_LOCK } from './recover.mjs';
 process.title = 'Devostater - Eden AI Hub - keeper (closing this window stops Eden)';
 
 const APP = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = hubPort();
 const HEALTH = `http://127.0.0.1:${PORT}/health`;
 const LOG_DIR = path.join(APP, '.eden-logs');
 const LOG = path.join(LOG_DIR, 'hub.log');

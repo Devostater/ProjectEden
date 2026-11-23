@@ -1,7 +1,8 @@
+import { DEFAULT_HUB_PORT } from '../config.mjs';
 // Smoke test for a running Eden AI Hub server.
 //   npm run test:smoke            checks routes without spending any AI messages
 //   npm run test:smoke -- --live  also asks one teammate a real question (uses 1 AI message)
-const BASE = process.env.EDEN_URL || 'http://localhost:3000';
+const BASE = process.env.EDEN_URL || `http://localhost:${DEFAULT_HUB_PORT}`;
 const LIVE = process.argv.includes('--live');
 
 let passed = 0;

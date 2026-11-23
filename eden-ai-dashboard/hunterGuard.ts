@@ -9,8 +9,8 @@
 import type { Express, NextFunction, Request, Response } from 'express';
 import { createRequire } from 'module';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
+import { hostOkLocal, isForeignApiRequest } from './permissions';
 
 type Guard = { hostOk: (h?: string) => boolean; clientIp: (req: Request) => string; report: (ev: Record<string, unknown>) => void };
 
@@ -23,16 +23,6 @@ function loadGuard(appDir: string): Guard | null {
   }
   return null;
 }
-
-const isIp = (h: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || /^\[[0-9a-f:.]+\]$/i.test(h);
-// Same rule as HUNTER's, for a PC without HUNTER.
-const hostOkLocal = (hostHeader?: string) => {
-  if (!hostHeader) return true;
-  const h = hostHeader.toLowerCase().replace(/:\d+$/, '');
-  return h === 'localhost' || isIp(h) || h === os.hostname().toLowerCase() || /\.(ts\.net|local|lan|home)$/.test(h);
-};
-
-const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
 export function registerHunterGuard(app: Express, appDir: string) {
   const guard = loadGuard(appDir);
@@ -51,17 +41,10 @@ export function registerHunterGuard(app: Express, appDir: string) {
       tell(req, 'bad-host', `Request for a strange name (${String(host).slice(0, 60)}): possible DNS rebinding.`);
       return res.status(403).json({ error: 'EDEN only answers to its own address.' });
     }
-    if (req.path.startsWith('/api/')) {
-      const site = String(req.headers['sec-fetch-site'] || '').toLowerCase();
-      const origin = req.headers.origin;
-      let foreign = site === 'cross-site' || (site === 'same-site' && WRITES.has(req.method));
-      if (!foreign && origin && WRITES.has(req.method)) {
-        try { foreign = new URL(origin).host !== host; } catch { foreign = true; }
-      }
-      if (foreign) {
-        tell(req, 'cross-site', `Another website (${String(origin || site).slice(0, 60)}) tried to use ${req.path}.`);
-        return res.status(403).json({ error: 'Not allowed from another site.' });
-      }
+    if (isForeignApiRequest(req)) {
+      const source = req.headers.origin || String(req.headers['sec-fetch-site'] || '').toLowerCase();
+      tell(req, 'cross-site', `Another website (${String(source).slice(0, 60)}) tried to use ${req.path}.`);
+      return res.status(403).json({ error: 'Not allowed from another site.' });
     }
     next();
   });

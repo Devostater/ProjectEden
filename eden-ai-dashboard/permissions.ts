@@ -1,4 +1,29 @@
+import os from 'node:os';
 ﻿import type { Request } from 'express';
+
+const isIp = (h: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || /^\[[0-9a-f:.]+\]$/i.test(h);
+// Same rule as HUNTER's, for a PC without HUNTER.
+export const hostOkLocal = (hostHeader?: string) => {
+  if (!hostHeader) return true;
+  const h = hostHeader.toLowerCase().replace(/:\d+$/, '');
+  return h === 'localhost' || isIp(h) || h === os.hostname().toLowerCase() || /\.(ts\.net|local|lan|home)$/.test(h);
+};
+
+const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+export function isForeignApiRequest(req: Request): boolean {
+  if (!req.path.startsWith('/api/')) return false;
+  const site = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+  const writes = WRITES.has(req.method);
+  if (site === 'cross-site' || (site === 'same-site' && writes)) return true;
+  const origin = req.headers.origin;
+  if (!origin || !writes) return false;
+  try {
+    return new URL(origin).host !== req.headers.host;
+  } catch {
+    return true;
+  }
+}
 
 export const isLocal = (req: Request) => {
   const ip = req.socket.remoteAddress;
@@ -13,6 +38,18 @@ export const fromOwnPage = (req: Request) => {
     return false;
   }
 };
+
+// LYRA routes using this policy historically compare only the host, including its port.
+export function mayUseLyraFromOwnHost(req: Request): boolean {
+  if (!isLocal(req)) return false;
+  const origin = req.headers.origin;
+  if (!origin) return false;
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
 
 export const mayView = isLocal;
 export const mayManage = (req: Request) => isLocal(req) && fromOwnPage(req);

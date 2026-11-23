@@ -10,6 +10,7 @@
 //
 // Model ids look like "x:<provider id>:<model>", e.g. "x:ollama:qwen3.5:4b".
 // When one model hits its limit it is rested for a while and the next free one is used.
+import { DEFAULT_LM_STUDIO_URL, DEFAULT_OLLAMA_PORT, DEFAULT_OLLAMA_URL } from './config.mjs';
 import { jsonObject, jsonStore } from './jsonStore';
 import os from 'os';
 import path from 'path';
@@ -123,8 +124,8 @@ export async function scanExtraAIs(): Promise<{ found: string[] }> {
   const at = new Date().toISOString();
 
   const local: [string, string, string][] = [
-    ['ollama', 'Ollama (on this PC)', 'http://127.0.0.1:11434/v1'],
-    ['lmstudio', 'LM Studio (on this PC)', 'http://127.0.0.1:1234/v1'],
+    ['ollama', 'Ollama (on this PC)', `${DEFAULT_OLLAMA_URL}/v1`],
+    ['lmstudio', 'LM Studio (on this PC)', `${DEFAULT_LM_STUDIO_URL}/v1`],
   ];
   for (const [id, name, baseUrl] of local) {
     try {
@@ -265,7 +266,7 @@ export async function callExtra(id: string, req: { system?: string; messages: { 
   if (!parsed?.provider) throw new Error(`Unknown AI: ${id}`);
   const { provider, model } = parsed;
   const messages = [...(req.system ? [{ role: 'system', content: req.system }] : []), ...req.messages];
-  const isOllama = provider.id === 'ollama' || provider.baseUrl.includes('11434') || !!provider.device;
+  const isOllama = provider.id === 'ollama' || provider.baseUrl.includes(String(DEFAULT_OLLAMA_PORT)) || !!provider.device;
   const restDuration = provider.local || provider.device ? 15 * 1000 : REST_MS;
   // Don't even ask Ollama for a big model when the PC has no room: it would only fail with "Internal Server Error".
   if (provider.local && !fitsNow(id)) {

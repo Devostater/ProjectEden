@@ -1,9 +1,10 @@
 // Claude Code running on a model on this PC, the same way `ollama launch claude` does it: Claude Code does
 // the work (reading, editing, tools) and Ollama answers in place of Anthropic's servers. Free, and works
 // offline. Used for code updates on this PC.
+import { DEFAULT_OLLAMA_URL } from './config.mjs';
 import { localModels, fitsNow } from './offline';
 
-const OLLAMA = process.env.OLLAMA_HOST?.startsWith('http') ? process.env.OLLAMA_HOST : 'http://127.0.0.1:11434';
+const OLLAMA = process.env.OLLAMA_HOST?.startsWith('http') ? process.env.OLLAMA_HOST : DEFAULT_OLLAMA_URL;
 
 // Best local model for agent work (it must be good at using tools): a coder model that fits, or gpt-oss-20b when memory allows.
 export function localAgentModel(): string | null {

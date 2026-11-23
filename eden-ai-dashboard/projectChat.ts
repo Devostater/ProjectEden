@@ -5,6 +5,8 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express } from 'express';
+import { hubPort } from './config.mjs';
+import { isLocal } from './permissions';
 import { askTeammate } from './cardRunner';
 import type { Agent, Project, Card } from './src/types/index';
 
@@ -71,11 +73,10 @@ export function meetingText(at: string): string {
 }
 
 const localDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const isLoopback = (ip = '') => ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 
 export function registerProjectChat(app: Express, getStore: () => { agents: Agent[]; projects?: Project[]; cards?: Card[] }) {
   const projectOf = (id: string) => (getStore().projects || []).find((p) => p.id === id);
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = hubPort();
   const self = (p: string, body: unknown) =>
     fetch(`http://127.0.0.1:${PORT}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(15000) }).then(async (r) => {
       const d: any = await r.json().catch(() => ({}));
@@ -144,7 +145,7 @@ export function registerProjectChat(app: Express, getStore: () => { agents: Agen
   // For other programs on this PC (e.g. LYRA): schedule a project's meeting.
   // { project: id or name, when: "YYYY-MM-DDTHH:MM" (local time), topics?: string[], host?: boolean }
   app.post('/api/meetings/schedule', (req, res) => {
-    if (!isLoopback(req.socket.remoteAddress)) return res.status(403).json({ error: 'Only programs on this computer can schedule meetings.' });
+    if (!isLocal(req)) return res.status(403).json({ error: 'Only programs on this computer can schedule meetings.' });
     const key = clean(req.body?.project, 120).toLowerCase();
     const projects = getStore().projects || [];
     const project = projects.find((p) => p.id === key) || projects.find((p) => p.name.toLowerCase() === key) || projects.find((p) => key && p.name.toLowerCase().includes(key));

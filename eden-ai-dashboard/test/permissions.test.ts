@@ -177,3 +177,23 @@ test('webhooks are disabled without configuration and require an exact HTTPS des
     assert.equal(sent, 1);
   }
 });
+
+test('the pairing route advertises the default hub port and honors PORT', async (t) => {
+  const savedPort = process.env.PORT;
+  t.after(() => {
+    if (savedPort === undefined) delete process.env.PORT;
+    else process.env.PORT = savedPort;
+  });
+  t.mock.method(os, 'networkInterfaces', () => ({
+    test: [{
+      address: '192.0.2.1', family: 'IPv4', internal: false,
+      netmask: '255.255.255.0', mac: '00:00:00:00:00:00', cidr: '192.0.2.1/24',
+    }],
+  }));
+  const { request } = await hub(t);
+  delete process.env.PORT;
+  const owner = { 'x-test-owner': '1' };
+  assert.deepEqual((await (await request('/api/pairing', owner)).json()).addresses, ['http://192.0.2.1:3000']);
+  process.env.PORT = '4321';
+  assert.deepEqual((await (await request('/api/pairing', owner)).json()).addresses, ['http://192.0.2.1:4321']);
+});
