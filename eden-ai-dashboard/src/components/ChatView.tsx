@@ -186,8 +186,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ agents, chat, draft, onDraft
   };
 
   // A message handed over from Home, Team or Files.
+  const consumedDraft = useRef<ChatDraft | null>(null);
   useEffect(() => {
-    if (!draft) return;
+    // Development StrictMode can replay this effect before the parent clears the draft.
+    if (!draft || consumedDraft.current === draft) return;
+    consumedDraft.current = draft;
     onDraftUsed?.();
     let target = thread;
     if (thread.messages.length) {
@@ -199,7 +202,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ agents, chat, draft, onDraft
       send(draft.text, target);
     } else {
       setInput(draft.text);
-      setTimeout(() => inputRef.current?.focus(), 0);
+      inputRef.current?.focus();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);

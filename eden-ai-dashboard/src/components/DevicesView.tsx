@@ -114,19 +114,25 @@ export const DevicesView: React.FC = () => {
     load();
     // Live: the hub tells this page the moment a device is plugged in or out. A slow check stays as a backup.
     let events: EventSource | null = null;
+    let reloadDevices: ReturnType<typeof setTimeout> | undefined;
+    let reloadHubs: ReturnType<typeof setTimeout> | undefined;
     try {
       events = new EventSource('/api/devices/events');
       events.onmessage = (e) => {
         if (e.data !== 'change') return;
         load();
-        setTimeout(load, 2500); // again once it's connected
-        setTimeout(() => loadHubs(true), 4000);
+        clearTimeout(reloadDevices);
+        clearTimeout(reloadHubs);
+        reloadDevices = setTimeout(load, 2500); // again once it's connected
+        reloadHubs = setTimeout(() => loadHubs(true), 4000);
       };
     } catch {}
     const t = setInterval(() => document.visibilityState === 'visible' && load(), 30000);
     return () => {
       clearInterval(t);
       events?.close();
+      clearTimeout(reloadDevices);
+      clearTimeout(reloadHubs);
     };
   }, []);
   const [adding, setAdding] = useState(false);

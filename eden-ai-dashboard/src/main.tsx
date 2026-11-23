@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import { TabletChat } from './components/TabletChat.tsx';
@@ -27,7 +28,8 @@ async function start() {
     }
     if (!response.ok) throw new Error();
     const { local } = await response.json();
-    root.render(<ErrorBoundary>{local === true ? <App /> : <TabletChat />}</ErrorBoundary>);
+    const app = <ErrorBoundary>{local === true ? <App /> : <TabletChat />}</ErrorBoundary>;
+    root.render(import.meta.env.DEV ? <StrictMode>{app}</StrictMode> : app);
   } catch {
     root.render(<p role="alert" className="p-5">Could not connect to EDEN. Reload to try again.</p>);
   }

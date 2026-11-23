@@ -190,15 +190,19 @@ export const NexusView: React.FC<NexusViewProps> = ({ agents, projects, ownerNam
     setHighlight(focus.seq);
     setShowList(false);
     let tries = 0;
+    let clearHighlight: ReturnType<typeof setTimeout> | undefined;
     const timer = setInterval(() => {
       const el = document.getElementById(`nexus-msg-${focus.seq}`);
       if (el || ++tries > 20) {
         clearInterval(timer);
         el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        setTimeout(() => setHighlight(null), 4000);
+        clearHighlight = setTimeout(() => setHighlight(null), 4000);
       }
     }, 250);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      clearTimeout(clearHighlight);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus?.n]);
 
