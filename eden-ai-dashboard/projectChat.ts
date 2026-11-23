@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import type { Express } from 'express';
 import { hubPort } from './config.mjs';
 import { isLocal } from './permissions';
+import { withSpendingNotice } from './providers';
 import { askTeammate } from './cardRunner';
 import type { Agent, Project, Card } from './src/types/index';
 
@@ -198,7 +199,7 @@ Keep replies short and direct. You can only reply with text; never claim to have
       for (const item of items) chat.agenda.push({ id: newId(), text: item, done: false, at: now() });
       if (meetAt) setMeeting(chat, meetAt, true);
       const fallback = [items.length ? `Added ${items.length} to the list.` : '', meetAt ? `Meeting set for ${meetingText(meetAt)}; I'll host it.` : ''].filter(Boolean).join(' ');
-      chat.messages.push({ role: 'chief', text: reply || fallback || '…', at: now() });
+      chat.messages.push({ role: 'chief', text: withSpendingNotice({ text: reply || fallback || '…', notice: answer.notice }), at: now() });
       chat.messages = chat.messages.slice(-MAX_MESSAGES);
       save();
       res.json(chat);

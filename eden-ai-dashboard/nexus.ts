@@ -171,7 +171,7 @@ export function registerNexusRoutes(app: Express, getStore: () => NexusStore, sa
       state.turnsDone += 1;
       state.workMs += Date.now() - startedAt;
       state.tokens += answer.tokens || 0;
-      const via = room.freeOnly && providerFor(agent.model) !== 'google' ? 'free Gemini' : answer.via || '';
+      const via = answer.notice || (room.freeOnly && providerFor(agent.model) !== 'google' ? 'free Gemini' : answer.via || '');
       return { text: answer.text.replace(new RegExp(`^\\s*\\**${agent.name}\\**\\s*:\\s*`, 'i'), ''), via };
     } catch (err: any) {
       post(room, { role: 'system', author: 'Nexus', text: `${agent.name} couldn't reply: ${err?.message || 'unknown error'}` });

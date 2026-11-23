@@ -39,7 +39,7 @@ type Usage = ReturnType<typeof providerUsage>[number];
 export function usagePercent(u: Usage): number {
   const real = u.real?.source === 'plan' ? u.real : undefined;
   const limited = !!real?.limited || !!u.limitNote;
-  return real?.usedPercent !== undefined ? real.usedPercent : limited ? 100 : Math.min(100, Math.round((u.messages / u.limit) * 100));
+  return limited ? 100 : Math.min(100, Math.max(real?.usedPercent ?? 0, Math.floor((u.messages / u.limit) * 100)));
 }
 
 const list = (names: string[]) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);

@@ -1,5 +1,5 @@
 ﻿import type { Express } from 'express';
-import { UnconfirmedPaidRequestError } from './providers';
+import { SpendingRequestSkipped, UnconfirmedPaidRequestError } from './providers';
 
 type Message = { role: 'user' | 'assistant'; content: string };
 type Reply = (messages: Message[]) => Promise<string>;
@@ -18,6 +18,7 @@ export function registerTabletChat(app: Express, reply: Reply) {
       const content = await reply(messages.map(({ role, content }) => ({ role, content })));
       res.json({ content });
     } catch (error) {
+      if (error instanceof SpendingRequestSkipped) return res.status(503).json({ error: error.message });
       if (error instanceof UnconfirmedPaidRequestError) {
         return res.status(503).json({ error: 'The online AI did not confirm a reply. It may still finish processing your request.' });
       }

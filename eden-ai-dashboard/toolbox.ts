@@ -11,6 +11,7 @@ import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
 import type { Project, ProjectTool, ProjectLink } from './src/types/index';
 import { AZI_ROOT, folderName, dirForProject } from './newproject';
+import { runWithSpendingControl, UnconfirmedPaidRequestError, type GenerateRequest } from './providers';
 import { logActivity } from './activity';
 
 interface Store {
@@ -126,23 +127,35 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
   try {
     res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(180000) });
   } catch (err: any) {
-    throw new Error(`${what} could not be reached (${err?.name === 'TimeoutError' ? 'no answer in 3 minutes' : err?.message || 'network error'}).`);
+    throw new UnconfirmedPaidRequestError(`${what} could not be reached (${err?.name === 'TimeoutError' ? 'no answer in 3 minutes' : err?.message || 'network error'}).`);
   }
   const data: any = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`${what} answered ${res.status}: ${data?.error?.message || data?.message || res.statusText}`);
+  if (!res.ok) {
+    const message = `${what} answered ${res.status}: ${data?.error?.message || data?.message || res.statusText}`;
+    if (res.status === 408 || res.status >= 500) throw new UnconfirmedPaidRequestError(message);
+    throw new Error(message);
+  }
   return data;
 }
 
 // Answers with the project's own connection. Returns null when the project uses the team's AIs.
 // Throws (with a message a person can act on) when the connection is chosen but not usable.
-export async function generateForProject(p: Project, req: { system?: string; prompt: string; maxTokens?: number }): Promise<{ text: string; tokens?: number; via: string } | null> {
+export async function generateForProject(p: Project, req: GenerateRequest & { prompt: string }): Promise<{ text: string; tokens?: number; via: string; notice?: string } | null> {
   const kind = p.ai?.use;
   if (!kind || !AI_KINDS[kind]) return null;
+  const provider = kind === 'gemini' ? 'google' : kind === 'anthropic' ? 'anthropic' : 'openai';
+  const label = AI_KINDS[kind].label;
+  const result = await runWithSpendingControl({ provider, mode: 'api', label }, req, kind, async () => ({
+    ...await sendProjectRequest(p, kind, req), model: kind, provider,
+  }));
+  return { ...result, via: result.notice ? 'Ollama' : `${label} (this project's own connection)` };
+}
+
+async function sendProjectRequest(p: Project, kind: AiKind, req: GenerateRequest & { prompt: string }) {
   const env = readEnv(keysFile(p));
   const missing = AI_KINDS[kind].needs.filter((k) => !env[k]);
   const label = AI_KINDS[kind].label;
   if (missing.length) throw new Error(`${p.name} is set to use its own ${label} connection, but ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set (project → Toolbox → Connections).`);
-  const via = `${label} (this project's own connection)`;
   const max = req.maxTokens ?? 4096;
   const chat = [...(req.system ? [{ role: 'system', content: req.system }] : []), { role: 'user', content: req.prompt }];
 
@@ -159,10 +172,10 @@ export async function generateForProject(p: Project, req: { system?: string; pro
       data = await postJson(url, headers, { ...base, max_completion_tokens: max }, label);
     } catch (err: any) {
       // Older deployments only know max_tokens.
-      if (!/max_completion_tokens|unrecognized|unsupported/i.test(err.message)) throw err;
+      if (err instanceof UnconfirmedPaidRequestError || !/max_completion_tokens|unrecognized|unsupported/i.test(err.message)) throw err;
       data = await postJson(url, headers, { ...base, max_tokens: max }, label);
     }
-    return { text: data.choices?.[0]?.message?.content ?? '', tokens: data.usage?.total_tokens, via };
+    return { text: data.choices?.[0]?.message?.content ?? '', tokens: data.usage?.total_tokens };
   }
   if (kind === 'anthropic') {
     const data = await postJson(
@@ -172,7 +185,7 @@ export async function generateForProject(p: Project, req: { system?: string; pro
       label,
     );
     const text = (data.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
-    return { text, tokens: (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0), via };
+    return { text, tokens: (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0) };
   }
   // gemini
   const model = env.GEMINI_MODEL || 'gemini-3.6-flash';
@@ -183,7 +196,7 @@ export async function generateForProject(p: Project, req: { system?: string; pro
     label,
   );
   const text = (data.candidates?.[0]?.content?.parts || []).map((x: any) => x.text || '').join('');
-  return { text, tokens: data.usageMetadata?.totalTokenCount, via };
+  return { text, tokens: data.usageMetadata?.totalTokenCount };
 }
 
 interface RunState {
@@ -283,6 +296,7 @@ export function registerToolboxRoutes(app: Express, getStore: () => Store, save:
     if (!p.ai?.use) return res.status(400).json({ error: 'This project uses the team\'s AIs. Pick a connection first.' });
     try {
       const r = await generateForProject(p, { prompt: 'Reply with the single word: OK', maxTokens: 20 });
+      if (r?.notice) return res.status(503).json({ error: r.notice });
       res.json({ ok: true, via: r?.via, reply: (r?.text || '').trim().slice(0, 80) });
     } catch (err: any) {
       res.json({ ok: false, error: err.message });

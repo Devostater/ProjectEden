@@ -64,7 +64,7 @@ test('each paid provider aborts a stalled response body and reports a timeout wi
   }
 });
 
-test('Gemini retries one explicit quota rejection and never retries an ambiguous 503', async (t) => {
+test('Gemini surfaces quota rejection and never retries an ambiguous 503', async (t) => {
   let requests: string[] = [];
   let status = 429;
   t.mock.method(globalThis, 'fetch', async (url: string) => {
@@ -74,10 +74,8 @@ test('Gemini retries one explicit quota rejection and never retries an ambiguous
     }
     return Response.json({ candidates: [{ content: { parts: [{ text: 'fake reply' }] } }] });
   });
-  const result = await generatePaid('google', 'fake-model', { prompt: 'test' });
-  assert.equal(result.text, 'fake reply');
-  assert.equal(requests.length, 2);
-  assert.match(requests[1], /gemini-3.5-flash-lite/);
+  await assert.rejects(generatePaid('google', 'fake-model', { prompt: 'test' }), /429/);
+  assert.equal(requests.length, 1);
 
   requests = [];
   status = 503;

@@ -181,8 +181,8 @@ export const SwarmStudio: React.FC<SwarmStudioProps> = ({
           results,
         }),
       });
-      if (!res.ok) throw new Error('Synthesis failed');
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unable to synthesize the replies.');
       setSynthesisOutput(data.synthesis);
       if (onExecutionComplete) onExecutionComplete();
     } catch (err: any) {

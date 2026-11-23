@@ -6,7 +6,7 @@ function missing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException)?.code === 'ENOENT';
 }
 
-function replaceFile(file: string, raw: string): void {
+export function replaceFile(file: string, raw: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.tmp-${randomUUID()}`;
   try {

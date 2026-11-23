@@ -4,7 +4,7 @@ import { workspaceStore } from './server/workspaceStore';
 import express from 'express';
 import { dashboardMode, registerHealthRoute, serveDashboard } from './dashboardSite';
 import { GoogleGenAI } from '@google/genai';
-import { startProviderStatusRefresh, generate, replyToTabletChat, models, defaultModel, providerStatus, costByProvider } from './providers';
+import { startProviderStatusRefresh, generate, withSpendingNotice, replyToTabletChat, models, defaultModel, providerStatus, costByProvider } from './providers';
 import { registerSettingsRoutes } from './settings';
 import { registerPairing } from './server/routes/pairing';
 import { registerTabletChat } from './tabletChat';
@@ -141,7 +141,7 @@ async function runSingleAgent(
     fullContents
   );
 
-  const outputText = response.text || 'No output returned by model.';
+  const outputText = withSpendingNotice(response) || 'No output returned by model.';
   const latencyMs = Math.max(120, Date.now() - start);
   const tokens = response.tokens || estimateTokens(fullContents + outputText);
 
@@ -412,7 +412,7 @@ Task:
       const response = await generate({ model: req.body?.model || defaultModel(), prompt: prompt, system: 'You are an AI operations auditor for a small games and digital products studio. Be direct and constructive about cost versus business value.' });
 
       res.json({
-        grillReport: response.text || 'Audit complete.',
+        grillReport: withSpendingNotice(response) || 'Audit complete.',
         totalTokens,
         totalRuns,
         quotaPercent: Math.min(100, Math.round((totalTokens / 500000) * 100)),
@@ -464,7 +464,7 @@ Task:
         .join('\n\n---\n\n');
       const synthPrompt = `Synthesize the following parallel agent findings for prompt: "${prompt}"\n\n${agentSummaries}\n\nWrite one short combined plan: where the team agrees, any conflicts and how to settle them, then the next steps with an owner for each.`;
       const response = await generate({ model: req.body?.model || defaultModel(), prompt: synthPrompt, system: 'You are Chief, chief of staff for a small games and digital products studio. Combine the team answers into one clear, decisive plan. Be brief.' });
-      res.json({ synthesis: response.text || 'Synthesis complete.' });
+      res.json({ synthesis: withSpendingNotice(response) || 'Synthesis complete.' });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || 'Synthesis failed' });
     }
@@ -879,7 +879,7 @@ Pick the best-fitting teammate for each step. To save the final result as a file
           : { label: String(s?.label || '').slice(0, 60), agentId: byName.get(String(s?.who || '').trim().toLowerCase()) || lead.id, prompt: String(s?.prompt || '').slice(0, 1500) }
       ).filter((s: any) => s.label);
       if (!steps.length) throw new Error('empty');
-      res.json({ name: String(plan.name || '').slice(0, 80), description: String(plan.description || '').slice(0, 300), steps });
+      res.json({ name: String(plan.name || '').slice(0, 80), description: [answer.notice, String(plan.description || '').slice(0, 300)].filter(Boolean).join(' '), steps });
     } catch (err: any) {
       res.status(502).json({ error: err?.message && err.message !== 'empty' && !/JSON|position/i.test(err.message) ? err.message : 'The draft came back in a form the app could not read. Try again, or start from a template.' });
     }

@@ -68,10 +68,10 @@ const keyOf = (p: ExtraProvider) => p.apiKey || (p.keyFromEnv ? process.env[p.ke
 // Text-chat models only: skip speech, image, video, music, embeddings and live-audio models.
 const NOT_CHAT = /(tts|image|imagen|veo|lyria|embed|transcrib|whisper|audio|live|realtime|moderation|guard|rerank|ocr|vision-only|robotics|computer-use|nano-banana|deep-research|translate|aqa)/i;
 
-async function listModels(p: Pick<ExtraProvider, 'baseUrl' | 'modelFilter'> & { key: string }): Promise<string[]> {
+async function listModels(p: Pick<ExtraProvider, 'baseUrl' | 'modelFilter'> & { key: string }, timeout = 10000): Promise<string[]> {
   const res = await fetch(`${p.baseUrl.replace(/\/+$/, '')}/models`, {
     headers: p.key ? { authorization: `Bearer ${p.key}` } : {},
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(timeout),
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`.trim());
   const data: any = await res.json();
@@ -99,7 +99,7 @@ const permanent = (status: number, msg: string) => status === 404 || (status ===
 // Cloud services list models that can't actually chat (retired, or a different API only). Try each new
 // one once with a tiny message and hide the ones that refuse. Local models are always kept.
 async function testNewModels(p: ExtraProvider) {
-  if (p.local) return;
+  if (p.local || !p.free || p.id === 'aistudio') return;
   p.tested ||= {};
   for (const model of p.models.filter((m) => p.tested![m] === undefined).slice(0, 40)) {
     try {
@@ -261,10 +261,34 @@ export function freeFallbacks(max = 6): string[] {
   return ordered.filter((m) => (resting.get(m.id) || 0) < now).slice(0, max).map((m) => m.id);
 }
 
-export async function callExtra(id: string, req: { system?: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number }) {
+type ExtraRequest = { system?: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number };
+
+export async function callExtra(id: string, req: ExtraRequest) {
   const parsed = parse(id);
   if (!parsed?.provider) throw new Error(`Unknown AI: ${id}`);
-  const { provider, model } = parsed;
+  return callExtraModel(id, parsed.provider, parsed.model, req);
+}
+
+export const extraSpendingSource = (id: string) => {
+  const provider = parse(id)?.provider;
+  if (provider?.id === 'aistudio') return { provider: 'google' as const, label: provider.name };
+  if (provider && !provider.free && !provider.local && !provider.device) return { label: provider.name };
+  return null;
+};
+
+export async function discoverSpendingFallback() {
+  const provider: ExtraProvider = {
+    id: 'ollama', name: 'Ollama', baseUrl: `${DEFAULT_OLLAMA_URL}/v1`,
+    models: [], free: true, local: true, enabled: true,
+  };
+  const models = await listModels({ baseUrl: provider.baseUrl, key: '' }, 4000);
+  return models.map((model) => ({
+    id: extraModelId(provider.id, model),
+    call: (req: ExtraRequest) => callExtraModel(extraModelId(provider.id, model), provider, model, req),
+  }));
+}
+
+async function callExtraModel(id: string, provider: ExtraProvider, model: string, req: ExtraRequest) {
   const messages = [...(req.system ? [{ role: 'system', content: req.system }] : []), ...req.messages];
   const isOllama = provider.id === 'ollama' || provider.baseUrl.includes(String(DEFAULT_OLLAMA_PORT)) || !!provider.device;
   const restDuration = provider.local || provider.device ? 15 * 1000 : REST_MS;

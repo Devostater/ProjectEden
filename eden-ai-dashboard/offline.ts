@@ -118,9 +118,8 @@ const HEAVY = /gpt-oss:20b|:14b|:20b|:3\db|:70b/;
 // Can this model run right now? Big ones need about 9 GB of free memory.
 export const fitsNow = (id: string) => !HEAVY.test(id) || os.freemem() > 9 * 1024 ** 3;
 
-export function localModelFor(kind: JobKind): string | null {
-  const roomy = os.freemem() > 9 * 1024 ** 3;
-  const list = localModels().filter((id) => roomy || !HEAVY.test(id));
+export function localModelFor(kind: JobKind, models = localModels()): string | null {
+  const list = models.filter(fitsNow);
   if (!list.length) return null;
   for (const re of PREFER[kind]) {
     const hit = list.find((id) => re.test(id));

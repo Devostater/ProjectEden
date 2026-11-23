@@ -49,7 +49,7 @@ export const UsageWarningBanner: React.FC = () => {
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
       <span className="min-w-0 flex-1">
         <b>Almost at the limit:</b> {names}.{' '}
-        {autoPaused ? 'The AI team was paused for you. Press Resume AI when you want it to carry on.' : 'Work that would have used it goes to your other AIs.'}
+        {autoPaused ? 'The AI team was paused for you. Press Resume AI when you want it to carry on.' : 'At the limit, requests switch to Ollama. If Ollama is unavailable, EDEN skips the request.'}
       </span>
       <button onClick={hide} aria-label="Hide this warning" title="Hide (it comes back if this changes)" className="shrink-0 rounded p-0.5 hover:bg-yellow-100 dark:hover:bg-yellow-900/50">
         <X className="h-4 w-4" />
@@ -77,7 +77,7 @@ export const AutoPauseCard: React.FC = () => {
   return (
     <div>
       <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Running out of AI</h2>
-      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">A yellow warning shows when Claude, ChatGPT or Gemini passes 85% of its limit. You can also have the team pause itself at 95%.</p>
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">A yellow warning shows when Claude, ChatGPT or Gemini passes 85% of its limit. You can also have the team pause itself at 95%. Requests switch to Ollama when a paid provider reaches its limit or its usage data is stale.</p>
       <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
         <input type="checkbox" checked={guard.autoPause} onChange={(e) => set(e.target.checked)} className="mt-1 h-4 w-4 accent-indigo-600" />
         <span>

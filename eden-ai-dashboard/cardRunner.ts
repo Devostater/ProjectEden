@@ -1,6 +1,6 @@
 // The card runner: when a card sits in "Ready" with a teammate assigned, that teammate's AI does the
 // work, the result is added to the card as a note, and the card moves to "Review" for the owner.
-import { UnconfirmedPaidRequestError, canUseWeb, generate, providerFor, providerUnavailable, fallbackModels, providerLabel, providerUsage, defaultModel, estimateCost, type ProviderId } from './providers';
+import { stopProviderRetries, canTryRequestedModel, needsSpendingFallback, withSpendingNotice, canUseWeb, generate, providerFor, fallbackModels, providerLabel, defaultModel, estimateCost, type ProviderId } from './providers';
 import type { Agent, Project, Card } from './src/types/index';
 import { logActivity } from './activity';
 import { aiPaused } from './control';
@@ -20,28 +20,20 @@ const runningTitles = new Map<string, string>(); // card id -> "Card title (Proj
 const now = () => new Date().toISOString();
 const noteId = () => `note-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-// An AI is over budget when this app has already sent it the day's allowance of messages.
-// Chat ignores the budget (you asked directly); automatic card work respects it.
-function overBudget(p: ProviderId): boolean {
-  const u = providerUsage().find((x) => x.provider === p);
-  return !!u && u.messages >= u.limit;
-}
-
-// Auto-switch (Settings, on unless AUTO_SWITCH_MODEL is 0/off): when a teammate's AI is out of budget or unavailable,
-// cards move to another connected AI (then free and local ones) instead of waiting.
+// Auto-switch allows other connected AIs when a teammate's chosen AI is unavailable.
+// Spending blocks are handled inside generate, including when auto-switch is off.
 export const autoSwitch = () => !/^(0|off|no|false)$/i.test((process.env.AUTO_SWITCH_MODEL || '').trim());
 
 // Models to try for this teammate, in order: their own AI first, then other connected ones.
 function modelQueue(agent: Agent): string[] {
   const wanted = agent.model || defaultModel();
   const wantedProvider = providerFor(wanted);
-  const own = providerUnavailable(wantedProvider) || overBudget(wantedProvider) ? [] : [wanted];
+  const own = canTryRequestedModel(wanted) ? [wanted] : [];
   if (!autoSwitch()) return own;
-  return [...own, ...fallbackModels(wantedProvider).filter((m) => !overBudget(providerFor(m)))];
+  return [...own, ...fallbackModels(wantedProvider)];
 }
 
 // Ask one teammate something directly, using their own AI first and other connected ones after.
-// Card work passes respectBudget so it stops at the daily budget; direct requests do not.
 import { isOffline, localModelFor, localModels, kindFor, fitsNow } from './offline';
 import { knowledgeFor } from './knowledge';
 import { graphicsModelFor } from './graphics';
@@ -51,20 +43,21 @@ export async function askTeammate(
   agent: Agent,
   system: string,
   prompt: string,
-  opts: { respectBudget?: boolean; maxTokens?: number; onlyModels?: string[] } = {}
-): Promise<{ text: string; provider: ProviderId; tokens: number; via?: string }> {
+  opts: { maxTokens?: number; onlyModels?: string[] } = {}
+): Promise<{ text: string; provider: ProviderId; tokens: number; via?: string; notice?: string }> {
   const wanted = agent.model || defaultModel();
   const wantedProvider = providerFor(wanted);
   // `onlyModels` pins the AI (free-only rooms use Gemini only, never a paid fallback).
   // Offline: the local model that suits this teammate's job first, then any other model on this PC.
   const offlineFirst = (agent.localModel && localModels().includes(agent.localModel) && fitsNow(agent.localModel) ? agent.localModel : null) || localModelFor(kindFor(wanted, agent.role));
-  const queue = isOffline()
+  const requested = opts.onlyModels?.[0] || wanted;
+  const queue = needsSpendingFallback(requested)
+    ? [requested]
+    : isOffline()
     ? [...new Set([offlineFirst, ...localModels()].filter(Boolean) as string[])]
     : opts.onlyModels
     ? opts.onlyModels
-    : opts.respectBudget
-    ? modelQueue(agent)
-    : [...(providerUnavailable(wantedProvider) ? [] : [wanted]), ...fallbackModels(wantedProvider)];
+    : [...(canTryRequestedModel(wanted) ? [wanted] : []), ...fallbackModels(wantedProvider)];
   let lastError = 'No AI is available right now. Set one up in Account → Connections.';
   for (const model of queue) {
     try {
@@ -72,12 +65,12 @@ export async function askTeammate(
       if (r.text.trim()) {
         agent.totalRuns += 1;
         agent.totalTokens += r.tokens || 0;
-        return { text: r.text.trim(), provider: r.provider, tokens: r.tokens || 0, via: r.provider !== wantedProvider ? providerLabel(r.provider) : undefined };
+        return { text: r.text.trim(), provider: r.provider, tokens: r.tokens || 0, notice: r.notice, via: r.provider !== wantedProvider ? providerLabel(r.provider) : undefined };
       }
       lastError = 'The AI returned an empty answer.';
     } catch (err: any) {
       lastError = err?.message || 'failed';
-      if (err instanceof UnconfirmedPaidRequestError) break;
+      if (stopProviderRetries(err)) break;
     }
   }
   throw new Error(lastError);
@@ -127,7 +120,7 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
   const agent = getStore().agents.find((a) => a.id === card?.assigneeId);
   if (!card || !project || !agent) return;
 
-  let result: { text: string; provider: ProviderId; usedWeb?: boolean } | null = null;
+  let result: { text: string; provider: ProviderId; usedWeb?: boolean; notice?: string } | null = null;
   let usedTokens = 0; // what this run used, added to the card's totals below
   let usedCost = 0; // estimate; a project's own connection is billed on its own keys, so it is not priced here
   let lastError = 'No AI is available right now.';
@@ -142,19 +135,20 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
   let teamAllowed = true;
   if (project.ai?.use) {
     try {
-      const r = await generateForProject(project, { system: systemFor(agent, prompt), prompt, maxTokens: 8000 });
+      const r = await generateForProject(project, { system: systemFor(agent, prompt), prompt, role: agent.role, localModel: agent.localModel, maxTokens: 8000 });
       if (r?.text.trim()) {
         agent.totalRuns += 1;
         agent.totalTokens += r.tokens || 0;
         usedTokens += r.tokens || 0;
-        result = { text: r.text.trim(), provider: wantedProvider };
+        result = { text: r.text.trim(), provider: r.notice ? 'extra' : wantedProvider, notice: r.notice };
         viaProject = r.via;
       } else lastError = `${projectAiLabel(project.ai.use)} returned an empty answer.`;
     } catch (err: any) {
       lastError = err?.message || 'failed';
+      if (stopProviderRetries(err)) teamAllowed = false;
     }
-    teamAllowed = project.ai.fallback === true;
-    if (!result && !teamAllowed) lastError += ' The team\'s AIs were not used, because this project only uses its own connection.';
+    teamAllowed = teamAllowed && project.ai.fallback === true;
+    if (!result && project.ai.fallback !== true && !lastError.startsWith('Request skipped.')) lastError += ' The team\'s AIs were not used, because this project only uses its own connection.';
   }
   for (const model of result || !teamAllowed ? [] : [...(viaUnreal ? [viaUnreal] : []), ...modelQueue(agent)]) {
     try {
@@ -164,13 +158,13 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
         agent.totalTokens += r.tokens || 0;
         usedTokens += r.tokens || 0;
         usedCost += estimateCost(r.provider, r.tokens || 0);
-        result = { text: r.text.trim(), provider: r.provider, usedWeb: r.usedWeb };
+        result = { text: r.text.trim(), provider: r.provider, usedWeb: r.usedWeb, notice: r.notice };
         break;
       }
       lastError = 'The AI returned an empty answer.';
     } catch (err: any) {
       lastError = err?.message || 'failed';
-      if (err instanceof UnconfirmedPaidRequestError) break;
+      if (stopProviderRetries(err)) break;
     }
   }
 
@@ -187,10 +181,10 @@ async function work(cardId: string, getStore: () => RunnerStore, save: () => voi
     current.notes.push({
       id: noteId(),
       author: agent.name,
-      text: result.text,
+      text: withSpendingNotice(result),
       at: now(),
       kind: 'result',
-      via: viaProject || (result.provider !== wantedProvider ? providerLabel(result.provider) : undefined),
+      via: result.notice ? 'Ollama' : viaProject || (result.provider !== wantedProvider ? providerLabel(result.provider) : undefined),
       web: result.usedWeb || undefined,
     });
     if (stillOurs) {
@@ -314,7 +308,7 @@ function tick(getStore: () => RunnerStore, save: () => void) {
     }
 
     // Offline: Aura runs through Claude, so its cards wait for the internet (they start by themselves after).
-    if (isOffline() && agent.model?.startsWith('aura')) {
+    if (isOffline() && agent.model?.startsWith('aura') && !needsSpendingFallback(agent.model)) {
       hold(card, 'Waiting for internet: Aura needs it. Starts by itself when you are back online.');
       continue;
     }
@@ -323,8 +317,8 @@ function tick(getStore: () => RunnerStore, save: () => void) {
       card.runMessage = undefined;
       changed = true;
     }
-    if (!isOffline() && !modelQueue(agent).length) {
-      hold(card, autoSwitch() ? "Waiting: no connected AI has messages left in today's budget." : "Waiting: this teammate's AI is out of today's budget. Turn on Auto-switch model in Settings to use another AI.");
+    if (!projects.find((p) => p.id === card!.projectId)?.ai?.use && !isOffline() && !modelQueue(agent).length) {
+      hold(card, autoSwitch() ? "Waiting: no AI is connected." : "Waiting: this teammate's AI is unavailable. Turn on Auto-switch model in Settings to use another AI.");
       continue;
     }
     if (claimed) {

@@ -63,7 +63,7 @@ export function useUsageTotals(): UsageTotals | null {
 export const usagePercent = (u: ProviderUsage): number => {
   const real = u.real?.source === 'plan' ? u.real : undefined;
   const limited = !!real?.limited || !!u.limitNote;
-  return real?.usedPercent !== undefined ? real.usedPercent : limited ? 100 : Math.min(100, Math.round((u.messages / u.limit) * 100));
+  return limited ? 100 : Math.min(100, Math.max(real?.usedPercent ?? 0, Math.floor((u.messages / u.limit) * 100)));
 };
 
 // Runs a refresh and keeps `busy` true for at least 0.7s, so the spinning icon is always seen (a fast

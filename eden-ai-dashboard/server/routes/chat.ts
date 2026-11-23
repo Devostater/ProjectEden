@@ -5,7 +5,7 @@ import type { createChatHistory } from './chats';
 import { knowledgeFor } from '../../knowledge';
 import { isOffline, localModelFor, localModels, kindFor, fitsNow } from '../../offline';
 import { mayManage } from '../../permissions';
-import { UnconfirmedPaidRequestError, canUseWeb, generate, defaultModel, providerFor, providerUnavailable, fallbackModels, providerLabel } from '../../providers';
+import { stopProviderRetries, canTryRequestedModel, needsSpendingFallback, canUseWeb, generate, defaultModel, providerFor, fallbackModels, providerLabel } from '../../providers';
 import type { Agent } from '../../src/types/index';
 
 export function registerConversationRoutes(
@@ -16,7 +16,7 @@ export function registerConversationRoutes(
   appendToChat: ReturnType<typeof createChatHistory>['appendToChat'],
 ) {
   // Chat. With no agent named, the client sends Chief. Each agent answers with its own AI; if that AI
-  // can't answer (not signed in, plan used up), the reply comes from another connected AI, with a note.
+  // can't answer, a fallback can provide the reply with an explanation.
   // Chat model quickbar: hub-wide choice of Online (the usual AIs) or one model on this PC.
   // Kept in .eden-chat-model.json (git-ignored), default Online. A local choice never falls back to online.
   const { read: readChatModel, write: writeChatModel } = chatModelStore(root);
@@ -75,9 +75,11 @@ export function registerConversationRoutes(
       }
       const queue = pinnedLocal
         ? [pinnedLocal]
+        : needsSpendingFallback(wanted)
+        ? [wanted]
         : isOffline()
         ? [...new Set([offlineFirst, ...localModels()].filter((x) => x && fitsNow(x)) as string[])]
-        : [...(providerUnavailable(wantedProvider) ? [] : [wanted]), ...fallbackModels(wantedProvider)];
+        : [...(canTryRequestedModel(wanted) ? [wanted] : []), ...fallbackModels(wantedProvider)];
       let lastError = isOffline()
         ? (localModels().length
           ? "Offline, and the AI on this PC needs more free memory than it has right now. Close other heavy programs and try again."
@@ -97,13 +99,13 @@ export function registerConversationRoutes(
             model: r.model,
             provider: r.provider,
             content: r.text.replace(/^\s*\[[^\]\n]{1,40}\]:\s*/, ''),
-            note: r.provider !== wantedProvider ? `Answered with ${providerLabel(r.provider)} because ${providerLabel(wantedProvider)} isn't available right now.` : '',
+            note: r.notice || (r.provider !== wantedProvider ? `Answered with ${providerLabel(r.provider)} because ${providerLabel(wantedProvider)} isn't available right now.` : ''),
             tokens: r.tokens || 0,
             latencyMs: Date.now() - start,
           };
         } catch (err: any) {
           lastError = err?.message || 'failed';
-          if (err instanceof UnconfirmedPaidRequestError) break;
+          if (stopProviderRetries(err)) break;
         }
       }
       logActivity('error', `${agent?.name || 'Assistant'} could not reply in chat: ${lastError}`);

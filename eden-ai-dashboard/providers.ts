@@ -8,8 +8,9 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { realLimits, type RealLimit } from './realLimits';
-import { extraModels, extraConnected, freeFallbacks, callExtra } from './extraAI';
+import { extraModels, extraConnected, freeFallbacks, callExtra, discoverSpendingFallback, extraSpendingSource } from './extraAI';
 import { pcBusy } from './busy';
+import { jsonObject, replaceFile } from './jsonStore';
 import { fileProblem } from './activity';
 import { isOffline, isLocalFirst, recordSplit, localModelFor, localModels, kindFor, fitsNow } from './offline';
 // A teammate's chosen local model, if Ollama still has it.
@@ -244,6 +245,7 @@ export interface GenerateResult {
   tokens?: number;
   model: string;
   provider: ProviderId;
+  notice?: string; // why EDEN switched to Ollama
   usedWeb?: boolean; // it looked things up on the web for this answer
 }
 
@@ -275,10 +277,15 @@ function toMessages(req: GenerateRequest): ChatMessage[] {
 }
 
 export async function generate(req: GenerateRequest): Promise<GenerateResult> {
+  let model = req.model || defaultModel();
+  if (!(model.startsWith('x:') ? /^x:[\w.\-]+:[\w.\-:/@]+$/ : /^[\w.\-]+$/).test(model)) throw new Error(`Invalid model id: ${model}`);
+  const spending = spendingSource(model);
+  const blocked = spending && spendingReason(spending);
+  if (blocked) return useOllama(req, model, blocked);
+
   // Web research: only while online (models on this PC can't browse), and the AI is told what it may do.
   if (req.web && isOffline()) req = { ...req, web: false };
   if (req.web && !req.system?.includes(WEB_NOTE)) req = { ...req, system: `${req.system ? `${req.system}\n\n` : ''}${WEB_NOTE}` };
-  let model = req.model || defaultModel();
   // Offline mode: anything bound for a cloud AI goes to a model on this PC that suits the job instead.
   if (isOffline() && !(model.startsWith('x:') && isLocalModel(model))) {
     if (isAuraModel(model)) throw new Error('Aura needs the internet (it runs through Claude). This waits until you are back online.');
@@ -304,7 +311,6 @@ export async function generate(req: GenerateRequest): Promise<GenerateResult> {
     const browses = own === 'anthropic' || own === 'lyra' || (own === 'google' && providerMode('google') === 'api' && geminiCanSearch());
     if (!browses && claudeCanResearch()) model = RESEARCH_MODEL;
   }
-  if (!(model.startsWith('x:') ? /^x:[\w.\-]+:[\w.\-:/@]+$/ : /^[\w.\-]+$/).test(model)) throw new Error(`Invalid model id: ${model}`);
   const provider = providerFor(model);
   const mode = providerMode(provider);
   if (mode === 'off') {
@@ -312,17 +318,20 @@ export async function generate(req: GenerateRequest): Promise<GenerateResult> {
     if (provider === 'lyra') throw new Error("LYRA isn't running. Start it with Nova.bat on the PC (it answers on " + lyraUrl() + ').');
     throw new Error(`${provider === 'anthropic' ? 'Claude' : provider === 'google' ? 'Gemini' : 'OpenAI'} isn't connected yet. Connect it in Account â†’ Connections.`);
   }
-  try {
-    let result = await dispatch(provider, mode, model, req);
+  const source = spendingSource(model);
+  let result: GenerateResult;
+  if (source) {
+    result = await runWithSpendingControl(source, req, model, () => dispatch(provider, mode, model, req));
+  } else {
+    result = await dispatch(provider, mode, model, req);
     recordUsage(provider, result.tokens || 0);
     recordSplit(isLocalModel(model));
-    // LYRA and others that look things up themselves: say so when the answer lists its sources.
-    if (req.web && result.usedWeb === undefined && /sources?\b/i.test(result.text) && /https?:\/\//.test(result.text)) result = { ...result, usedWeb: true };
-    return result;
-  } catch (err: any) {
-    recordFailure(provider, String(err?.message || err));
-    throw err;
   }
+  // LYRA and others that look things up themselves: say so when the answer lists its sources.
+  if (!result.notice && req.web && result.usedWeb === undefined && /sources?\b/i.test(result.text) && /https?:\/\//.test(result.text)) {
+    result = { ...result, usedWeb: true };
+  }
+  return result;
 }
 
 // Tablet chat uses text APIs only, with no owner context or CLI fallback.
@@ -346,15 +355,12 @@ export async function replyToTabletChat(messages: ChatMessage[]): Promise<string
       ['openai', process.env.OPENAI_MODEL || 'gpt-5'],
     ] as const;
     for (const [provider, model] of candidates) {
-      if (providerMode(provider) !== 'api' || providerUnavailable(provider) || isAuraModel(model)) continue;
+      if (providerMode(provider) !== 'api' || !canTryRequestedModel(model) || isAuraModel(model)) continue;
       try {
-        const result = await dispatch(provider, 'api', model, request);
-        recordUsage(provider, result.tokens || 0);
-        recordSplit(false);
-        return result.text;
+        const result = await runWithSpendingControl({ provider, mode: 'api' }, request, model, () => dispatch(provider, 'api', model, request));
+        return withSpendingNotice(result);
       } catch (error) {
-        recordFailure(provider, String(error instanceof Error ? error.message : error));
-        if (error instanceof UnconfirmedPaidRequestError) throw error;
+        if (stopProviderRetries(error)) throw error;
       }
     }
   }
@@ -376,9 +382,7 @@ function dispatch(provider: ProviderId, mode: ProviderMode, model: string, req: 
 }
 
 // ---- Usage tracking -------------------------------------------------------------------------
-// Counts what THIS app sends to each AI per day. The vendors don't expose how much of a
-// subscription is left, so the bar is "messages today vs. a daily budget you choose"; when a
-// vendor says the plan is used up, that message is kept and shown until a call succeeds again.
+// Counts what EDEN sends each day. Recent provider quota rejections also block paid requests.
 const USAGE_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-usage.json');
 
 interface DayUsage {
@@ -391,25 +395,35 @@ interface DayUsage {
 
 const today = () => new Date().toLocaleDateString('en-CA'); // local YYYY-MM-DD
 let usage: Partial<Record<ProviderId, DayUsage>> = {};
+let usageReadable = true;
 try {
-  usage = JSON.parse(fs.readFileSync(USAGE_PATH, 'utf-8'));
+  const saved = JSON.parse(fs.readFileSync(USAGE_PATH, 'utf-8'));
+  if (!jsonObject(saved) || !Object.values(saved).every((entry) =>
+    jsonObject(entry) && typeof entry.day === 'string' &&
+    typeof entry.messages === 'number' && Number.isSafeInteger(entry.messages) && entry.messages >= 0 &&
+    typeof entry.tokens === 'number' && Number.isFinite(entry.tokens) && entry.tokens >= 0,
+  )) throw new Error('Invalid AI usage counts');
+  usage = saved as typeof usage;
 } catch (err: any) {
+  usageReadable = err?.code === 'ENOENT';
   fileProblem("load today's AI usage counts", err);
 }
 
 function dayUsage(p: ProviderId): DayUsage {
   const u = usage[p];
   if (!u || u.day !== today()) {
-    // New day: counts reset, but a "plan used up" note stays until a call succeeds.
+    // New day: counts reset, but a recent quota rejection remains in force.
     usage[p] = { day: today(), messages: 0, tokens: 0, limitNote: u?.limitNote, limitAt: u?.limitAt };
   }
   return usage[p]!;
 }
 
 function saveUsage() {
+  if (!usageReadable) return;
   try {
-    fs.writeFileSync(USAGE_PATH, JSON.stringify(usage, null, 2), 'utf-8');
+    replaceFile(USAGE_PATH, JSON.stringify(usage, null, 2));
   } catch (err: any) {
+    usageReadable = false;
     fileProblem("save today's AI usage counts", err);
   }
 }
@@ -440,13 +454,11 @@ function recordHistory(p: ProviderId, tokens: number) {
   }
 }
 
-function recordUsage(p: ProviderId, tokens: number) {
+function recordUsage(p: ProviderId, tokens: number, counted = false) {
   const u = dayUsage(p);
-  u.messages += 1;
+  if (!counted) u.messages += 1;
   u.tokens += tokens;
   recordHistory(p, tokens);
-  delete u.limitNote;
-  delete u.limitAt;
   delete downUntil[p];
   saveUsage();
 }
@@ -459,12 +471,12 @@ const DOWN_MS = 5 * 60 * 1000;
 const LIMIT_RETRY_MS = 60 * 60 * 1000;
 const limited = (p: ProviderId) => {
   if (p === 'lyra' || p === 'extra') return false; // LYRA has its own caps; extra AIs rest per model
-  if (p !== 'google') {
+  if (p !== 'google' && providerMode(p) === 'subscription') {
     const real = realLimits()[p];
     if (real.limited) return true; // the plan itself says it's used up, until its reset time
   }
   const u = dayUsage(p);
-  return !!u.limitNote && Date.now() - (u.limitAt || 0) < LIMIT_RETRY_MS; // otherwise try again once an hour
+  return activeLimitNote(u); // otherwise try again once an hour
 };
 
 export function providerUnavailable(p: ProviderId): boolean {
@@ -475,21 +487,6 @@ export function providerUnavailable(p: ProviderId): boolean {
 
 export function clearUnavailable() {
   for (const k of Object.keys(downUntil) as ProviderId[]) delete downUntil[k];
-}
-
-// Forgets the saved "limit hit" notes so a refresh starts clean. If a plan is still really used up,
-// the plan check (real limits) or the next failed message will bring the note back.
-function clearLimitNotes() {
-  let changed = false;
-  for (const p of ['lyra', 'anthropic', 'google', 'openai'] as ProviderId[]) {
-    const u = usage[p];
-    if (u && (u.limitNote || u.limitAt)) {
-      u.limitNote = undefined;
-      u.limitAt = undefined;
-      changed = true;
-    }
-  }
-  if (changed) saveUsage();
 }
 
 const PROVIDER_LABEL: Record<ProviderId, string> = { lyra: 'LYRA', anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT', extra: 'Free AIs' };
@@ -514,7 +511,7 @@ export function recordFailure(p: ProviderId, message: string) {
   if (/log ?in|logged|sign ?in|auth|unauthor|\b401\b|\b403\b|api key|usage limit|hit your .{0,20}limit|quota|credit balance/i.test(message)) {
     downUntil[p] = Date.now() + DOWN_MS;
   }
-  if (!/usage limit|hit your .{0,20}limit|quota|rate.?limit|\b429\b|credit balance/i.test(message)) return;
+  if (!quotaRejected(message)) return;
   dayUsage(p).limitNote = message.replace(/\s+/g, ' ').slice(0, 220);
   dayUsage(p).limitAt = Date.now();
   saveUsage();
@@ -528,17 +525,110 @@ const LIMIT_ENV: Record<ProviderId, string> = {
   openai: 'CHATGPT_DAILY_LIMIT',
 };
 const DEFAULT_DAILY_LIMIT = 100;
+const dailyLimit = (p: ProviderId) =>
+  Math.max(1, parseInt(process.env[LIMIT_ENV[p]] || '', 10) || (p === 'lyra' || p === 'extra' ? 1000 : DEFAULT_DAILY_LIMIT));
+
+const quotaRejected = (message: string) => /usage limit|hit your .{0,20}limit|quota|rate.?limit|\b429\b|credit balance|resource_exhausted/i.test(message);
+const activeLimitNote = (u: DayUsage) => !!u.limitNote && Date.now() - (u.limitAt || 0) < LIMIT_RETRY_MS;
+const PLAN_USAGE_MAX_AGE = 60 * 60 * 1000;
+
+type PaidProvider = 'anthropic' | 'openai' | 'google';
+type SpendingSource = { provider: PaidProvider; mode: ProviderMode; label?: string } | { label: string; provider?: never };
+
+function spendingSource(model: string): SpendingSource | null {
+  const provider = providerFor(model);
+  if (provider === 'lyra') return null; // LYRA owns its spending controls.
+  if (provider === 'extra') {
+    const extra = extraSpendingSource(model);
+    if (!extra) return null;
+    return 'provider' in extra ? { provider: 'google', mode: 'api' } : { label: extra.label };
+  }
+  return { provider, mode: isAuraModel(model) ? 'subscription' : providerMode(provider) };
+}
+
+function spendingReason(source: SpendingSource): string | undefined {
+  const { provider } = source;
+  if (!provider) return `${source.label} usage data is unavailable.`;
+  const name = source.label || providerLabel(provider);
+  const usage = dayUsage(provider);
+  if (usage.messages >= dailyLimit(provider)) return `${name} reached EDEN's daily message limit.`;
+  if (activeLimitNote(usage)) return `${name} reported a usage limit.`;
+  if (source.mode === 'subscription' && provider !== 'google') {
+    const plan = realLimits()[provider];
+    if (plan.limited || (plan.usedPercent ?? 0) >= 100) return `${name} reached its plan limit.`;
+    const age = Date.now() - (plan.observedAt ?? NaN);
+    if (plan.source !== 'plan' || !(age >= 0 && age < PLAN_USAGE_MAX_AGE)) return `${name} plan usage data is stale or unavailable.`;
+  }
+  if (!usageReadable) return `${name} usage data is stale or unavailable.`;
+}
+
+export function needsSpendingFallback(model: string): boolean {
+  const source = spendingSource(model);
+  return !!(source && spendingReason(source));
+}
+
+export function canTryRequestedModel(model: string): boolean {
+  return needsSpendingFallback(model) || !providerUnavailable(providerFor(model));
+}
+
+export class SpendingRequestSkipped extends Error {}
+
+export const stopProviderRetries = (error: unknown) =>
+  error instanceof SpendingRequestSkipped || error instanceof UnconfirmedPaidRequestError;
+
+export function withSpendingNotice(result: { text: string; notice?: string }): string {
+  return result.notice ? `${result.notice}\n\n${result.text}` : result.text;
+}
+
+async function useOllama(req: GenerateRequest, model: string, reason: string): Promise<GenerateResult> {
+  const skipped = (why: string) => new SpendingRequestSkipped(`Request skipped. ${reason} ${why}`);
+  const available = await discoverSpendingFallback().catch(() => []);
+  const ids = available.map((entry) => entry.id);
+  if (!ids.length) throw skipped('No Ollama model is available on this PC. Start Ollama with a downloaded model and try again.');
+  const preferred = req.localModel && ids.includes(req.localModel) && fitsNow(req.localModel) ? req.localModel : null;
+  const id = preferred || localModelFor(kindFor(model, req.role), ids);
+  const local = available.find((entry) => entry.id === id);
+  if (!local) throw skipped('The available Ollama models need more free memory.');
+  const result = await local.call({ system: req.system?.replace(WEB_NOTE, '').trim(), messages: toMessages(req), maxTokens: req.maxTokens })
+    .catch(() => { throw skipped('Ollama could not answer. Check that it is running and try again.'); });
+  recordUsage('extra', result.tokens || 0);
+  recordSplit(true);
+  return { ...result, provider: 'extra', notice: `Answered locally with Ollama. ${reason}` };
+}
+
+export async function runWithSpendingControl(source: SpendingSource, req: GenerateRequest, model: string, send: () => Promise<GenerateResult>): Promise<GenerateResult> {
+  const reason = spendingReason(source);
+  if (reason) return useOllama(req, model, reason);
+  const provider = source.provider;
+  if (!provider) throw new Error('Paid provider has no usage meter.');
+  // Reserve and persist the message before sending, including requests whose outcome is uncertain.
+  dayUsage(provider).messages += 1;
+  saveUsage();
+  if (!usageReadable) return useOllama(req, model, `${source.label || providerLabel(provider)} usage data could not be saved.`);
+  try {
+    const result = await send();
+    recordUsage(provider, result.tokens || 0, true);
+    recordSplit(false);
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    recordFailure(provider, message);
+    if (!stopProviderRetries(error) && quotaRejected(message)) {
+      return useOllama(req, model, `${source.label || providerLabel(provider)} reported a usage limit.`);
+    }
+    throw error;
+  }
+}
 
 export function providerUsage(refresh = false) {
   const real = realLimits(refresh);
   if (refresh) {
     clearUnavailable();
-    clearLimitNotes();
   }
   const names: Record<ProviderId, string> = { lyra: 'LYRA', anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT', extra: 'Free AIs' };
   return (['lyra', 'anthropic', 'google', 'openai', 'extra'] as ProviderId[]).map((p) => {
     const u = dayUsage(p);
-    const limit = Math.max(1, parseInt(process.env[LIMIT_ENV[p]] || '', 10) || (p === 'lyra' || p === 'extra' ? 1000 : DEFAULT_DAILY_LIMIT));
+    const limit = dailyLimit(p);
     const mode = providerMode(p);
     const rate = PRICE_PER_MILLION_TOKENS[p] || 0;
     const coveredByPlan = rate === 0 || mode === 'subscription';
@@ -551,9 +641,9 @@ export function providerUsage(refresh = false) {
       coveredByPlan, // $0: a plan or a free/local AI
       cost: coveredByPlan ? 0 : Number(((u.tokens / 1_000_000) * rate).toFixed(4)), // today's estimate
       limit,
-      limitNote: u.limitNote || '',
+      limitNote: activeLimitNote(u) ? u.limitNote || '' : '',
       // What the plan itself reports, when the tool records it (ChatGPT: percent used; Claude: limit hits).
-      real: p === 'google' || p === 'lyra' || p === 'extra' ? ({ source: 'none', checkedAt: Date.now() } as RealLimit) : real[p],
+      real: mode !== 'subscription' || (p !== 'anthropic' && p !== 'openai') ? ({ source: 'none', checkedAt: Date.now() } as RealLimit) : real[p],
     };
   });
 }
@@ -736,7 +826,7 @@ export async function generatePaid(
     }
     const message = `${name}: ${provider === 'google' ? geminiErrorMessage(error) : String(error instanceof Error ? error.message : error)}`;
     const status = error instanceof ApiError || error instanceof PaidRequestRejected ? error.status : undefined;
-    if (status !== undefined && status >= 400 && status < 500 && status !== 408) throw new Error(message);
+    if (status !== undefined && status >= 400 && status < 500 && status !== 408) throw new Error(status === 429 ? `${message} (429)` : message);
     throw new UnconfirmedPaidRequestError(message + ' The provider may still have processed this request.', { cause: error });
   }
 }
@@ -764,9 +854,6 @@ async function callGemini(model: string, req: GenerateRequest, signal: AbortSign
     if (withSearch && (error.status === 400 || error.status === 403) && /search|grounding|tool/i.test(geminiErrorMessage(error))) {
       geminiSearchOffUntil = Date.now() + 12 * 60 * 60 * 1000;
       response = await ask(model, false);
-    } else if (error.status === 429 && model !== GEMINI_FALLBACK) {
-      model = GEMINI_FALLBACK;
-      response = await ask(model, withSearch);
     } else throw error;
   }
   let text = response.text ?? '';

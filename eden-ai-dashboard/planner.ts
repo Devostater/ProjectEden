@@ -98,7 +98,7 @@ Rules:
       const ratesPerMillion: Record<string, number> = {};
       for (const a of team) ratesPerMillion[a.id] = ratePerMillion(providerFor(a.model || defaultModel()));
       res.json({
-        summary: typeof plan.summary === 'string' ? plan.summary.trim().slice(0, 600) : '',
+        summary: [answer.notice, typeof plan.summary === 'string' ? plan.summary.trim().slice(0, 600) : ''].filter(Boolean).join(' '),
         cards: cards.map((c: any) => ({ ...c, estimatedTokens })),
         ratesPerMillion,
         plannedBy: lead.name,

@@ -17,6 +17,7 @@ export interface RealLimit {
   limited?: boolean; // the plan says it is used up right now
   plan?: string;
   checkedAt: number;
+  observedAt?: number; // timestamp of the provider record, not the time EDEN read it
 }
 
 const windowName = (minutes?: number) =>
@@ -65,22 +66,23 @@ function chatgpt(): RealLimit {
   const now = Date.now();
   for (const file of newestFiles(path.join(os.homedir(), '.codex', 'sessions'), '.jsonl', 12)) {
     const text = tail(file);
-    const matches = [...text.matchAll(/"rate_limits":(\{.*?"rate_limit_reached_type":[^}]*\})/g)];
+    const matches = text.split(/\r?\n/).filter((line) => line.includes('"rate_limits"'));
     for (let i = matches.length - 1; i >= 0; i--) {
       try {
-        const r = JSON.parse(matches[i][1]);
+        const event = JSON.parse(matches[i]);
+        const r = event.payload?.rate_limits;
+        if (!r) continue;
         const windows = [r.primary, r.secondary].filter((w: any) => w && typeof w.used_percent === 'number');
         if (!windows.length) continue;
-        // The window closest to its limit is the one that matters.
-        const w = windows.sort((a: any, b: any) => b.used_percent - a.used_percent)[0];
-        const resetsAt = w.resets_at ? w.resets_at * 1000 : undefined;
-        const expired = resetsAt !== undefined && resetsAt <= now;
+        const active = windows.filter((w: { resets_at?: number }) => !w.resets_at || w.resets_at * 1000 > now);
+        const w = active.sort((a, b) => b.used_percent - a.used_percent)[0];
         return {
           source: 'plan',
-          usedPercent: expired ? 0 : Math.round(w.used_percent),
-          window: windowName(w.window_minutes),
-          resetsAt: expired ? undefined : resetsAt,
-          limited: !expired && w.used_percent >= 100,
+          usedPercent: w?.used_percent,
+          window: windowName(w?.window_minutes),
+          resetsAt: w?.resets_at ? w.resets_at * 1000 : undefined,
+          limited: !!w && w.used_percent >= 100,
+          observedAt: w ? Date.parse(event.timestamp) : undefined,
           plan: r.plan_type || undefined,
           checkedAt: now,
         };
@@ -108,7 +110,8 @@ function claude(): RealLimit {
   const resetsAt = latest.info.resetsAt ? latest.info.resetsAt * 1000 : undefined;
   const limited = latest.info.status === 'rejected' && !!resetsAt && resetsAt > now;
   return {
-    source: limited ? 'plan' : 'none',
+    source: limited || latest.info.status === 'allowed' ? 'plan' : 'none',
+    observedAt: latest.at,
     limited,
     resetsAt: limited ? resetsAt : undefined,
     window: (latest.info.rateLimitType || '').replace('five_hour', '5-hour').replace('seven_day', 'weekly') || undefined,
