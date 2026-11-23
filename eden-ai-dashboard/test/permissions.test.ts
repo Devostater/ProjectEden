@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import express from 'express';
-import { registerPairing } from '../pairing.ts';
+import { registerPairing } from '../server/routes/pairing.ts';
 import { sendApprovedWebhook } from '../permissions.ts';
 import { registerTabletChat } from '../tabletChat.ts';
 
@@ -193,7 +193,10 @@ test('the pairing route advertises the default hub port and honors PORT', async 
   const { request } = await hub(t);
   delete process.env.PORT;
   const owner = { 'x-test-owner': '1' };
-  assert.deepEqual((await (await request('/api/pairing', owner)).json()).addresses, ['http://192.0.2.1:3000']);
+  const pairing = await request('/api/pairing', owner);
+  assert.equal(pairing.status, 200);
+  assert.equal(pairing.headers.get('cache-control'), 'no-store');
+  assert.deepEqual((await pairing.json()).addresses, ['http://192.0.2.1:3000']);
   process.env.PORT = '4321';
   assert.deepEqual((await (await request('/api/pairing', owner)).json()).addresses, ['http://192.0.2.1:4321']);
 });

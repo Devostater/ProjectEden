@@ -6,7 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import express from 'express';
 import { registerHunterGuard } from '../hunterGuard';
-import { ensureProjects, registerProjectRoutes } from '../projects';
+import { ensureProjects, registerProjectRoutes } from '../server/routes/projects';
 import { workspaceStore } from '../server/workspaceStore';
 
 test('project routes reopen and update the existing workspace JSON layout', async (t) => {
@@ -53,7 +53,15 @@ test('project routes reopen and update the existing workspace JSON layout', asyn
   });
   assert.equal(updated.status, 200);
   await updated.json();
+  const created = await fetch(new URL('/api/cards', url), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ projectId: 'saved-project', title: 'Verify route extraction' }),
+  });
+  assert.equal(created.status, 200);
+  const { card } = await created.json();
   const reopened = workspaceStore(file).load();
+  assert.equal(reopened.cards?.find(item => item.id === card.id)?.title, 'Verify route extraction');
   assert.equal(reopened.projects?.find(project => project.id === 'saved-project')?.name, 'Renamed project');
   assert.deepEqual(reopened.agents.find(agent => agent.id === 'custom-agent'), saved.agents[0]);
   assert.deepEqual(reopened.pipelines.find(pipeline => pipeline.id === 'custom-pipeline'), saved.pipelines[0]);
