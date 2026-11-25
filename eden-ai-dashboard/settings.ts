@@ -27,6 +27,7 @@ export const SETTING_KEYS = [
   { key: 'STUDIO_NAME', label: 'Studio name', secret: false, help: 'Shown in the hub' },
   { key: 'TERMINAL_ENABLED', label: 'Terminal', secret: false, help: '1 turns the terminal on' },
   { key: 'BACKUP_COPY_DIR', label: 'Also copy backups to this folder', secret: false, help: 'A private folder, e.g. a USB drive' },
+  { key: 'unrealEngineDir', label: 'Unreal Engine folder', secret: false, help: 'Default: C:/Unreal Engine 5/UE_5.8' },
 ] as const;
 
 const ALLOWED = new Set<string>(SETTING_KEYS.map((k) => k.key));
@@ -154,6 +155,7 @@ export function registerSettingsRoutes(app: Express, { file = ENV_PATH, env = pr
     }
     // Windows accepts / in folder paths, and a backslash followed by n or t would be misread when the file is loaded again.
     if (updates.BACKUP_COPY_DIR) updates.BACKUP_COPY_DIR = updates.BACKUP_COPY_DIR.replace(/\\/g, '/');
+    if (updates.unrealEngineDir) updates.unrealEngineDir = updates.unrealEngineDir.replace(/\\/g, '/');
     try {
       writeEnvLocal(file, updates);
     } catch (err: any) {

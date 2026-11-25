@@ -64,10 +64,11 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
       jobs: [...jobs].reverse().map(({ diff, restore, ...rest }) => ({ ...rest, hasDiff: !!diff, hasRestorePoint: !!restore, codebaseName: findCodebase(rest.codebaseId)?.name || rest.codebaseId })),
       codebases: codebases.map((c) => {
         const ok = fs.existsSync(c.dir);
-        return { id: c.id, name: c.name, dir: c.dir, check: c.check, restartHint: c.restartHint, ok, uncommitted: ok ? uncommittedNow(c) : undefined };
+        return { id: c.id, name: c.name, dir: c.dir, check: c.check, restartHint: c.restartHint, unreal: c.unreal, ok, uncommitted: ok ? uncommittedNow(c) : undefined };
       }),
       busy: services.busy,
       claudeReady: cliSignedIn('anthropic'),
+      codexReady: cliSignedIn('openai'),
       restartPending: services.restartPending,
       remote: !isLocal(req), // a paired device: the page asks before applying, so a stray tap can't change code
     });
@@ -86,7 +87,10 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
     const request = typeof req.body?.request === 'string' ? req.body.request.trim().slice(0, 4000) : '';
     if (!request) return res.status(400).json({ error: 'Describe what you want changed.' });
     try {
-      const id = requestCodeUpdate(String(req.body?.codebaseId || 'hub'), request, typeof req.body?.cardId === 'string' ? req.body.cardId : undefined, req.body?.local === true);
+      const id = requestCodeUpdate(String(req.body?.codebaseId || 'hub'), request, typeof req.body?.cardId === 'string' ? req.body.cardId : undefined, req.body?.local === true, {
+        codex: req.body?.codex === true,
+        allowUnrealChanges: req.body?.allowUnrealChanges === true,
+      });
       res.json({ job: { id }, uncommitted: jobs.find((j) => j.id === id)?.uncommitted });
     } catch (err: any) {
       res.status(400).json({ error: err.message });

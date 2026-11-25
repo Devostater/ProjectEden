@@ -23,6 +23,7 @@ import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
 import { localAgentModel, localClaudeEnv, planClaudeEnv } from './localClaude';
 import { registerUpdateRoutes as mountUpdateRoutes } from './server/routes/updates';
+import { unrealUpdate, type UnrealToolsStatus } from './unrealUpdate';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STORE = path.join(APP_DIR, '.eden-updates.json');
@@ -44,6 +45,7 @@ export interface Codebase {
   restartHint: string;
   about: string; // what the AI is told about the codebase
   protect: string[]; // paths the AI must not touch
+  unreal?: boolean;
 }
 
 const HUB: Codebase = {
@@ -135,6 +137,9 @@ export interface UpdateJob {
   cardId?: string; // when it was asked for from a project card
   local?: boolean; // run Claude Code on a model on this PC (Ollama) instead of your Claude plan
   localModel?: string; // the model it ran on
+  codex?: boolean;
+  allowUnrealChanges?: boolean;
+  unrealTools?: UnrealToolsStatus;
   status: Status;
   createdAt: string;
   startedAt?: string; // when the AI began working on it (not when it was asked for), to show elapsed time
@@ -185,7 +190,9 @@ for (const j of jobs) {
   interrupted.push(j);
   j.interruptions = (j.interruptions || 0) + 1;
   j.log = [...(j.log || []), 'The hub restarted while this was running'];
-  if (j.interruptions === 1) {
+  if (j.unrealTools === 'change') {
+    Object.assign(j, { status: 'failed', interrupted: true, finishedAt: now(), error: 'The hub restarted during an editor-enabled job. Check the open Unreal project for changes before retrying.' });
+  } else if (j.interruptions === 1) {
     j.status = 'queued';
     delete j.error;
     j.log.push('Back in the queue: it starts again from the beginning by itself');
@@ -381,6 +388,7 @@ function looksLikeAcknowledgement(said?: string): boolean {
 }
 
 async function runAI(cb: Codebase, job: UpdateJob, appDir: string, extra = '') {
+  if (job.codex) return runAIOnce(cb, job, appDir, null, extra);
   // On this PC when asked for, or when offline (Claude's servers can't be reached then).
   let local = (job.local || isOffline()) && localAgentModel();
   // Claude already reported its limit is used up: don't wait for it to fail again, go straight to the AI on this PC.
@@ -409,9 +417,19 @@ async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: st
   }
   job.summary = undefined;
   job.lastAiMessage = undefined; // a fresh run (for example "Try again") starts without the old message
-  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--tools', 'Read,Edit,Write,Glob,Grep', '--model', local ? 'sonnet' : 'claude-sonnet-5-5'];
+  const unreal = job.codex ? await unrealUpdate(cb.unreal, job.allowUnrealChanges) : undefined;
+  if (unreal?.status) {
+    job.unrealTools = unreal.status;
+    save();
+  }
+  const claudeArgs = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--tools', 'Read,Edit,Write,Glob,Grep', '--model', local ? 'sonnet' : 'claude-sonnet-5-5'];
+  const codexArgs = ['exec', '--json', '--sandbox', 'workspace-write', ...(unreal?.args ?? []), '-'];
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(['claude', ...args].join(' '), { cwd: appDir, shell: true, windowsHide: true, env: local ? localClaudeEnv(local) : planClaudeEnv() });
+    const child = job.codex
+      ? process.platform === 'win32'
+        ? spawn(['codex', ...codexArgs.map((arg) => `"${arg}"`)].join(' '), { cwd: appDir, shell: true, windowsHide: true })
+        : spawn('codex', codexArgs, { cwd: appDir })
+      : spawn(['claude', ...claudeArgs].join(' '), { cwd: appDir, shell: true, windowsHide: true, env: local ? localClaudeEnv(local) : planClaudeEnv() });
     let buffer = '';
     let errText = '';
     const timer = setTimeout(() => {
@@ -427,7 +445,14 @@ async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: st
         if (!line) continue;
         try {
           const ev = JSON.parse(line);
-          if (ev.type === 'assistant') {
+          if (job.codex && ev.type === 'item.completed' && ev.item?.type === 'agent_message') {
+            const said = String(ev.item.text || '').trim();
+            if (said) {
+              job.summary = said;
+              job.lastAiMessage = said.slice(0, 400);
+              save();
+            }
+          } else if (ev.type === 'assistant') {
             for (const part of ev.message?.content || []) if (part.type === 'tool_use') job.log.push(describeTool(part.name, part.input));
             const said = (ev.message?.content || [])
               .filter((part: any) => part.type === 'text' && typeof part.text === 'string')
@@ -452,10 +477,11 @@ async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: st
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (code === 0 && !errText) resolve();
-      else reject(new Error(errText.trim().split('\n').slice(-2).join(' ') || `Claude Code exited with ${code}`));
+      if (code === 0 && (job.codex || !errText)) resolve();
+      else reject(new Error(errText.trim().split('\n').slice(-2).join(' ') || `${job.codex ? 'Codex' : 'Claude Code'} exited with ${code}`));
     });
-    child.stdin.end(`${RULES(cb)}${houseRules(appDir)}\n\nThe owner's request:\n${job.request}${extra ? `\n\n${extra}` : ''}`);
+    child.stdin.on('error', () => {}); // The process may exit before it reads the prompt.
+    child.stdin.end(`${RULES(cb)}${houseRules(appDir)}${unreal?.prompt ? `\n\n${unreal.prompt}` : ''}\n\nThe owner's request:\n${job.request}${extra ? `\n\n${extra}` : ''}`);
   });
 }
 
@@ -617,11 +643,11 @@ async function process_(job: UpdateJob) {
         baselineTypeProblems = (await runTypeCheck(copy.appDir)).problems;
         if (baselineTypeProblems.length) job.log.push(`Already wrong before any change: ${baselineTypeProblems.length} type problem${baselineTypeProblems.length === 1 ? '' : 's'}`);
       }
-      job.log.push('Claude is working on the copy');
+      job.log.push(`${job.codex ? 'Codex' : 'Claude'} is working on the copy`);
       save();
       await runAI(cb, job, copy.appDir);
       readChange(cb, job, copy.dir);
-      if (!job.files?.length && looksLikeAcknowledgement(job.lastAiMessage)) {
+      if (!job.files?.length && !job.allowUnrealChanges && looksLikeAcknowledgement(job.lastAiMessage)) {
         // The AI only said "Understood" or made a plan: run it once more, telling it to edit the files this time.
         job.log.push('The AI replied without changing anything, so it is being asked once more to make the change');
         save();
@@ -837,14 +863,21 @@ export function activeUpdateNames(): { working: string[]; queued: string[] } {
   };
 }
 
-export function requestCodeUpdate(codebaseId: string, request: string, cardId?: string, local = false): string {
+export function requestCodeUpdate(codebaseId: string, request: string, cardId?: string, local = false, options: { codex?: boolean; allowUnrealChanges?: boolean } = {}): string {
   const cb = findCodebase(codebaseId);
   if (!cb) throw new Error('That codebase is not set up in the hub.');
   // Uses the saved sign-in check (it refreshes itself every so often) so adding to the queue is quick and never freezes the hub.
-  if (local && !localAgentModel()) throw new Error('No AI on this PC can do code updates yet. Start Ollama (gpt-oss-20b or a coder model).');
-  if (!local && !isOffline() && !cliSignedIn('anthropic')) throw new Error('Code updates use Claude Code. Sign in to Claude in Account → Connections first.');
+  const codex = options.codex === true;
+  if (codex && !cliSignedIn('openai')) throw new Error('Sign in to ChatGPT in Account → Connections first.');
+  if (!codex && local && !localAgentModel()) throw new Error('No AI on this PC can do code updates yet. Start Ollama (gpt-oss-20b or a coder model).');
+  if (!codex && !local && !isOffline() && !cliSignedIn('anthropic')) throw new Error('Code updates use Claude Code. Sign in to Claude in Account → Connections first.');
   // If another update is running, this one waits in the queue.
   const job: UpdateJob = { id: `upd-${Date.now().toString(36)}`, codebaseId: cb.id, request, cardId, local: local || undefined, status: 'queued', createdAt: now(), log: [] };
+  if (codex) {
+    job.codex = true;
+    delete job.local;
+    if (cb.unreal === true && options.allowUnrealChanges === true) job.allowUnrealChanges = true;
+  }
   job.uncommitted = countUncommitted(cb); // shown right away; refreshed when the copy is actually made
   jobs.push(job);
   if (busy) logActivity('work', `Code update queued (${cb.name}): ${request.slice(0, 100)}`);
@@ -863,7 +896,7 @@ function startRetry(job: UpdateJob, opts: { note?: string; useClaude?: boolean; 
   const base = job.request.split(header.trimEnd())[0].trimEnd();
   const request = note ? `${base.slice(0, Math.max(500, 4000 - header.length - note.length))}${header}${note}`.slice(0, 4000 + 3000) : job.request;
   const local = opts.useClaude === true ? false : job.local === true;
-  const id = requestCodeUpdate(job.codebaseId, request, job.cardId, local);
+  const id = requestCodeUpdate(job.codebaseId, request, job.cardId, local, { codex: !opts.useClaude && job.codex });
   const fresh = jobs.find((j) => j.id === id);
   if (fresh) {
     fresh.retryOf = job.id;

@@ -21,6 +21,12 @@ View your app in AI Studio: https://ai.studio/apps/a4d7dae2-92b7-4785-8544-a81d4
 
 On this PC, use **Start Eden** (`Start Eden.bat`) instead. It checks the code first and keeps Eden running.
 
+### Unreal tools for Codex jobs
+
+Add the optional `"unreal": true` field to the relevant codebase object in `.eden-codebases.json`, then restart Eden. In Construction, select that codebase and tick **Run this job with Codex**. Eden checks for an open Unreal Editor and the Aura plugin files at launch. Set `unrealEngineDir` in Settings if Unreal is installed outside the default `C:\Unreal Engine 5\UE_5.8`.
+
+Codex uses Aura's inspector by default. Tick **Let the AI change the open Unreal project** for each job that needs write access. Aura changes go directly into the open project, outside Eden's worktree review and Undo.
+
 ## Projects in C:\AZI (New project + GitHub sync)
 
 Every project lives in its own folder in `C:\AZI` with a **private** GitHub repo. Eden sets that up and keeps it in sync.
