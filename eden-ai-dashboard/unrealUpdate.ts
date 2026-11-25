@@ -52,3 +52,9 @@ export async function unrealUpdate(
     prompt: `${rules}\nAura is enabled in ${canChange ? 'editor' : 'inspector (look only)'} mode for this run.`,
   };
 }
+
+// `codex exec` refuses --sandbox together with --approve-for-me (which already uses the workspace-write sandbox).
+export function codexExecArgs(unrealArgs: string[] = []): string[] {
+  const sandbox = unrealArgs.includes('--approve-for-me') ? [] : ['--sandbox', 'workspace-write'];
+  return ['exec', '--json', ...sandbox, ...unrealArgs, '-'];
+}

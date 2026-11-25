@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
-import { DEFAULT_UNREAL_ENGINE_DIR, unrealUpdate } from '../unrealUpdate';
+import { codexExecArgs, DEFAULT_UNREAL_ENGINE_DIR, unrealUpdate } from '../unrealUpdate';
 
 const engineDir = path.resolve('Custom Unreal Engine');
 const aura = path.join(engineDir, 'Engine', 'Plugins', 'Marketplace', 'Aura');
@@ -48,4 +48,12 @@ test('Codex receives inspector overrides by default and editor overrides only wi
     assert.match(result.prompt, /Say in your report which editor tools you called/);
   }
   assert.equal(DEFAULT_UNREAL_ENGINE_DIR, String.raw`C:\Unreal Engine 5\UE_5.8`);
+});
+
+test('codex exec never gets --sandbox together with --approve-for-me', () => {
+  assert.deepEqual(codexExecArgs(), ['exec', '--json', '--sandbox', 'workspace-write', '-']);
+  const withAura = codexExecArgs(['-c', 'x=1', '--approve-for-me']);
+  assert.ok(withAura.includes('--approve-for-me'));
+  assert.ok(!withAura.includes('--sandbox'));
+  assert.equal(withAura.at(-1), '-');
 });
