@@ -17,7 +17,9 @@ import { isOffline, isLocalFirst, recordSplit, localModelFor, localModels, kindF
 const localUsable = (id: string) => (localModels().includes(id) && fitsNow(id) ? id : null);
 import { auraInstalled, auraRunning, auraCliArgs, auraSystemNote, isAuraModel } from './aura';
 
-export type ProviderId = 'lyra' | 'anthropic' | 'google' | 'openai' | 'extra';
+import { GROK } from './src/grok';
+
+export type ProviderId = 'lyra' | 'anthropic' | 'google' | 'openai' | 'extra' | 'grok';
 
 // ---- LYRA ----------------------------------------------------------------------------------
 // LYRA (Forge, Nova.bat) runs on this PC. EDEN sends it the conversation and LYRA's Auto mode picks
@@ -63,6 +65,7 @@ export const models = (): ModelInfo[] => [
 export const defaultModel = () => process.env.DEFAULT_MODEL || (lyraUp ? 'lyra' : 'gemini-3.6-flash');
 
 export function providerFor(model: string): ProviderId {
+  if (model === GROK.provider) return GROK.provider;
   const known = models().find((m) => m.id === model);
   if (known) return known.provider;
   if (model.startsWith('x:')) return 'extra';
@@ -78,7 +81,7 @@ const hasKey = (v?: string) => !!v && !/^MY_[A-Z_]+$/.test(v);
 //   Claude  -> Claude Code  (`claude`, Pro/Max login)
 //   Gemini  -> Gemini CLI   (`gemini`, Google account login, free tier)
 //   OpenAI  -> Codex CLI    (`codex`, ChatGPT plan login)
-const CLI: Record<ProviderId, string> = { lyra: '', anthropic: 'claude', google: 'gemini', openai: 'codex', extra: '' };
+const CLI = { anthropic: 'claude', google: 'gemini', openai: 'codex' };
 const cliProviders = ['anthropic', 'google', 'openai'] as const;
 const cliStatus = new Map<ProviderId, { installed: boolean; signedIn: boolean }>();
 let refreshInFlight: Promise<void> | undefined;
@@ -120,10 +123,11 @@ export function startProviderStatusRefresh() {
 
 export const cliSignedIn = (provider: ProviderId) => cliStatus.get(provider)?.signedIn ?? false;
 
-export type ProviderMode = 'subscription' | 'api' | 'off';
+export type ProviderMode = 'subscription' | 'api' | 'off' | 'manual';
 
 // API key wins if set; otherwise fall back to the subscription CLI if it is installed.
 export function providerMode(p: ProviderId): ProviderMode {
+  if (p === GROK.provider) return GROK.mode;
   if (p === 'lyra') return lyraUp ? 'api' : 'off';
   if (p === 'extra') return extraConnected() ? 'api' : 'off';
   const key = { anthropic: 'ANTHROPIC_API_KEY', google: 'GEMINI_API_KEY', openai: 'OPENAI_API_KEY' }[p];
@@ -139,6 +143,7 @@ export function providerStatus(): Record<ProviderId, boolean> {
     google: providerMode('google') !== 'off',
     openai: providerMode('openai') !== 'off',
     extra: providerMode('extra') !== 'off',
+    grok: false, // Manual handoffs are available on cards, not through generation.
   };
 }
 
@@ -278,6 +283,7 @@ function toMessages(req: GenerateRequest): ChatMessage[] {
 
 export async function generate(req: GenerateRequest): Promise<GenerateResult> {
   let model = req.model || defaultModel();
+  if (model === GROK.provider) throw new Error('Use Copy brief and Paste reply on a Grok research card.');
   if (!(model.startsWith('x:') ? /^x:[\w.\-]+:[\w.\-:/@]+$/ : /^[\w.\-]+$/).test(model)) throw new Error(`Invalid model id: ${model}`);
   const spending = spendingSource(model);
   const blocked = spending && spendingReason(spending);
@@ -375,6 +381,7 @@ const goodAnswer = (text: string) => {
 };
 
 function dispatch(provider: ProviderId, mode: ProviderMode, model: string, req: GenerateRequest): Promise<GenerateResult> {
+  if (provider === GROK.provider) throw new Error('Grok uses manual handoffs.');
   if (provider === 'lyra') return callLyra(req);
   if (provider === 'extra') return callExtra(model, { system: req.system, messages: toMessages(req), maxTokens: req.maxTokens }).then((r) => ({ ...r, provider: 'extra' as ProviderId }));
   if (mode === 'subscription' || isAuraModel(model)) return callSubscription(provider, model, req);
@@ -470,7 +477,7 @@ const DOWN_MS = 5 * 60 * 1000;
 
 const LIMIT_RETRY_MS = 60 * 60 * 1000;
 const limited = (p: ProviderId) => {
-  if (p === 'lyra' || p === 'extra') return false; // LYRA has its own caps; extra AIs rest per model
+  if (p === 'lyra' || p === 'extra' || p === 'grok') return false;
   if (p !== 'google' && providerMode(p) === 'subscription') {
     const real = realLimits()[p];
     if (real.limited) return true; // the plan itself says it's used up, until its reset time
@@ -480,6 +487,7 @@ const limited = (p: ProviderId) => {
 };
 
 export function providerUnavailable(p: ProviderId): boolean {
+  if (p === GROK.provider) return true;
   if (isOffline() && (p === 'anthropic' || p === 'google' || p === 'openai' || p === 'lyra')) return true;
   // While the PC is busy, LYRA (which runs models on this PC) is skipped and cloud AIs answer instead.
   return providerMode(p) === 'off' || limited(p) || (downUntil[p] || 0) > Date.now() || (p === 'lyra' && pcBusy());
@@ -489,25 +497,25 @@ export function clearUnavailable() {
   for (const k of Object.keys(downUntil) as ProviderId[]) delete downUntil[k];
 }
 
-const PROVIDER_LABEL: Record<ProviderId, string> = { lyra: 'LYRA', anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT', extra: 'Free AIs' };
+const PROVIDER_LABEL: Record<ProviderId, string> = { lyra: 'LYRA', anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT', extra: 'Free AIs', grok: GROK.label };
 export const providerLabel = (p: ProviderId) => PROVIDER_LABEL[p];
 
 // Working models on other providers, best first, for when an agent's own AI can't answer.
 export function fallbackModels(exclude: ProviderId): string[] {
-  const pick: Record<ProviderId, string> = {
+  const pick = {
     lyra: 'lyra',
     extra: '',
     google: 'gemini-3.6-flash',
     anthropic: 'claude-sonnet-5-5',
     openai: process.env.OPENAI_MODEL || 'gpt-5',
   };
-  const main = (['lyra', 'anthropic', 'google', 'openai'] as ProviderId[]).filter((p) => p !== exclude && !providerUnavailable(p)).map((p) => pick[p]);
+  const main = (['lyra', 'anthropic', 'google', 'openai'] as const).filter((p) => p !== exclude && !providerUnavailable(p)).map((p) => pick[p]);
   // Then free extra AIs (Google AI Studio models, Ollama on this PC, free tiers you added).
   return [...main, ...freeFallbacks()];
 }
 
 export function recordFailure(p: ProviderId, message: string) {
-  if (p === 'lyra' || p === 'extra') return; // LYRA marks itself; extra AIs rest per model
+  if (p === 'lyra' || p === 'extra' || p === 'grok') return;
   if (/log ?in|logged|sign ?in|auth|unauthor|\b401\b|\b403\b|api key|usage limit|hit your .{0,20}limit|quota|credit balance/i.test(message)) {
     downUntil[p] = Date.now() + DOWN_MS;
   }
@@ -517,7 +525,7 @@ export function recordFailure(p: ProviderId, message: string) {
   saveUsage();
 }
 
-const LIMIT_ENV: Record<ProviderId, string> = {
+const LIMIT_ENV: Record<Exclude<ProviderId, 'grok'>, string> = {
   lyra: 'LYRA_DAILY_LIMIT',
   extra: 'EXTRA_DAILY_LIMIT',
   anthropic: 'CLAUDE_DAILY_LIMIT',
@@ -525,7 +533,7 @@ const LIMIT_ENV: Record<ProviderId, string> = {
   openai: 'CHATGPT_DAILY_LIMIT',
 };
 const DEFAULT_DAILY_LIMIT = 100;
-const dailyLimit = (p: ProviderId) =>
+const dailyLimit = (p: keyof typeof LIMIT_ENV) =>
   Math.max(1, parseInt(process.env[LIMIT_ENV[p]] || '', 10) || (p === 'lyra' || p === 'extra' ? 1000 : DEFAULT_DAILY_LIMIT));
 
 const quotaRejected = (message: string) => /usage limit|hit your .{0,20}limit|quota|rate.?limit|\b429\b|credit balance|resource_exhausted/i.test(message);
@@ -537,7 +545,7 @@ type SpendingSource = { provider: PaidProvider; mode: ProviderMode; label?: stri
 
 function spendingSource(model: string): SpendingSource | null {
   const provider = providerFor(model);
-  if (provider === 'lyra') return null; // LYRA owns its spending controls.
+  if (provider === 'lyra' || provider === GROK.provider) return null;
   if (provider === 'extra') {
     const extra = extraSpendingSource(model);
     if (!extra) return null;
@@ -625,8 +633,7 @@ export function providerUsage(refresh = false) {
   if (refresh) {
     clearUnavailable();
   }
-  const names: Record<ProviderId, string> = { lyra: 'LYRA', anthropic: 'Claude', google: 'Gemini', openai: 'ChatGPT', extra: 'Free AIs' };
-  return (['lyra', 'anthropic', 'google', 'openai', 'extra'] as ProviderId[]).map((p) => {
+  return (['lyra', 'anthropic', 'google', 'openai', 'extra'] as const).map((p) => {
     const u = dayUsage(p);
     const limit = dailyLimit(p);
     const mode = providerMode(p);
@@ -634,7 +641,7 @@ export function providerUsage(refresh = false) {
     const coveredByPlan = rate === 0 || mode === 'subscription';
     return {
       provider: p,
-      name: names[p],
+      name: providerLabel(p),
       mode,
       messages: u.messages,
       tokens: u.tokens,
@@ -658,6 +665,7 @@ export const PRICE_PER_MILLION_TOKENS: Record<ProviderId, number> = {
   openai: 4, // ChatGPT / OpenAI
   lyra: 0, // runs on this PC
   extra: 0, // Ollama, LM Studio and free AIs you added
+  grok: 0, // manual handoffs
 };
 
 export interface CostLine {

@@ -3,7 +3,9 @@ import { createPortal } from 'react-dom';
 import { useSideActionsTarget } from './ProjectSidePanel.tsx';
 import { Plus, X, Trash2, Settings2, MessageSquare, FolderGit2, Flag, Loader2, Check, Eye, EyeOff, Bot, AlertTriangle, Sparkles, Link2, Network, Clock, Code2, ChevronsDownUp, ChevronsUpDown, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
-import { ResultActions } from './ResultActions.tsx';
+import { ResultActions, copyText } from './ResultActions.tsx';
+import { api as request } from '../api';
+import { GROK, manualProviderFor } from '../grok';
 import { SendBackBox } from './SendBackBox.tsx';
 import { WorkstreamTabs, WorkstreamDialog } from './Workstreams.tsx';
 import { RunPicker } from './RunPicker.tsx';
@@ -323,6 +325,8 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
 }) => {
   const [title, setTitle] = useState(card.title);
   const [details, setDetails] = useState(card.details);
+  const [tagInput, setTagInput] = useState((card.tags || []).join(', '));
+  const tags = tagInput.split(',').map((tag) => tag.trim()).filter(Boolean);
   const [assigneeId, setAssigneeId] = useState(card.assigneeId || '');
   const [column, setColumn] = useState<CardColumn>(card.column);
   const [priority, setPriority] = useState(card.priority);
@@ -334,11 +338,45 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
   const assignee = agents.find((a) => a.id === assigneeId);
   const inReview = card.column === 'review';
   const working = card.runState === 'running';
+  const isGrok = manualProviderFor(card.tags) === GROK.provider;
+  const [grokReply, setGrokReply] = useState('');
+  const [grokStatus, setGrokStatus] = useState('');
+  const [savingReply, setSavingReply] = useState(false);
+  const grokReady = isGrok && card.column === 'ready' && !working
+    && (!card.startAfter || Date.parse(card.startAfter) <= Date.now())
+    && !card.dependsOn?.some((id) => siblings.some((sibling) => sibling.id === id && sibling.column !== 'done'));
+
+  const copyBrief = async () => {
+    const context = [...siblings.filter((sibling) => card.dependsOn?.includes(sibling.id)).map((sibling) =>
+      [...sibling.notes].reverse().find((entry) => entry.kind === 'result')?.text),
+      ...card.notes.filter((entry) => entry.kind === 'feedback' || entry.kind === 'result').map((entry) => entry.text)];
+    const brief = [
+      `Project: ${project.name}`, project.goal, `Task: ${card.title}`, card.details,
+      ...context,
+      'Return the result in Markdown. Include source links for researched claims. Work on research or launch copy only.',
+    ].filter(Boolean).join('\n\n');
+    setGrokStatus(await copyText(brief) ? 'Brief copied. Paste it into Grok.' : 'Could not copy the brief.');
+  };
+
+  const saveReply = async () => {
+    setSavingReply(true);
+    try {
+      const result = await request<{ path: string }>('POST', `/api/cards/${card.id}/grok-reply`, { reply: grokReply });
+      setGrokReply('');
+      setColumn('review');
+      setGrokStatus(`Saved to ${result.path}`);
+      await api.refresh();
+    } catch (err) {
+      setGrokStatus((err as Error).message);
+    } finally {
+      setSavingReply(false);
+    }
+  };
 
   // Review decision: Approve finishes the card and saves its result as a file (Deliverables folder).
   // Sending it back is the "Send back with feedback" box under the notes.
   const approve = async () => {
-    await api.saveCard({ id: card.id, title, details, assigneeId, priority, note: note.trim() || undefined });
+    await api.saveCard({ id: card.id, title, details, tags, assigneeId, priority, note: note.trim() || undefined });
     await api.approveCards([card.id]);
     onClose();
   };
@@ -346,7 +384,8 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
   const save = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!title.trim()) return;
-    await api.saveCard({ id: card.id, title, details, assigneeId, column, priority, dependsOn, branchId, startAfter: startAfter || '', note: note.trim() || undefined });
+    const saved = await api.saveCard({ id: card.id, title, details, tags, assigneeId, column, priority, dependsOn, branchId, startAfter: startAfter || '', note: note.trim() || undefined });
+    if (!saved) return;
     onClose();
   };
 
@@ -387,6 +426,10 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
       <div>
         <label htmlFor="cd-details" className={labelClass}>Details</label>
         <textarea id="cd-details" rows={5} value={details} onChange={(e) => setDetails(e.target.value)} placeholder="What needs doing, and what does done look like?" className={inputClass} />
+      </div>
+      <div>
+        <label htmlFor="cd-tags" className={labelClass}>Tags</label>
+        <input id="cd-tags" value={tagInput} onChange={(e) => setTagInput(e.target.value)} placeholder="research, market, pricing, launch-copy" className={inputClass} />
       </div>
       <div className="grid grid-cols-1 gap-3">
         <div>
@@ -493,10 +536,10 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
             </>
           ) : (
             <>
-              <button type="button" onClick={ask} className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+              {!isGrok && !manualProviderFor(tags) && <button type="button" onClick={ask} className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
                 <MessageSquare className="h-4 w-4" /> Ask {assignee ? assignee.name.split(' ')[0] : 'Chief'}
-              </button>
-              {project.codebaseId && (
+              </button>}
+              {project.codebaseId && !isGrok && !manualProviderFor(tags) && (
                 <button type="button" onClick={changeCode} title="The AI changes the code on a copy; you review it in Code updates" className="flex items-center gap-1.5 rounded-lg border border-indigo-300 px-3 py-2 text-sm text-indigo-700 hover:bg-indigo-50 dark:border-indigo-500/50 dark:text-indigo-300 dark:hover:bg-indigo-950/40">
                   <Code2 className="h-4 w-4" /> Change the code
                 </button>
@@ -509,6 +552,16 @@ const CardDialog: React.FC<{ card: Card; project: Project; agents: Agent[]; api:
         </>
       }
     >
+      {grokReady && (
+        <section className="space-y-2 rounded-lg border border-slate-300 p-4 dark:border-slate-700">
+          <h3 className="font-medium">{GROK.label}</h3>
+          <button type="button" onClick={copyBrief} className="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700">Copy brief</button>
+          <label htmlFor="grok-reply" className={labelClass}>Paste reply</label>
+          <textarea id="grok-reply" rows={5} value={grokReply} onChange={(e) => setGrokReply(e.target.value)} className={inputClass} />
+          <button type="button" onClick={saveReply} disabled={savingReply || !grokReply.trim()} className="rounded-lg bg-indigo-600 px-3 py-2 text-sm text-white disabled:opacity-40">Save reply</button>
+        </section>
+      )}
+      {grokStatus && <p role="status" className="break-all text-sm text-slate-500">{grokStatus}</p>}
       {codeNote && <p role="status" className="rounded-lg bg-indigo-50 px-3 py-2 text-sm text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-200">{codeNote}</p>}
       {card.source && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-sm text-slate-700 dark:border-indigo-500/30 dark:bg-indigo-950/30 dark:text-slate-200">
@@ -1491,7 +1544,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
                               <Link2 className="h-3 w-3" /> Waits for {(() => { const n = (card.dependsOn || []).filter((d) => cards.some((c) => c.id === d && c.column !== 'done')).length; return `${n} card${n === 1 ? '' : 's'}`; })()}
                             </span>
                           )}
-                          {col.id === 'ready' && autoRun && !card.assigneeId && (
+                          {col.id === 'ready' && autoRun && !card.assigneeId && !manualProviderFor(card.tags) && (
                             <span className="mt-1 flex items-center gap-1.5 text-xs text-slate-500">
                               <Bot className="h-3 w-3" /> Assign a teammate to start
                             </span>

@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import type { Agent, Card } from '../types/index.ts';
+import { manualProviderFor } from '../grok';
 
 export const SendBackBox: React.FC<{
   card: Card;
@@ -14,7 +15,7 @@ export const SendBackBox: React.FC<{
   const [feedback, setFeedback] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const who = assignee ? assignee.name.split(' ')[0] : 'the teammate';
+  const who = manualProviderFor(card.tags) ? 'Grok' : assignee ? assignee.name.split(' ')[0] : 'the teammate';
 
   const submit = async () => {
     if (!feedback.trim() || busy) return;

@@ -13,7 +13,7 @@
     "ci": "npm ci && npm run lint && npm test && npm run build",
     "test": "node --import tsx --test \"test/*.test.ts\"",
     "test:smoke": "node scripts/smoke-test.mjs",
-    "test:updates": "node --import tsx --test test/updateOverlap.test.ts"
+    "test:updates": "node --import tsx --test test/updateOverlap.test.ts test/grok.test.ts"
   },
   "dependencies": {
     "@google/genai": "^3.0.0",

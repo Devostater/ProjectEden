@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
 import { clearUnavailable, refreshProviderStatus, providerDetails, providerUsage, usageTotals } from './providers';
 import { PRESETS, scanExtraAIs, addExtraAI, setExtraEnabled, removeExtraAI, extraSummary } from './extraAI';
+import { GROK } from './src/grok';
 
 const ENV_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '.env.local');
 
@@ -133,7 +134,7 @@ export function registerSettingsRoutes(app: Express, { file = ENV_PATH, env = pr
       clearUnavailable();
     }
     res.json({
-      providers: providerDetails(),
+      providers: [...providerDetails(), GROK],
       settings: SETTING_KEYS.map((s) => {
         const v = env[s.key];
         const set = !isPlaceholder(v);

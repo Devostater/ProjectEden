@@ -5,6 +5,9 @@ import type { Express } from 'express';
 import type { Agent, Project, Card, CardColumn, Branch } from '../../src/types/index';
 import { findCodebase } from '../../updates';
 import { logActivity } from '../../activity';
+import { AZI_ROOT } from '../../newproject';
+import { GROK, manualProviderFor } from '../../src/grok';
+import { saveGrokReply } from '../../grokHandoff';
 
 export const COLUMNS: CardColumn[] = ['todo', 'ready', 'doing', 'review', 'done'];
 
@@ -121,7 +124,7 @@ export function noteOnCard(store: ProjectStore, cardId: string, text: string, mo
   return true;
 }
 
-export function registerProjectRoutes(app: Express, getStore: () => ProjectStore, save: () => void) {
+export function registerProjectRoutes(app: Express, getStore: () => ProjectStore, save: () => void, handoffDir = path.join(AZI_ROOT, 'AI handoff')) {
   const projects = () => getStore().projects!;
   const cards = () => getStore().cards!;
 
@@ -262,6 +265,12 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
       return res.status(400).json({ error: 'That teammate does not exist.' });
     }
     const column: CardColumn = b.column || existing?.column || 'todo';
+    const tags = Array.isArray(b.tags)
+      ? [...new Set<string>(b.tags.map((tag: unknown) => text(tag, 40).toLowerCase()).filter(Boolean))].slice(0, 20)
+      : existing?.tags;
+    if (existing?.runState === 'running' && manualProviderFor(tags) !== manualProviderFor(existing.tags)) {
+      return res.status(409).json({ error: 'Wait for the current run to finish before changing its provider.' });
+    }
     const projectBranches = projects().find((p) => p.id === projectId)!.branches!;
     if (b.branchId !== undefined && !projectBranches.some((x) => x.id === b.branchId)) {
       return res.status(400).json({ error: 'That workstream does not exist in this project.' });
@@ -284,12 +293,13 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
         // Taking a card out of "In progress" while the AI works: its result is still added as a note.
         existing.runState = undefined;
       }
-      if (movedColumn || b.assigneeId !== undefined) {
+      if (movedColumn || b.assigneeId !== undefined || manualProviderFor(tags) !== manualProviderFor(existing.tags)) {
         if (existing.runState !== 'running') existing.runState = undefined;
         existing.runMessage = undefined;
       }
       Object.assign(existing, {
         title,
+        tags,
         details: b.details !== undefined ? text(b.details, 4000) : existing.details,
         column,
         assigneeId: b.assigneeId !== undefined ? b.assigneeId || '' : existing.assigneeId,
@@ -315,6 +325,7 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
       id: id('card'),
       projectId,
       title,
+      tags,
       details: text(b.details, 4000),
       column,
       assigneeId: b.assigneeId || '',
@@ -346,6 +357,32 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
     res.json({ card });
   });
 
+  app.post('/api/cards/:id/grok-reply', (req, res) => {
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '')) {
+      return res.status(403).json({ error: 'Save Grok replies from the hub on this computer.' });
+    }
+    const card = cards().find((c) => c.id === req.params.id);
+    if (!card) return res.status(404).json({ error: 'Card not found.' });
+    if (manualProviderFor(card.tags) !== GROK.provider || card.column !== 'ready' || card.runState === 'running'
+      || (card.startAfter && Date.parse(card.startAfter) > Date.now())
+      || card.dependsOn?.some((dep) => cards().some((c) => c.id === dep && c.column !== 'done'))) {
+      return res.status(409).json({ error: 'This card is not ready for a Grok reply.' });
+    }
+    const reply = req.body?.reply;
+    if (typeof reply !== 'string' || !reply.trim()) return res.status(400).json({ error: 'Paste a Grok reply first.' });
+    let file: string;
+    try {
+      file = saveGrokReply(handoffDir, card.title, reply);
+    } catch {
+      return res.status(500).json({ error: 'Could not save the Grok reply in the AI handoff folder.' });
+    }
+    const at = now();
+    card.notes.push({ id: id('note'), author: GROK.label, text: reply, at, kind: 'result' });
+    Object.assign(card, { column: 'review', reviewAt: at, updatedAt: at, order: Date.now(), runState: undefined, runMessage: undefined });
+    save();
+    res.json({ path: file });
+  });
+
   // Send a card in Review back with the owner's feedback. The same teammate gets the same card again, with the
   // feedback and their earlier result attached. The earlier result is marked "Revised".
   app.post('/api/cards/:id/send-back', (req, res) => {
@@ -354,7 +391,7 @@ export function registerProjectRoutes(app: Express, getStore: () => ProjectStore
     if (card.column !== 'review') return res.status(400).json({ error: 'Only a card in Review can be sent back.' });
     const feedback = text(req.body?.note, 4000);
     if (!feedback) return res.status(400).json({ error: 'Write what should change first.' });
-    if (!card.assigneeId || !getStore().agents.some((a) => a.id === card.assigneeId)) {
+    if (!manualProviderFor(card.tags) && (!card.assigneeId || !getStore().agents.some((a) => a.id === card.assigneeId))) {
       return res.status(400).json({ error: 'Pick a teammate for this card first (open the card), so the same one can redo it.' });
     }
     // The result being replaced: the latest one that has not already been revised.

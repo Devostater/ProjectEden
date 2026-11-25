@@ -221,6 +221,7 @@ export interface CardSource {
 }
 
 export interface Card {
+  tags?: string[];
   id: string;
   projectId: string;
   title: string;
