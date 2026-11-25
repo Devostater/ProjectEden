@@ -23,7 +23,7 @@ import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
 import { localAgentModel, localClaudeEnv, planClaudeEnv } from './localClaude';
 import { registerUpdateRoutes as mountUpdateRoutes } from './server/routes/updates';
-import { unrealUpdate, type UnrealToolsStatus } from './unrealUpdate';
+import { codexExecArgs, unrealUpdate, type UnrealToolsStatus } from './unrealUpdate';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STORE = path.join(APP_DIR, '.eden-updates.json');
@@ -423,7 +423,7 @@ async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: st
     save();
   }
   const claudeArgs = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--tools', 'Read,Edit,Write,Glob,Grep', '--model', local ? 'sonnet' : 'claude-sonnet-5-5'];
-  const codexArgs = ['exec', '--json', '--sandbox', 'workspace-write', ...(unreal?.args ?? []), '-'];
+  const codexArgs = codexExecArgs(unreal?.args);
   await new Promise<void>((resolve, reject) => {
     const child = job.codex
       ? process.platform === 'win32'
