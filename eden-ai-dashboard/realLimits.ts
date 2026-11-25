@@ -5,6 +5,7 @@
 //   Claude:  Claude Code logs when a plan limit is hit (which window, and when it resets) in
 //            ~/.claude/projects/**.jsonl. It doesn't log how close you are before that.
 //   Gemini:  the free API key reports nothing until a request is refused; the hub keeps that message.
+//   Grok:   manual handoffs have no plan usage to read.
 import fs from 'fs';
 import os from 'os';
 import path from 'path';

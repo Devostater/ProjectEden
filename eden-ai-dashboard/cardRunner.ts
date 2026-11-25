@@ -5,6 +5,7 @@ import type { Agent, Project, Card } from './src/types/index';
 import { logActivity } from './activity';
 import { aiPaused } from './control';
 import { generateForProject, projectAiLabel } from './toolbox';
+import { manualProviderFor } from './src/grok';
 
 interface RunnerStore {
   agents: Agent[];
@@ -273,7 +274,14 @@ function tick(getStore: () => RunnerStore, save: () => void) {
       changed = true;
     }
   }
-  const startable = candidates.filter((c) => !blockersOf(c).length && due(c)).sort(byPriority);
+  const startable = candidates.filter((c) => {
+    if (blockersOf(c).length || !due(c)) return false;
+    if (manualProviderFor(c.tags) === 'grok') {
+      hold(c, 'Grok is waiting for a pasted reply. Open this card to copy its brief.');
+      return false;
+    }
+    return true;
+  }).sort(byPriority);
   // A card that just finished is in Review while the runner is still wrapping it up: note it, start nothing.
   for (const c of all) {
     if (c.column === 'review' && running.has(c.id)) skipOnce(c.id, `${store.agents.find((a) => a.id === c.assigneeId)?.name || 'The teammate'} already has this card in Review`);

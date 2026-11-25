@@ -6,6 +6,7 @@ import { OfflineCard } from './Offline.tsx';
 import { AutoPauseCard } from './UsageWarning.tsx';
 import { BackupsCard } from './BackupsCard.tsx';
 import { FreeAIs } from './FreeAIs.tsx';
+import { GROK } from '../grok';
 
 interface Setting {
   key: string;
@@ -256,7 +257,7 @@ const BackupCard: React.FC = () => {
 // offline, knowledge, free AIs). Without it, everything shows.
 export const SettingsView: React.FC<{ onSaved?: () => void; part?: 'connections' | 'ai' }> = ({ onSaved, part }) => {
   const showAI = part !== 'connections';
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [providers, setProviders] = useState<(ProviderInfo | typeof GROK)[]>([]);
   const usage = useProviderUsage();
   const totals = useUsageTotals();
   const [github, setGithub] = useState<{ connected: boolean; login: string; source: string; error?: string } | null>(null);
@@ -309,7 +310,7 @@ export const SettingsView: React.FC<{ onSaved?: () => void; part?: 'connections'
         const d = await fetch('/api/settings?refresh=1').then((r) => r.json()).catch(() => null);
         if (!d || run !== watching.current) continue;
         setProviders(d.providers);
-        if (d.providers.find((p: ProviderInfo) => p.provider === provider)?.mode !== 'off') {
+        if (d.providers.find((p: ProviderInfo | typeof GROK) => p.provider === provider)?.mode !== 'off') {
           setSignInNote({ provider, ok: true, text: `${name} is connected.` });
           onSaved?.();
           break;
@@ -390,6 +391,14 @@ export const SettingsView: React.FC<{ onSaved?: () => void; part?: 'connections'
 
       <div className="space-y-3">
         {providers.map((p) => {
+          if (p.mode === 'manual') {
+            return (
+              <div key={p.provider} className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                <div className="font-medium text-slate-900 dark:text-white">{p.label}</div>
+                <p className="text-sm text-slate-500">Manual research and launch copy. Open a Ready card tagged research, market, pricing, or launch-copy to copy its brief and paste the reply.</p>
+              </div>
+            );
+          }
           const info = PLANS[p.provider];
           const connected = p.mode !== 'off';
           return (
