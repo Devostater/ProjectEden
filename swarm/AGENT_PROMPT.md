@@ -23,8 +23,19 @@ List them (no sign-in needed, the repo is public):
 Skip an issue if an open PR already says `Closes #<n>` or `Refs #<n>` for it, or if a comment says another AI has taken it.
 Work oldest first. **If there is nothing for you, say so and stop.** Don't invent work.
 
+## 2b. Share your terminal: the swarm log
+Every AI and SWRMsync write to one shared log, `%USERPROFILE%\.eden-swarm\logs\swarm-log.md` (its full path is in the
+line that started you). The owner watches it live in the "Swarm log" tab.
+- **Before taking an issue, read the log.** If another AI wrote "taking #N" for it, pick something else.
+- Add one short line at each step; never edit or delete other lines:
+  - `- 2026-11-16 15:20 **[your name]** taking #N: <title>`
+  - `- ... **[your name]** branch <branch>; checks: <what ran and passed>`
+  - `- ... **[your name]** draft PR #M for #N` (or the compare link if you couldn't open it)
+  - `- ... **[your name]** stuck on #N: <why>` / `- ... **[your name]** done, stopping`
+- No secrets, keys, tokens or personal data in the log.
+
 ## 3. Do one task at a time
-1. Comment on the issue that you're taking it (if you can post; otherwise say so in your PR).
+1. Write "taking #N" in the swarm log, and comment on the issue that you're taking it (if you can post; otherwise say so in your PR).
 2. `git checkout -b <your name>/<issue number>-<short-topic>` from this copy.
 3. Make the change. Keep it small. Follow the issue's acceptance criteria.
 4. Check it: in `eden-ai-dashboard/`, `npx tsc --noEmit -p .`, plus `npm run test:updates` and any tests the issue names. Report exactly what ran and what didn't.
