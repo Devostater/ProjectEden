@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { Express, Request } from 'express';
+import { fromOwnPage, isLocal } from '../localRequest';
 import { logActivity } from '../../activity';
 import { holdForApply } from '../../control';
 import { isOffline } from '../../offline';
@@ -11,18 +12,6 @@ import { mayOverrideUpdateCheck, updateCheckIssue } from '../../updateReleaseGat
 import type { UpdateRouteServices, UpdateJob } from '../../updates';
 
 const LOCKED = 'Code updates are only available on the computer running the hub.';
-
-function isLocal(req: Request) {
-  const ip = req.socket.remoteAddress || '';
-  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
-}
-function fromOwnPage(req: Request) {
-  try {
-    return !!req.headers.origin && new URL(req.headers.origin).host === req.headers.host;
-  } catch {
-    return false;
-  }
-}
 
 export function registerUpdateRoutes(app: Express, services: UpdateRouteServices) {
   const {

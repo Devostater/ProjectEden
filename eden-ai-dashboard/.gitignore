@@ -34,6 +34,7 @@ coverage/
 .eden-usage-guard.json
 # Any other data or settings file the hub keeps for itself
 .eden-*
+!.eden-runners.example.json
 
 # Approved results saved from Review
 Deliverables/

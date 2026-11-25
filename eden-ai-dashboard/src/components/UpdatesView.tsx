@@ -1,3 +1,4 @@
+import RunnersPanel from './RunnersPanel';
 import React, { useEffect, useRef, useState } from 'react';
 import { picksAsText, clearPicks } from '../picker.ts';
 import { api } from '../api.ts';
@@ -598,6 +599,7 @@ export const UpdatesView: React.FC = () => {
         }}
       />
         )}
+        {tab === 'construction' && !remote && <RunnersPanel />}
         {tab !== 'construction' && !jobs.some((j) => TAB_OF[j.status] === tab) && <p className="text-sm text-slate-500 dark:text-slate-400">{TABS.find((t) => t.id === tab)?.empty}</p>}
         {jobs.filter((j) => TAB_OF[j.status] === tab).map((job) => {
           // Every card starts folded. Press its title to open it, and again to close it.

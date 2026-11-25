@@ -1,0 +1,35 @@
+{
+  "maxRunners": 3,
+  "runners": [
+    {
+      "id": "levelgen",
+      "name": "LevelGen autopilot",
+      "cwd": "C:\\AZI\\LevelGen",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File autopilot\\run.ps1",
+      "tasksFile": "autopilot\\TASKS.md",
+      "needsClosed": ["UnrealEditor.exe"]
+    },
+    {
+      "id": "reel",
+      "name": "Reel autopilot",
+      "cwd": "C:\\AZI\\Reel",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File autopilot\\run.ps1",
+      "tasksFile": "autopilot\\TASKS.md"
+    },
+    {
+      "id": "devlog",
+      "name": "Devlog autopilot",
+      "cwd": "C:\\AZI\\devlog",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File autopilot\\run.ps1",
+      "tasksFile": "autopilot\\TASKS.md"
+    },
+    {
+      "id": "swarm",
+      "name": "Swarm issue runner",
+      "cwd": "%USERPROFILE%\\.eden-swarm",
+      "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.eden-swarm\\tools\\auto-issue.ps1\"",
+      "logFile": "logs\\auto-issue.txt",
+      "args": "issueNumbers"
+    }
+  ]
+}
