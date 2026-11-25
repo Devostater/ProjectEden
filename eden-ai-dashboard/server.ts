@@ -27,6 +27,7 @@ import { registerControlRoutes } from './control';
 import { registerUsageGuard } from './usageGuard';
 import { registerUpdateRoutes } from './updates';
 import { registerRestartRoutes } from './restart';
+import { createRunners, registerRunnerRoutes } from './runners';
 import { registerBusyRoutes } from './busy';
 import { registerOfflineRoutes } from './offline';
 import { registerKnowledgeRoutes } from './knowledge';
@@ -334,6 +335,11 @@ async function startServer() {
     },
   });
   registerRestartRoutes(app);
+  if (!ON_DEVICE) {
+    const runners = createRunners(__dirname);
+    process.once('exit', runners.shutdown);
+    registerRunnerRoutes(app, runners);
+  }
   registerBusyRoutes(app);
   registerOfflineRoutes(app);
   registerKnowledgeRoutes(app, () => store);

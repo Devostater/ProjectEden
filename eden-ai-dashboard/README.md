@@ -63,3 +63,11 @@ Code: `newproject.ts` (server), `src/components/ProjectsView.tsx` and `Sidebar.t
 Code: `toolbox.ts` (`generateForProject`), `cardRunner.ts`, `src/components/Toolbox.tsx`. Azure needs `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT` (optional `AZURE_OPENAI_API_VERSION`).
 
 **Bottom bar (project page).** Flow · Workload · Progress · **Roadmap** · **Toolbox** · **Preview**. Preview browses the project folder and shows files the way they read best (Markdown, images, video, audio, PDF, JSON, CSV tables, code) plus the latest tool output. It is read-only, and secrets, Eden/LYRA state and LYRA's browser profile are never shown. **Large screen** (top right of the bar) fills the window with any tab; Esc returns.
+
+## Runners
+
+On the computer running Eden, open **Code updates → Construction → Runners** to start, stop, and watch local autopilots. Copy `.eden-runners.example.json` to `.eden-runners.json` next to this README and adjust the entries for your machine. Eden reads this local, ignored file when it checks status or starts a runner.
+
+Each entry has a unique lowercase `id` (letters, digits, and hyphens), `name`, working directory `cwd`, and shell `command`. Optional `tasksFile` and `logFile` paths resolve relative to `cwd`. The progress bar counts `- [x]` as done and shows the first unfinished task (`- [ ]` or `- [!]`). Optional `needsClosed` lists process names to check before launch. Set `"args": "issueNumbers"` for a runner that accepts space- or comma-separated issue numbers. The registry's `maxRunners` defaults to 3.
+
+Eden starts runners in hidden processes and appends their output to `.eden-logs/runners/<id>.log`. **Show log** displays the last 40 lines of captured output and of the optional project log. Closing the browser leaves runners active. **Stop** terminates the process tree. A hub restart marks active runners **Stopped by restart** and requires a manual start.
