@@ -9,7 +9,8 @@ unless it says so. Owner: Devostater (Absolute Zero Interactive).
 | Level generator plugin (UE5 + Unity) | Codex (ChatGPT) | `30-level-generator-plugin.md` (#15) |
 | Sales, tracking, devblog, social | Gemini (Antigravity) | `40-sales-devblog-social.md` (#16) |
 | LYRA's role | LYRA: **not written yet** (see section 4) | to follow |
-| Free local AI work | Local Ollama (qwen2.5-coder 7B) | `60-local-ai.md` (this PR) |
+| Free local AI work | Local Ollama (qwen2.5-coder 7B) | `60-local-ai.md` (#18) |
+| Swarm Kit: the swarm as a tool for other developers | Claude (owner's request) | `70-swarm-kit.md` |
 
 ## 1. The plan in one paragraph
 EDEN becomes an **AI swarm suite for digital development**: several AIs work in parallel on separate copies of a
@@ -32,6 +33,7 @@ Stages are in order; dates are set after stage B, once real speed is measured. E
 | **G. Launch** (M6) | Submission, devblog post, social posts, links page | Owner submits; Gemini drafts posts; LYRA visuals | Store status recorded; posts approved and published by the owner | Approve every public post |
 | **H. Report** | In-house test report: time, AI usage, owner interventions, real bugs found by review | Claude | Report merged; EDEN fixes filed as issues | Go/no-go for EDEN beta |
 | **I. EDEN to release** (EDEN M3-M7) | Onboarding + installer, stability, closed beta, store page + site, v1.0 | All | Per `10-eden-product.md` | Each milestone |
+| **K. Swarm Kit** (alongside, see `70-swarm-kit.md`) | The swarm packaged for other developers: CLI, review action, MCP server, then VS Code / UE5 / Unity panels | Claude lead; Codex, Gemini review | K1-K2 start after stage A (the in-house test is its first user); a stranger reaches a first AI draft PR from the docs alone | License, name, channels, timing |
 
 Devblog runs alongside from stage B: one post every two weeks (Gemini's plan), drafted from Eden's roadmap and Trail.
 
