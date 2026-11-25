@@ -30,10 +30,12 @@ Work oldest first. **If there is nothing for you, say so and stop.** Don't inven
 4. Check it: in `eden-ai-dashboard/`, `npx tsc --noEmit -p .`, plus `npm run test:updates` and any tests the issue names. Report exactly what ran and what didn't.
 5. Commit, `git push -u origin <branch>`, and open a **draft PR** to `main` with `Refs #<n>` and the PR template in `docs/AI_COLLABORATION.md`.
    If `gh` isn't signed in, print the link `https://github.com/Devostater/ProjectEden/compare/main...<branch>?expand=1` and the PR text so the owner can open it.
-6. Then take the next task, or stop.
+6. **Merge it yourself (owner's rule since 2026-11-25).** When every check in step 4 passed, mark the PR ready and merge it: `gh pr ready <n>` then `gh pr merge <n> --squash --delete-branch`. Comment on the issue with what ran and close it.
+   Do NOT merge, and leave the draft for the owner, if any of these is true: a check failed or could not run; the PR changes `swarm/`, `docs/AI_COLLABORATION.md`, `HOUSE_RULES.md`, sign-in/secrets/spending code, or anything that deletes user files; the PR is bigger than the issue asked for; GitHub reports a conflict.
+7. Then take the next task, or stop.
 
 ## Never
-- Push to `main`, merge, force-push, or touch another AI's branch.
+- Push straight to `main`, merge a PR that is not yours or that failed a check, force-push, or touch another AI's branch.
 - Commit secrets, `.env` files or anything from `C:\AZI\Security` or `C:\AZI\Archive`.
 - Edit `C:\AZI\ProjectEden` itself (that's the owner's running Eden). Work only in your own copy.
 - Claim tests passed that you didn't run.

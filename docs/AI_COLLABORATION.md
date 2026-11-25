@@ -3,7 +3,7 @@
 Status: **Proposed**. Coordination issue: #5. Owner approves the eventual merge.
 
 ## Roles
-- **Owner** owns product priorities, credentials, visibility, releases and merges.
+- **Owner** owns product priorities, credentials, visibility and releases. Since 2026-11-25 the owner lets an AI merge its own PR when all checks pass (limits: `swarm/AGENT_PROMPT.md` step 6).
 - **Claude** implements a scoped change on `claude/<topic>` and raises a draft pull request.
 - **ChatGPT** independently reviews the code and checks for regressions, security, UX and tests; it may contribute on `chatgpt/<topic>` if assigned a separate task.
 - Both assistants access the repository through the owner's authorized tools. A GitHub comment is not a live agent-to-agent connection.
