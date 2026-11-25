@@ -23,7 +23,7 @@ import { pcBusy, onBusyChange } from './busy';
 import { isOffline, onOfflineChange } from './offline';
 import { localAgentModel, localClaudeEnv, planClaudeEnv } from './localClaude';
 import { registerUpdateRoutes as mountUpdateRoutes } from './server/routes/updates';
-import { codexExecArgs, unrealUpdate, type UnrealToolsStatus } from './unrealUpdate';
+import { codexExecArgs, unrealAnswerStatus, unrealUpdate, type UnrealToolsStatus } from './unrealUpdate';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STORE = path.join(APP_DIR, '.eden-updates.json');
@@ -128,7 +128,7 @@ export function addCodebase(rawName: string, rawDir: string): string {
 
 // ---- Jobs ---------------------------------------------------------------------------------------
 
-type Status = 'queued' | 'working' | 'checking' | 'ready' | 'applied' | 'undone' | 'discarded' | 'failed';
+type Status = 'queued' | 'working' | 'checking' | 'ready' | 'answered' | 'applied' | 'undone' | 'discarded' | 'failed';
 
 export interface UpdateJob {
   id: string;
@@ -418,8 +418,8 @@ async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: st
   job.summary = undefined;
   job.lastAiMessage = undefined; // a fresh run (for example "Try again") starts without the old message
   const unreal = job.codex ? await unrealUpdate(cb.unreal, job.allowUnrealChanges) : undefined;
+  job.unrealTools = unreal?.status;
   if (unreal?.status) {
-    job.unrealTools = unreal.status;
     save();
   }
   const claudeArgs = ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'acceptEdits', '--tools', 'Read,Edit,Write,Glob,Grep', '--model', local ? 'sonnet' : 'claude-sonnet-5-5'];
@@ -647,13 +647,20 @@ async function process_(job: UpdateJob) {
       save();
       await runAI(cb, job, copy.appDir);
       readChange(cb, job, copy.dir);
-      if (!job.files?.length && !job.allowUnrealChanges && looksLikeAcknowledgement(job.lastAiMessage)) {
+      let answerStatus = unrealAnswerStatus(job);
+      if (!answerStatus && !job.files?.length && !job.allowUnrealChanges && looksLikeAcknowledgement(job.lastAiMessage)) {
         // The AI only said "Understood" or made a plan: run it once more, telling it to edit the files this time.
         job.log.push('The AI replied without changing anything, so it is being asked once more to make the change');
         save();
         await runAI(cb, job, copy.appDir, MAKE_CHANGE_NOW);
         readChange(cb, job, copy.dir);
-        if (!job.files?.length) throw new Error(NO_CHANGE_MESSAGE); // the raw AI text is left out on purpose
+        answerStatus = unrealAnswerStatus(job);
+        if (!answerStatus && !job.files?.length) throw new Error(NO_CHANGE_MESSAGE); // the raw AI text is left out on purpose
+      }
+      if (answerStatus) {
+        job.status = answerStatus;
+        logActivity('done', `Code update answered (${cb.name}).`);
+        return;
       }
       if (!job.files?.length) throw new Error(`The AI finished without changing anything.${job.lastAiMessage ? ` It said: "${job.lastAiMessage}"` : ''}`);
       job.status = 'checking';

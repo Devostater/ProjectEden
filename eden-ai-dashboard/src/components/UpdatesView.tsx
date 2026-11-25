@@ -19,7 +19,7 @@ import { updateCheckIssue, type UpdateCheck } from '../../updateReleaseGate.ts';
 interface Job {
   id: string;
   request: string;
-  status: 'queued' | 'working' | 'checking' | 'ready' | 'applied' | 'undone' | 'discarded' | 'failed';
+  status: 'queued' | 'working' | 'checking' | 'ready' | 'answered' | 'applied' | 'undone' | 'discarded' | 'failed';
   createdAt: string;
   startedAt?: string; // when the AI began working on it
   finishedAt?: string;
@@ -54,6 +54,7 @@ const STATUS: Record<Job['status'], { label: string; tone: string }> = {
   working: { label: 'AI is working', tone: 'text-indigo-600 dark:text-indigo-400' },
   checking: { label: 'Checking', tone: 'text-indigo-600 dark:text-indigo-400' },
   ready: { label: 'Ready for your review', tone: 'text-amber-600 dark:text-amber-400' },
+  answered: { label: 'Answered', tone: 'text-emerald-600 dark:text-emerald-400' },
   applied: { label: 'Applied', tone: 'text-emerald-600 dark:text-emerald-400' },
   undone: { label: 'Undone', tone: 'text-slate-500' },
   discarded: { label: 'Discarded', tone: 'text-slate-500' },
@@ -68,6 +69,7 @@ const TAB_OF: Record<Job['status'], UpdatesTab> = {
   checking: 'active',
   ready: 'active',
   failed: 'error',
+  answered: 'finished',
   applied: 'finished',
   undone: 'finished',
   discarded: 'finished',
@@ -762,12 +764,12 @@ export const UpdatesView: React.FC = () => {
 
                   {job.summary && (
                     <div className="rounded-lg bg-slate-50 p-3 text-slate-800 dark:bg-slate-800/60 dark:text-slate-100">
-                      <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">What the AI says it did</div>
+                      <div className="mb-1 text-xs font-medium text-slate-500 dark:text-slate-400">{job.status === 'answered' ? 'Answer' : 'What the AI says it did'}</div>
                       <Formatted text={job.summary} />
                     </div>
                   )}
 
-                  {job.files && !job.hasDiff && (
+                  {job.files && !job.hasDiff && job.status !== 'answered' && (
                     <div>
                       <div className="mb-1.5 text-xs font-medium text-slate-500 dark:text-slate-400">Changed files</div>
                       <ul className="space-y-0.5 text-sm">
