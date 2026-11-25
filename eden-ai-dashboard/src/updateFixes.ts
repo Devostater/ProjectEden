@@ -13,6 +13,7 @@ export interface FixableJob {
   interrupted?: boolean;
   stale?: boolean;
   local?: boolean;
+  codex?: boolean;
   retriedAs?: string;
   codebaseId?: string;
 }
@@ -126,15 +127,16 @@ export function diagnose(job: FixableJob, jobs: FixableJob[], now = Date.now()):
   }
 
   if (USAGE_LIMIT.test(err)) {
+    const provider = job.codex ? 'ChatGPT' : 'Claude';
     const at = job.finishedAt || job.createdAt;
     if (now >= limitResetsAt(err, at)) {
-      return { kind: 'usage-reset', reason: 'It ran out of Claude usage, but the limit has reset since, so it can run now.', action: 'retry', label: 'Run it again' };
+      return { kind: 'usage-reset', reason: `It ran out of ${provider} usage, but the limit has reset since, so it can run now.`, action: 'retry', label: 'Run it again' };
     }
     const until = new Date(limitResetsAt(err, at)).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-    return { kind: 'usage', reason: `Out of Claude usage until about ${until}. Trying again before then fails the same way.`, action: 'wait', label: 'Try again anyway' };
+    return { kind: 'usage', reason: `Out of ${provider} usage until about ${until}. Trying again before then fails the same way.`, action: 'wait', label: 'Try again anyway' };
   }
 
-  if (/is not recognized|command not found|ENOENT.*claude|spawn claude/i.test(err)) {
+  if (!job.codex && /is not recognized|command not found|ENOENT.*claude|spawn claude/i.test(err)) {
     return { kind: 'claude-missing', reason: "Eden couldn't start Claude when this ran. That's fixed now, so it can simply run again.", action: 'retry', label: 'Run it again' };
   }
 
@@ -196,16 +198,16 @@ export async function applyFix(job: FixableJob, fix: Fix, post: (url: string, bo
   return d?.job?.id;
 }
 
-// Whether the button can work right now: anything that runs the AI needs Claude, except a rerun on this PC's AI.
-export const canFix = (job: FixableJob, fix: Fix, claudeReady: boolean) => fix.action === 'discard' || claudeReady || (fix.action === 'retry' && job.local === true);
+export const canFix = (job: FixableJob, fix: Fix, claudeReady: boolean, codexReady = false) =>
+  fix.action === 'discard' || (job.codex ? codexReady : claudeReady || (fix.action === 'retry' && job.local === true));
 
 // The plan "Fix all" shows before it runs: what happens to each failed update. `blocked` ones would run the AI
 // but can't right now (Claude isn't signed in), so Fix all leaves them and says so.
-export function planFixAll(jobs: FixableJob[], now = Date.now(), claudeReady = true) {
+export function planFixAll(jobs: FixableJob[], now = Date.now(), claudeReady = true, codexReady = false) {
   const plan = jobs
     .map((j) => ({ job: j, fix: diagnose(j, jobs, now) }))
     .filter((p): p is { job: FixableJob; fix: Fix } => !!p.fix)
-    .map((p) => ({ ...p, blocked: p.fix.action !== 'wait' && !canFix(p.job, p.fix, claudeReady) }));
+    .map((p) => ({ ...p, blocked: p.fix.action !== 'wait' && !canFix(p.job, p.fix, claudeReady, codexReady) }));
   const runs = plan.filter((p) => !p.blocked && (p.fix.action === 'retry' || p.fix.action === 'retryClaude' || p.fix.action === 'fixChecks'));
   return {
     plan,

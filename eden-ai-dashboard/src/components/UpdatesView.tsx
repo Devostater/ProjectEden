@@ -4,6 +4,14 @@ import { api } from '../api.ts';
 import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, RefreshCw, Lock, Wrench, ArrowUp, ArrowDown, ChevronsUp, RotateCw } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
 import { NextUpdate, type CodebaseInfo } from './NextUpdate.tsx';
+import type { UnrealToolsStatus } from '../../unrealUpdate';
+
+const unrealToolsLabel: Record<UnrealToolsStatus, string> = {
+  look: 'on (look only)',
+  change: 'on (can change)',
+  closed: 'off (editor closed)',
+  missing: 'off',
+};
 import { diagnose, applyFix, canFix, planFixAll, type Fix } from '../updateFixes.ts';
 import { markUpdatesSeen, refreshUpdatesFeed } from '../readyUpdates.ts';
 import { updateCheckIssue, type UpdateCheck } from '../../updateReleaseGate.ts';
@@ -23,6 +31,8 @@ interface Job {
   needsRestart?: boolean;
   error?: string;
   hasDiff?: boolean;
+  unrealTools?: UnrealToolsStatus;
+  codex?: boolean;
   hasRestorePoint?: boolean;
   codebaseName?: string;
   codebaseId?: string;
@@ -142,6 +152,7 @@ export const UpdatesView: React.FC = () => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [busy, setBusy] = useState(false);
   const [claudeReady, setClaudeReady] = useState(true);
+  const [codexReady, setCodexReady] = useState(false);
   const [codebases, setCodebases] = useState<CodebaseInfo[]>([]);
   const [target, setTarget] = useState('hub');
   const [request, setRequest] = useState('');
@@ -179,6 +190,7 @@ export const UpdatesView: React.FC = () => {
       setJobs(d.jobs);
       setBusy(d.busy);
       setClaudeReady(d.claudeReady);
+      setCodexReady(d.codexReady === true);
       setCodebases(d.codebases || []);
       if (typeof d.estimateMs === 'number' && d.estimateMs > 0) setEstimateMs(d.estimateMs);
       setRemote(!!d.remote);
@@ -198,7 +210,7 @@ export const UpdatesView: React.FC = () => {
       const d = await res.json();
       await load();
       const list = d.jobs || [];
-      const plan = planFixAll(list, Date.now(), !!d.claudeReady);
+      const plan = planFixAll(list, Date.now(), !!d.claudeReady, !!d.codexReady);
       const ready = list.filter((j: Job) => j.status === 'ready').length;
       const failed = list.filter((j: Job) => j.status === 'failed').length;
       const parts = [];
@@ -268,11 +280,11 @@ export const UpdatesView: React.FC = () => {
     return () => clearInterval(t);
   }, [running]);
 
-  const start = async () => {
+  const start = async (codex: boolean, allowUnrealChanges: boolean) => {
     setError('');
     setNote('');
     try {
-      const d = await post('/api/updates', { request: request + picksAsText(), codebaseId: target, local: onThisPc });
+      const d = await post('/api/updates', { request: request + picksAsText(), codebaseId: target, local: !codex && onThisPc, codex, allowUnrealChanges });
       setRequest('');
       clearPicks();
       setOpenId(d.job.id);
@@ -402,7 +414,7 @@ export const UpdatesView: React.FC = () => {
     }
   };
 
-  const fixPlan = planFixAll(jobs, Date.now(), claudeReady);
+  const fixPlan = planFixAll(jobs, Date.now(), claudeReady, codexReady);
   const fixAll = async () => {
     setConfirmFixAll(false);
     setError('');
@@ -430,8 +442,8 @@ export const UpdatesView: React.FC = () => {
     const parts: string[] = [];
     if (started) parts.push(`started ${started} again (they run one at a time)`);
     if (cleared) parts.push(`cleared ${cleared} that ${cleared === 1 ? "wasn't" : "weren't"} needed`);
-    if (fixPlan.waiting) parts.push(`left ${fixPlan.waiting} that hit the Claude usage limit, so press Fix all again after it resets`);
-    if (fixPlan.blocked) parts.push(`left ${fixPlan.blocked} that need Claude: sign in to Claude in Account → Connections, then press Fix all again`);
+    if (fixPlan.waiting) parts.push(`left ${fixPlan.waiting} waiting for usage limits to reset`);
+    if (fixPlan.blocked) parts.push(`left ${fixPlan.blocked} that need you to sign in under Account → Connections`);
     if (parts.length) setNote(parts.join(', ').replace(/^./, (c) => c.toUpperCase()) + '.');
     if (problems.length) setError(`${problems.length} couldn't be fixed: ${problems.join(' ')}`);
     if (started) {
@@ -545,8 +557,8 @@ export const UpdatesView: React.FC = () => {
             <span className="min-w-0 flex-1">
               {fixPlan.run > 0 && <>{fixPlan.run} can run again{fixPlan.fixChecks > 0 && ` (${fixPlan.fixChecks} with what went wrong)`}. </>}
               {fixPlan.clear > 0 && <>{fixPlan.clear} {fixPlan.clear === 1 ? "isn't" : "aren't"} needed and can be cleared. </>}
-              {fixPlan.waiting > 0 && <>{fixPlan.waiting} must wait for Claude usage to reset. </>}
-              {fixPlan.blocked > 0 && <>{fixPlan.blocked} need you to sign in to Claude first.</>}
+              {fixPlan.waiting > 0 && <>{fixPlan.waiting} must wait for usage limits to reset. </>}
+              {fixPlan.blocked > 0 && <>{fixPlan.blocked} need you to sign in first.</>}
             </span>
             <button
               onClick={() => setConfirmFixAll(true)}
@@ -568,6 +580,7 @@ export const UpdatesView: React.FC = () => {
         onOnThisPc={setOnThisPc}
         busy={busy}
         claudeReady={claudeReady}
+        codexReady={codexReady}
         remote={remote}
         onStart={start}
         onAdded={async (id) => {
@@ -641,6 +654,7 @@ export const UpdatesView: React.FC = () => {
                     {job.codebaseName && <span className="mr-2 rounded bg-indigo-500/10 px-1.5 py-0.5 text-xs font-medium text-indigo-600 dark:text-indigo-300">{job.codebaseName}</span>}
                     {job.request}
                   </span>
+                  {job.unrealTools && <span className="block text-xs text-slate-500">Unreal tools: {unrealToolsLabel[job.unrealTools]}</span>}
                   <span className={`mt-0.5 flex items-center gap-1.5 text-xs ${st.tone}`}>
                     {(job.status === 'working' || job.status === 'checking') && <Loader2 className="h-3 w-3 animate-spin" />}
                     {st.label}
@@ -718,8 +732,8 @@ export const UpdatesView: React.FC = () => {
                       <span className="min-w-0 flex-1 text-indigo-950 dark:text-indigo-100">{fix.reason}</span>
                       <button
                         onClick={() => fixOne(job, fix)}
-                        disabled={acting === job.id || fixingAll || !canFix(job, fix, claudeReady)}
-                        title={canFix(job, fix, claudeReady) ? undefined : 'Sign in to Claude in Account → Connections first'}
+                        disabled={acting === job.id || fixingAll || !canFix(job, fix, claudeReady, codexReady)}
+                        title={canFix(job, fix, claudeReady, codexReady) ? undefined : `Sign in to ${job.codex ? 'ChatGPT' : 'Claude'} in Account → Connections first`}
                         className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium disabled:opacity-50 ${fix.action === 'wait' ? 'border border-indigo-300 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700 dark:text-indigo-200 dark:hover:bg-indigo-900/50' : 'bg-indigo-600 text-white hover:bg-indigo-500'}`}
                       >
                         {acting === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : fix.action === 'discard' ? <Trash2 className="h-4 w-4" /> : <Wrench className="h-4 w-4" />} {fix.label}
@@ -818,7 +832,7 @@ export const UpdatesView: React.FC = () => {
                     {(job.status === 'failed' || job.status === 'discarded' || checkIssue || ((job.stale || job.olderBase) && (job.status === 'ready' || job.status === 'undone'))) && !(fix && fix.action !== 'discard') && (
                       <button
                         onClick={() => retry(job)}
-                        disabled={acting === job.id || !claudeReady}
+                        disabled={acting === job.id || !(job.codex ? codexReady : claudeReady)}
                         title={busy ? 'Another update is in progress, so this one will wait in the queue' : undefined}
                         className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
                       >

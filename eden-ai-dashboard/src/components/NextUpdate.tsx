@@ -19,6 +19,7 @@ export interface CodebaseInfo {
   check: 'tsc' | 'node';
   restartHint: string;
   ok: boolean;
+  unreal?: boolean;
   uncommitted?: number; // files changed here that are not saved to GitHub yet
 }
 
@@ -182,7 +183,7 @@ export const UnsavedWarning: React.FC<{ count?: number; codebaseId?: string }> =
 // Piece: "Run on this PC" and the button that starts the change.
 export const StartRow: React.FC<{
   onThisPc: boolean;
-  onOnThisPc: (v: boolean) => void;
+  onOnThisPc?: (v: boolean) => void;
   busy: boolean;
   canStart: boolean;
   onStart: () => void;
@@ -199,10 +200,10 @@ export const StartRow: React.FC<{
     >
       <Lightbulb className="h-4 w-4 text-amber-500" /> Next idea{ideaCount > 0 && ideaPosition > 0 ? ` (${ideaPosition}/${ideaCount})` : ''}
     </button>
-    <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-sm text-slate-600 dark:text-slate-300" title="Claude Code runs on gpt-oss on this PC (like 'ollama launch claude'): free and works offline, but slower and less reliable than Claude.">
+    {onOnThisPc && <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-sm text-slate-600 dark:text-slate-300" title="Claude Code runs on gpt-oss on this PC (like 'ollama launch claude'): free and works offline, but slower and less reliable than Claude.">
       <input type="checkbox" checked={onThisPc} onChange={(e) => onOnThisPc(e.target.checked)} className="h-4 w-4 accent-emerald-600" />
       Run on this PC (free)
-    </label>
+    </label>}
     <button onClick={onStart} disabled={!canStart} className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40">
       {busy ? <ListPlus className="h-4 w-4" /> : <Wand2 className="h-4 w-4" />} {busy ? 'Add to the queue' : 'Make this change'}
     </button>
@@ -340,8 +341,9 @@ export const NextUpdate: React.FC<{
   onOnThisPc: (v: boolean) => void;
   busy: boolean;
   claudeReady: boolean;
+  codexReady: boolean;
   remote: boolean;
-  onStart: () => void;
+  onStart: (codex: boolean, allowUnrealChanges: boolean) => void;
   onAdded: (id: string) => Promise<void> | void;
   onError: (message: string) => void;
   onIdeaStarted: (jobId: string) => void;
@@ -351,7 +353,14 @@ export const NextUpdate: React.FC<{
   const [folded, toggle] = useFolded('eden_update_panel_folded');
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [ideaIndex, setIdeaIndex] = useState(-1); // which idea the "Next idea" button last put in the box
-  useEffect(() => setIdeaIndex(-1), [p.target]);
+  const [useCodex, setUseCodex] = useState(false);
+  const [allowUnrealChanges, setAllowUnrealChanges] = useState(false);
+  const codex = current?.unreal === true && useCodex;
+  useEffect(() => {
+    setIdeaIndex(-1);
+    setUseCodex(false);
+    setAllowUnrealChanges(false);
+  }, [p.target]);
   // Keep the position valid when the list of ideas changes (new ideas, or one dismissed).
   useEffect(() => setIdeaIndex((i) => (i >= ideas.length ? -1 : i)), [ideas]);
   const nextIdea = () => {
@@ -368,13 +377,28 @@ export const NextUpdate: React.FC<{
       {!folded && <>
       <CodebasePicker codebases={p.codebases} target={p.target} onPick={p.onPickTarget} canAdd={!p.remote} onAdded={p.onAdded} onError={p.onError} />
       <RequestBox codebaseName={name} value={p.request} onChange={p.onRequestChange} />
+      {current?.unreal === true && (
+        <div className="mt-2 space-y-1 text-sm text-slate-600 dark:text-slate-300">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={codex} onChange={(e) => { setUseCodex(e.target.checked); setAllowUnrealChanges(false); }} />
+            Run this job with Codex
+          </label>
+          {codex && <label className="flex items-center gap-2">
+            <input type="checkbox" checked={allowUnrealChanges} onChange={(e) => setAllowUnrealChanges(e.target.checked)} />
+            Let the AI change the open Unreal project
+          </label>}
+        </div>
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <StartRow onThisPc={p.onThisPc} onOnThisPc={p.onOnThisPc} busy={p.busy} canStart={!!p.request.trim() && (p.claudeReady || p.onThisPc)} onStart={p.onStart} ideaCount={ideas.length} ideaPosition={ideaIndex + 1} onNextIdea={nextIdea} />
+        <StartRow onThisPc={p.onThisPc} onOnThisPc={codex ? undefined : p.onOnThisPc} busy={p.busy} canStart={!!p.request.trim() && (codex ? p.codexReady : p.claudeReady || p.onThisPc)} onStart={() => {
+          p.onStart(codex, codex && allowUnrealChanges);
+          setAllowUnrealChanges(false);
+        }} ideaCount={ideas.length} ideaPosition={ideaIndex + 1} onNextIdea={nextIdea} />
       </div>
-      {!p.claudeReady && <p className="mt-2 text-sm text-amber-600 dark:text-amber-400">App updates use Claude Code. Sign in to Claude in Account → Connections first.</p>}
+      {!(codex ? p.codexReady : p.claudeReady) && <p className="mt-2 text-sm text-amber-600 dark:text-amber-400">Sign in to {codex ? 'ChatGPT' : 'Claude'} in Account → Connections first.</p>}
       <UnsavedWarning count={current?.uncommitted} codebaseId={p.remote ? undefined : p.target} />
       <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-        Uses your Claude plan. A change usually takes a few minutes and several messages' worth of usage.
+        Uses your {codex ? 'ChatGPT' : 'Claude'} plan. A change usually takes a few minutes and several messages' worth of usage.
         {p.busy && ' One change runs at a time: anything you add now waits in the queue and starts by itself.'}
       </p>
       <div className="mt-4 border-t border-slate-100 pt-4 dark:border-slate-800">
