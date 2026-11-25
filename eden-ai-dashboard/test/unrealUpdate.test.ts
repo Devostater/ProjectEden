@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { test } from 'node:test';
-import { codexExecArgs, DEFAULT_UNREAL_ENGINE_DIR, unrealUpdate } from '../unrealUpdate';
+import { codexExecArgs, DEFAULT_UNREAL_ENGINE_DIR, unrealAnswerStatus, unrealUpdate } from '../unrealUpdate';
 
 const engineDir = path.resolve('Custom Unreal Engine');
 const aura = path.join(engineDir, 'Engine', 'Plugins', 'Marketplace', 'Aura');
@@ -9,6 +9,17 @@ const python = path.join(aura, 'PortablePython', 'Windows', 'python.exe');
 const inspector = path.join(aura, 'MCP', 'unreal_inspector.py');
 const editor = path.join(aura, 'MCP', 'unreal_editor.py');
 const running = async () => true;
+
+test('an Unreal look job with a summary and no changed files is answered', () => {
+  const job = { unrealTools: 'look', summary: 'The open level has 62 actors.', files: [] } as const;
+  assert.equal(unrealAnswerStatus(job), 'answered');
+  assert.equal(unrealAnswerStatus({ ...job, unrealTools: 'change' }), 'answered');
+  for (const unrealTools of [undefined, 'closed', 'missing'] as const) {
+    assert.equal(unrealAnswerStatus({ ...job, unrealTools }), undefined);
+  }
+  assert.equal(unrealAnswerStatus({ ...job, summary: '  ' }), undefined);
+  assert.equal(unrealAnswerStatus({ ...job, files: [{ path: 'level.txt' }] }), undefined);
+});
 
 test('Unreal tooling leaves other codebases untouched', async () => {
   for (const unreal of [undefined, false, 'true']) {

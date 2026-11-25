@@ -5,6 +5,12 @@ import path from 'node:path';
 export const DEFAULT_UNREAL_ENGINE_DIR = String.raw`C:\Unreal Engine 5\UE_5.8`;
 export type UnrealToolsStatus = 'look' | 'change' | 'closed' | 'missing';
 
+export function unrealAnswerStatus(job: { unrealTools?: UnrealToolsStatus; summary?: string; files?: readonly unknown[] }): 'answered' | undefined {
+  if ((job.unrealTools === 'look' || job.unrealTools === 'change') && job.summary?.trim() && !job.files?.length) {
+    return 'answered';
+  }
+}
+
 function editorRunning(): Promise<boolean> {
   if (process.platform !== 'win32') return Promise.resolve(false);
   return new Promise((resolve) => {
