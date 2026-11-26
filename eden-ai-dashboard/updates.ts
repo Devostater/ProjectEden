@@ -18,6 +18,7 @@ import type { Express } from 'express';
 import { logActivity, recentActivity, fileProblem } from './activity';
 import { dashboardMode, liveDashboardDirs } from './dashboardSite';
 import { git } from './gitRun';
+import { stopProcessTree } from './processTree';
 import { changedSince, realFolderChangedMessage, unsavedWork, type UnsavedWork } from './realFolder';
 import { aboutNewCodebase, updateRules } from './updatePrompt';
 import { recheckWaiting } from './updateOverlap';
@@ -422,7 +423,7 @@ async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: st
     let buffer = '';
     let errText = '';
     const timer = setTimeout(() => {
-      child.kill();
+      stopProcessTree(child); // the AI is a child of the shell: ending only the shell would leave it working
       reject(new Error('The AI took longer than 20 minutes and was stopped.'));
     }, TIMEOUT_MS);
     child.stdout.on('data', (d) => {
@@ -518,8 +519,7 @@ function runCommand(cmd: string, args: string[], opts: { cwd: string; timeout: n
     const timer = setTimeout(() => {
       out += `\n(Stopped: it was still running after ${Math.round(opts.timeout / 60000)} minutes.)`;
       // Through a shell the real work is a child of the shell, so stop the whole family.
-      if (process.platform === 'win32' && child.pid) spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }).on('error', () => {});
-      else child.kill();
+      stopProcessTree(child);
       finish(null);
     }, opts.timeout);
     const add = (d: Buffer) => {
@@ -1121,7 +1121,7 @@ async function runIdeas(cb: Codebase) {
       let out = '';
       let err = '';
       const timer = setTimeout(() => {
-        child.kill();
+        stopProcessTree(child);
         reject(new Error('Took longer than 10 minutes.'));
       }, 10 * 60 * 1000);
       child.stdout.on('data', (d) => (out += d));
