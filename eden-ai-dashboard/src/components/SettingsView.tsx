@@ -169,13 +169,13 @@ const RestartCard: React.FC = () => {
 
       <div>
         <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Stop the server</h2>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Turn off the Lyra server process on this laptop.</p>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Turn off the Eden hub on this computer. Start Eden starts it again.</p>
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
           {stopState === 'stopped' ? (
             <span role="status" className="text-sm font-medium text-emerald-600 dark:text-emerald-400">Server stopped successfully. You can close this window.</span>
           ) : stopConfirm ? (
             <>
-              <span className="text-sm text-slate-600 dark:text-slate-300">Turn off the Lyra server?</span>
+              <span className="text-sm text-slate-600 dark:text-slate-300">Turn off the Eden hub?</span>
               <button onClick={stopServer} className="rounded-md bg-red-600 px-2.5 py-1 text-sm font-medium text-white hover:bg-red-500">Stop Server</button>
               <button onClick={() => setStopConfirm(false)} className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
             </>
