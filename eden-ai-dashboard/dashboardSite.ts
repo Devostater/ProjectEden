@@ -9,6 +9,13 @@ export function dashboardMode(args: string[]) {
   };
 }
 
+// The hub's folders where a Code update shows on the page straight away, with no restart. That is only true
+// in development, where Vite reloads the page. The normal launch serves a build made when the hub starts, so
+// there every applied change needs a restart: the keeper (hub-supervisor.mjs) then builds the pages again.
+export function liveDashboardDirs(dev: boolean) {
+  return dev ? ['src/', 'public/', 'index.html'] : [];
+}
+
 export function serveDashboard(app: express.Express, root: string) {
   const build = findBuild(root);
   if (!build) throw new Error('No EDEN dashboard build found. Run npm run build and start EDEN again.');

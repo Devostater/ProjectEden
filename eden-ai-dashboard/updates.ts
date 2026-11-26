@@ -16,6 +16,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Express } from 'express';
 import { logActivity, recentActivity, fileProblem } from './activity';
+import { dashboardMode, liveDashboardDirs } from './dashboardSite';
 import { recheckWaiting } from './updateOverlap';
 import { runReleaseGate, type UpdateCheck } from './updateReleaseGate';
 import { cliSignedIn, providerUnavailable, recordFailure } from './providers';
@@ -53,7 +54,7 @@ const HUB: Codebase = {
   name: 'Eden AI Hub',
   dir: APP_DIR,
   check: 'tsc',
-  liveDirs: ['src/', 'public/', 'index.html'],
+  liveDirs: liveDashboardDirs(dashboardMode(process.argv.slice(2)).dev),
   restartHint: 'close and reopen Start Eden',
   about: '"Eden AI Hub", a local web app (React + Vite front end in src/, Express server in the *.ts files at the top of this folder) that a small game studio uses to run its AI team.',
   protect: ['.env files', '.eden-* files', '.nexusflow-store.json', 'node_modules', 'the mobile/android build'],
@@ -610,8 +611,9 @@ async function runCheck(cb: Codebase, appDir: string, files: string[], baselineF
 }
 
 let busy = false;
-// A hub update that changes the server part was applied or undone since this copy of the hub started:
-// it only takes effect after a restart (which also clears this).
+// A hub update that needs a restart was applied or undone since this copy of the hub started: it only
+// takes effect after a restart (which also clears this). In the normal launch that is every hub update,
+// because the pages are a build that the keeper makes again when the hub starts (see liveDashboardDirs).
 let restartPending = false;
 let onApplied: (job: UpdateJob, cb: Codebase) => void = () => {};
 
