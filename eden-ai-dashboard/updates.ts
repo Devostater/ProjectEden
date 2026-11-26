@@ -18,6 +18,8 @@ import type { Express } from 'express';
 import { logActivity, recentActivity, fileProblem } from './activity';
 import { dashboardMode, liveDashboardDirs } from './dashboardSite';
 import { git } from './gitRun';
+import { changedSince, realFolderChangedMessage, unsavedWork, type UnsavedWork } from './realFolder';
+import { aboutNewCodebase, updateRules } from './updatePrompt';
 import { recheckWaiting } from './updateOverlap';
 import { runReleaseGate, type UpdateCheck } from './updateReleaseGate';
 import { cliSignedIn, providerUnavailable, recordFailure } from './providers';
@@ -121,7 +123,7 @@ export function addCodebase(rawName: string, rawDir: string): string {
     check: isTs ? 'tsc' : 'node',
     liveDirs: ['public/', 'src/'],
     restartHint: `restart ${name}`,
-    about: `"${name}", a codebase in ${dir}.`,
+    about: aboutNewCodebase(name),
     protect: ['.env files', 'node_modules', 'data and settings files'],
   });
   saveCodebases();
@@ -234,7 +236,7 @@ function uncommittedNow(cb: Codebase): number | undefined {
   return n;
 }
 
-function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skippedLarge: number; uncommitted?: number } {
+function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skippedLarge: number; uncommitted?: number; real: UnsavedWork } {
   const root = repoRoot(cb);
   const rel = relOf(cb);
   const uncommitted = countUncommitted(cb);
@@ -249,12 +251,12 @@ function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skip
   } catch {}
   if (fs.existsSync(dir)) throw new Error(`An old working copy of this update is still at ${dir} and could not be removed. Close anything using that folder (an editor, a terminal), then press Try again.`);
   git(['worktree', 'add', '--detach', dir, 'HEAD'], root);
-  // Bring over uncommitted work, so the AI starts from what you actually have.
-  const pending = git(['diff', 'HEAD', '--binary', ...pathspec(rel)], root);
-  if (pending.trim()) git(['apply', '--whitespace=nowarn', '-'], dir, pending);
-  const untracked = git(['ls-files', '--others', '--exclude-standard', ...pathspec(rel)], root).split('\n').filter(Boolean);
+  // Bring over uncommitted work, so the AI starts from what you actually have. The same reading is kept, to
+  // tell afterwards whether the real folder changed while the AI ran (see realFolder.ts).
+  const real = unsavedWork(root, rel);
+  if (real.diff.trim()) git(['apply', '--whitespace=nowarn', '-'], dir, real.diff);
   let skippedLarge = 0;
-  for (const file of untracked) {
+  for (const file of real.untracked) {
     const from = path.join(root, file);
     try {
       if (fs.statSync(from).size > MAX_COPY_BYTES) {
@@ -275,7 +277,7 @@ function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skip
   const appDir = rel ? path.join(dir, rel) : dir;
   const modules = path.join(cb.dir, 'node_modules');
   if (fs.existsSync(modules) && !fs.existsSync(path.join(appDir, 'node_modules'))) fs.symlinkSync(modules, path.join(appDir, 'node_modules'), 'junction');
-  return { dir, appDir, skippedLarge, uncommitted };
+  return { dir, appDir, skippedLarge, uncommitted, real };
 }
 
 function removeCopy(cb: Codebase, id: string) {
@@ -334,15 +336,6 @@ function sweepCopies() {
 }
 
 // ---- Running the AI -----------------------------------------------------------------------------
-
-const RULES = (cb: Codebase) => `You are improving ${cb.about}
-Make the change the owner asks for below, carefully and completely.
-Rules:
-- Only edit files inside this folder. Never touch: ${cb.protect.join(', ')}.
-- Follow the existing code style. Keep wording plain for a non-technical owner.
-- Keep it working: if you change something shared, update every place that uses it.
-- You cannot run commands; the hub runs the checks after you finish.
-- Finish with a short summary in plain language: what you changed, which files, and anything the owner should check.`;
 
 // The codebase's own house rules (HOUSE_RULES.md in its folder), given to the AI before every update so changes reuse
 // what exists, keep saved data safe and flag risky parts. Read fresh each time, so editing the file takes effect at once.
@@ -477,7 +470,7 @@ async function runAIOnce(cb: Codebase, job: UpdateJob, appDir: string, local: st
       else reject(new Error(errText.trim().split('\n').slice(-2).join(' ') || `${job.codex ? 'Codex' : 'Claude Code'} exited with ${code}`));
     });
     child.stdin.on('error', () => {}); // The process may exit before it reads the prompt.
-    child.stdin.end(`${RULES(cb)}${houseRules(appDir)}${unreal?.prompt ? `\n\n${unreal.prompt}` : ''}\n\nThe owner's request:\n${job.request}${extra ? `\n\n${extra}` : ''}`);
+    child.stdin.end(`${updateRules(cb)}${houseRules(appDir)}${unreal?.prompt ? `\n\n${unreal.prompt}` : ''}\n\nThe owner's request:\n${job.request}${extra ? `\n\n${extra}` : ''}`);
   });
 }
 
@@ -642,8 +635,20 @@ async function process_(job: UpdateJob) {
       }
       job.log.push(`${job.codex ? 'Codex' : 'Claude'} is working on the copy`);
       save();
+      // The copy shows no change but the real folder changed meanwhile: the AI edited the real folder. Say so,
+      // instead of "nothing was changed". Unreal jobs with the editor open are left out: there the open project
+      // is expected to change.
+      const mustHaveStayedInTheCopy = () => {
+        if (job.files?.length || job.unrealTools === 'look' || job.unrealTools === 'change') return;
+        let changed: string[] = [];
+        try {
+          changed = changedSince(copy.real, unsavedWork(repoRoot(cb), relOf(cb)));
+        } catch {}
+        if (changed.length) throw new Error(`${realFolderChangedMessage(cb.name, cb.dir, changed)}${job.lastAiMessage ? ` The AI said: "${job.lastAiMessage}"` : ''}`);
+      };
       await runAI(cb, job, copy.appDir);
       readChange(cb, job, copy.dir);
+      mustHaveStayedInTheCopy();
       let answerStatus = unrealAnswerStatus(job);
       if (!answerStatus && !job.files?.length && !job.allowUnrealChanges && looksLikeAcknowledgement(job.lastAiMessage)) {
         // The AI only said "Understood" or made a plan: run it once more, telling it to edit the files this time.
@@ -651,6 +656,7 @@ async function process_(job: UpdateJob) {
         save();
         await runAI(cb, job, copy.appDir, MAKE_CHANGE_NOW);
         readChange(cb, job, copy.dir);
+        mustHaveStayedInTheCopy();
         answerStatus = unrealAnswerStatus(job);
         if (!answerStatus && !job.files?.length) throw new Error(NO_CHANGE_MESSAGE); // the raw AI text is left out on purpose
       }
