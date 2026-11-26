@@ -5,7 +5,8 @@ import { newlineOnCtrlEnter } from '../textbox.ts';
 import { UsageBar, useProviderUsage, RefreshUsageButton } from './UsageBars.tsx';
 import { openPanel } from '../panel.ts';
 import { roadmapProgress, progressOf } from './Roadmap.tsx';
-import { diagnose, applyFix, canFix, limitStillOn, type FixableJob } from '../updateFixes.ts';
+import { diagnose, applyFix, canFix, limitStillOn, retryCodeAI, type FixableJob } from '../updateFixes.ts';
+import { notSignedIn } from '../../codebaseSettings';
 import { useFolded, FoldHeader } from './Foldable.tsx';
 import { setTickerItems } from '../ticker.ts';
 import RadarWidget from './RadarWidget.tsx';
@@ -174,7 +175,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
   // "PC busy" and "AI paused" are states with their own banner and button, not problems to list here.
   const recentErrors = errors.filter((e) => new Date(e.at).getTime() >= dayAgo && !/^(PC busy|AI paused)/.test(e.text));
   const allClear = reviewCount === 0 && readyUpdates === 0 && recentErrors.length === 0 && lyraEdits === 0;
-  // "Fix all errors": try again what can be tried again, and ask Claude (as one Code update) to fix the rest.
+  // "Fix all errors": try again what can be tried again, and ask the AI to fix the rest in one Code update.
   const [fixing, setFixing] = useState(false);
   const [fixNote, setFixNote] = useState('');
   const [fixedIds, setFixedIds] = useState<number[]>([]);
@@ -190,7 +191,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     let limited = 0;
     const keep = new Set<number>(); // errors not fixed this time: they stay listed so the button can try again
     const refusals: string[] = []; // what the hub said when it refused, shown so you know what to do
-    let updates_: { jobs: FixableJob[]; claudeReady: boolean } | null = null; // read once, only if a code update needs fixing
+    let updates_: { jobs: FixableJob[]; claudeReady: boolean; codexReady: boolean; codebases: { id: string; ai?: unknown }[] } | null = null; // read once, only if a code update needs fixing
     for (const e of toFix) {
       // Out of AI usage: trying again now only fails again, so these wait for the limit to reset.
       if (limitStillOn(e.text, e.at)) {
@@ -219,19 +220,20 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
             if (!updates_) {
               updates_ = await fetch('/api/updates')
                 .then((r) => r.json())
-                .then((d) => ({ jobs: Array.isArray(d.jobs) ? d.jobs : [], claudeReady: d.claudeReady !== false }))
-                .catch(() => ({ jobs: [], claudeReady: false }));
+                .then((d) => ({ jobs: Array.isArray(d.jobs) ? d.jobs : [], claudeReady: d.claudeReady !== false, codexReady: d.codexReady === true, codebases: d.codebases || [] }))
+                .catch(() => ({ jobs: [], claudeReady: false, codexReady: false, codebases: [] }));
             }
-            const { jobs, claudeReady } = updates_!;
+            const { jobs, claudeReady, codexReady, codebases } = updates_!;
             const job = jobs.find((j) => j.id === e.retry!.id);
-            const fix = job ? diagnose(job, jobs) : null;
+            const fix = job ? diagnose(job, jobs, Date.now(), codebases) : null;
             if (!job || !fix) skipped++; // already tried again or cleared
             else if (fix.action === 'wait') {
               limited++;
               keep.add(e.id);
-            } else if (!canFix(job, fix, claudeReady)) {
+            } else if (!canFix(job, fix, claudeReady, codexReady, codebases)) {
               keep.add(e.id);
-              if (!refusals.includes('Sign in to Claude in Account → Connections first.')) refusals.push('Sign in to Claude in Account → Connections first.');
+              const msg = notSignedIn(retryCodeAI(job, codebases));
+              if (!refusals.includes(msg)) refusals.push(msg);
             } else if (await applyFix(job, fix, postJson)) updates++;
             else cleared++;
           }
@@ -257,7 +259,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
     if (cards) parts.push(`sent ${cards} ${cards === 1 ? 'task' : 'tasks'} back to the team`);
     if (chats) parts.push(`sent ${chats} ${chats === 1 ? 'message' : 'messages'} to LYRA again`);
     if (updates) parts.push(`started ${updates} code ${updates === 1 ? 'update' : 'updates'} again`);
-    if (asked) parts.push(`asked Claude to fix ${asked} ${asked === 1 ? 'problem' : 'problems'} (see Code updates)`);
+    if (asked) parts.push(`asked the AI to fix ${asked} ${asked === 1 ? 'problem' : 'problems'} (see Code updates)`);
     if (cleared) parts.push(`cleared ${cleared} ${cleared === 1 ? 'update' : 'updates'} that ${cleared === 1 ? "wasn't" : "weren't"} needed`);
     if (skipped) parts.push(`${skipped} already handled`);
     if (limited) parts.push(`${limited} hit the AI usage limit, so press again after it resets`);
@@ -769,7 +771,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
                   <button
                     onClick={fixAll}
                     disabled={fixing || toFix.length === 0}
-                    title="Tries again every task and code update that failed, and asks Claude to fix the rest as one Code update"
+                    title="Tries again every task and code update that failed, and asks the AI to fix the rest as one Code update"
                     className="rounded-lg bg-red-600 px-3 py-1.5 font-medium text-white hover:bg-red-500 disabled:opacity-50"
                   >
                     {fixing ? 'Fixing…' : toFix.length === 0 ? 'Fix started' : 'Fix all errors'}

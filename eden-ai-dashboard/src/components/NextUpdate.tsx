@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.ts';
+import { notSignedIn, type CodeAI } from '../../codebaseSettings';
 import { useFolded, FoldHeader } from './Foldable.tsx';
+import { ui } from '../ui.ts';
 import { Wand2, Loader2, ChevronDown, ListPlus, Lightbulb, RefreshCw, X, Pencil, AlertTriangle } from 'lucide-react';
 
 // The "Update" card: everything for asking for the next change lives here, in small pieces.
 // Each piece below does one job, so a later patch only has to touch the piece it is about:
 //   CodebasePicker  – which codebase to change (and adding a new one)
+//   CodebaseSettings – what the hub remembers about that codebase: which AI changes its code, and whether it is an Unreal project
 //   RequestBox      – the box where you describe the change
 //   UnsavedWarning  – the note when many files aren't saved to GitHub yet
 //   StartRow        – "Next idea", "Run on this PC" and the Make this change button
@@ -20,6 +23,7 @@ export interface CodebaseInfo {
   restartHint: string;
   ok: boolean;
   unreal?: boolean;
+  ai?: CodeAI;
   uncommitted?: number; // files changed here that are not saved to GitHub yet
 }
 
@@ -89,6 +93,38 @@ export const CodebasePicker: React.FC<{
         </div>
       )}
     </>
+  );
+};
+
+const CodebaseSettings: React.FC<{
+  codebase: CodebaseInfo;
+  remote: boolean;
+  saving: boolean;
+  onSave: (settings: { ai?: CodeAI; unreal?: boolean }) => void;
+}> = ({ codebase, remote, saving, onSave }) => {
+  const [folded, toggle] = useFolded('eden_codebase_settings_folded', true);
+  const ai = codebase.ai === 'codex' ? 'codex' : 'claude';
+  return (
+    <div className={`${ui.section} mb-3`}>
+      <FoldHeader title={`Settings for ${codebase.name}${folded ? ':' : ''}`} folded={folded} onToggle={toggle} foldedHint={`${ai === 'codex' ? 'Codex' : 'Claude'}${codebase.unreal === true ? ', Unreal project' : ''}`} />
+      {!folded && (remote ? (
+        <p className={`mt-2 ${ui.empty}`}>AI that changes the code: {ai === 'codex' ? 'Codex (ChatGPT)' : 'Claude'}. {codebase.unreal === true ? 'Unreal project.' : 'Unreal project setting is off.'} Change these settings on the hub computer.</p>
+      ) : (
+        <fieldset disabled={saving} className="mt-2 space-y-2">
+          <label className={`${ui.label} flex-wrap`}>AI that changes the code
+            <select className={ui.field} value={ai} onChange={(e) => onSave({ ai: e.target.value === 'codex' ? 'codex' : 'claude' })}>
+              <option value="claude">Claude</option>
+              <option value="codex">Codex (ChatGPT)</option>
+            </select>
+          </label>
+          <label className={`flex items-center gap-2 ${ui.empty}`}>
+            <input type="checkbox" checked={codebase.unreal === true} onChange={(e) => onSave({ unreal: e.target.checked })} />
+            This is an Unreal project
+          </label>
+          <p className={ui.empty}>Codex can then look at the open Unreal editor.</p>
+        </fieldset>
+      ))}
+    </div>
   );
 };
 
@@ -219,10 +255,12 @@ export interface Idea {
 
 // Piece – "Suggested for you": Claude reads the codebase (without changing it) plus recent errors and past
 // updates, and suggests a few changes. One click queues an idea; the pencil puts it in the box to edit first.
-export const SuggestedIdeas: React.FC<{ codebaseId: string; codebaseName: string; claudeReady: boolean; onEdit: (request: string) => void; onStarted: (jobId: string) => void; onIdeasChange?: (ideas: Idea[]) => void }> = ({
+export const SuggestedIdeas: React.FC<{ codebaseId: string; codebaseName: string; claudeReady: boolean; codex: boolean; updateReady: boolean; onEdit: (request: string) => void; onStarted: (jobId: string) => void; onIdeasChange?: (ideas: Idea[]) => void }> = ({
   codebaseId,
   codebaseName,
   claudeReady,
+  codex,
+  updateReady,
   onEdit,
   onStarted,
   onIdeasChange,
@@ -239,8 +277,8 @@ export const SuggestedIdeas: React.FC<{ codebaseId: string; codebaseName: string
   };
   useEffect(() => {
     setData(null);
-    load(true);
-  }, [codebaseId]);
+    load(!codex);
+  }, [codebaseId, codex]);
   // Tell the card which ideas are showing, so its "Next idea" button can cycle through them.
   useEffect(() => {
     onIdeasChange?.(data?.ideas ?? []);
@@ -289,6 +327,7 @@ export const SuggestedIdeas: React.FC<{ codebaseId: string; codebaseName: string
           <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
             Based on the code, recent errors and what you've already changed. {data?.at && `Updated ${new Date(data.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.`}
           </p>
+          {codex && <p className={ui.empty}>Claude looks for ideas only when you ask for them here.</p>}
         </div>
         <button onClick={() => refresh()} disabled={!claudeReady || !!data?.running} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
           {data?.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />} {data?.running ? 'Thinking…' : 'New ideas'}
@@ -316,7 +355,7 @@ export const SuggestedIdeas: React.FC<{ codebaseId: string; codebaseName: string
                 <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">{idea.why}</p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
-                <button onClick={() => startIdea(idea)} disabled={!claudeReady || !!acting} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40">
+                <button onClick={() => startIdea(idea)} disabled={!updateReady || !!acting} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40">
                   {acting === idea.title ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />} Do it
                 </button>
                 <button onClick={() => onEdit(idea.request)} aria-label={`Edit "${idea.title}" before starting`} title="Edit first" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"><Pencil className="h-4 w-4" /></button>
@@ -343,7 +382,8 @@ export const NextUpdate: React.FC<{
   claudeReady: boolean;
   codexReady: boolean;
   remote: boolean;
-  onStart: (codex: boolean, allowUnrealChanges: boolean) => void;
+  onStart: (allowUnrealChanges: boolean) => void;
+  onSettingsChanged: () => Promise<void>;
   onAdded: (id: string) => Promise<void> | void;
   onError: (message: string) => void;
   onIdeaStarted: (jobId: string) => void;
@@ -353,14 +393,30 @@ export const NextUpdate: React.FC<{
   const [folded, toggle] = useFolded('eden_update_panel_folded');
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [ideaIndex, setIdeaIndex] = useState(-1); // which idea the "Next idea" button last put in the box
-  const [useCodex, setUseCodex] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
   const [allowUnrealChanges, setAllowUnrealChanges] = useState(false);
-  const codex = current?.unreal === true && useCodex;
+  const codex = current?.ai === 'codex';
+  const codexUnreal = codex && current?.unreal === true;
+  const updateReady = codex ? p.codexReady : p.claudeReady;
   useEffect(() => {
     setIdeaIndex(-1);
-    setUseCodex(false);
-    setAllowUnrealChanges(false);
   }, [p.target]);
+  useEffect(() => {
+    setAllowUnrealChanges(false);
+  }, [p.target, codexUnreal]);
+  const saveSettings = async (settings: { ai?: CodeAI; unreal?: boolean }) => {
+    if (!current || savingSettings) return;
+    setSavingSettings(true);
+    p.onError('');
+    try {
+      await post(`/api/codebases/${encodeURIComponent(current.id)}/settings`, settings);
+      await p.onSettingsChanged();
+    } catch (err: any) {
+      p.onError(err.message);
+    } finally {
+      setSavingSettings(false);
+    }
+  };
   // Keep the position valid when the list of ideas changes (new ideas, or one dismissed).
   useEffect(() => setIdeaIndex((i) => (i >= ideas.length ? -1 : i)), [ideas]);
   const nextIdea = () => {
@@ -376,26 +432,23 @@ export const NextUpdate: React.FC<{
       </h2>
       {!folded && <>
       <CodebasePicker codebases={p.codebases} target={p.target} onPick={p.onPickTarget} canAdd={!p.remote} onAdded={p.onAdded} onError={p.onError} />
+      {current && <CodebaseSettings codebase={current} remote={p.remote} saving={savingSettings} onSave={saveSettings} />}
       <RequestBox codebaseName={name} value={p.request} onChange={p.onRequestChange} />
-      {current?.unreal === true && (
+      {codexUnreal && (
         <div className="mt-2 space-y-1 text-sm text-slate-600 dark:text-slate-300">
           <label className="flex items-center gap-2">
-            <input type="checkbox" checked={codex} onChange={(e) => { setUseCodex(e.target.checked); setAllowUnrealChanges(false); }} />
-            Run this job with Codex
-          </label>
-          {codex && <label className="flex items-center gap-2">
             <input type="checkbox" checked={allowUnrealChanges} onChange={(e) => setAllowUnrealChanges(e.target.checked)} />
             Let the AI change the open Unreal project
-          </label>}
+          </label>
         </div>
       )}
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <StartRow onThisPc={p.onThisPc} onOnThisPc={codex ? undefined : p.onOnThisPc} busy={p.busy} canStart={!!p.request.trim() && (codex ? p.codexReady : p.claudeReady || p.onThisPc)} onStart={() => {
-          p.onStart(codex, codex && allowUnrealChanges);
+        <StartRow onThisPc={p.onThisPc} onOnThisPc={codex ? undefined : p.onOnThisPc} busy={p.busy} canStart={!savingSettings && !!p.request.trim() && (updateReady || (!codex && p.onThisPc))} onStart={() => {
+          p.onStart(codexUnreal && allowUnrealChanges);
           setAllowUnrealChanges(false);
         }} ideaCount={ideas.length} ideaPosition={ideaIndex + 1} onNextIdea={nextIdea} />
       </div>
-      {!(codex ? p.codexReady : p.claudeReady) && <p className="mt-2 text-sm text-amber-600 dark:text-amber-400">Sign in to {codex ? 'ChatGPT' : 'Claude'} in Account → Connections first.</p>}
+      {!updateReady && <p className="mt-2 text-sm text-amber-600 dark:text-amber-400">{notSignedIn(codex ? 'codex' : 'claude')}</p>}
       <UnsavedWarning count={current?.uncommitted} codebaseId={p.remote ? undefined : p.target} />
       <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
         Uses your {codex ? 'ChatGPT' : 'Claude'} plan. A change usually takes a few minutes and several messages' worth of usage.
@@ -406,6 +459,8 @@ export const NextUpdate: React.FC<{
           codebaseId={p.target}
           codebaseName={name}
           claudeReady={p.claudeReady}
+          codex={codex}
+          updateReady={updateReady && !savingSettings}
           onEdit={(r) => {
             p.onRequestChange(r);
             document.getElementById('upd-req')?.focus();
