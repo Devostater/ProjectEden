@@ -1,0 +1,24 @@
+# Unreal build output: made again by every build, never saved to git
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+.vs/
+*.sln
+*.VC.db
+*.opensdf
+*.sdf
+*.suo
+
+# Editor AI tools keep their own data in the project: never part of the plugin
+.Aura/
+.ludus/
+ArtDirection/
+p4ignore.txt
+
+# Autopilot logs and packages: made again by the scripts
+autopilot/runs/
+dist/
+
+# Unreal writes this file by itself the first time the project opens. The host project has no input settings of its own.
+Config/DefaultInput.ini

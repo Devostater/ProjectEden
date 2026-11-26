@@ -1,0 +1,26 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "__DISPLAY_JSON__",
+	"Description": "__PURPOSE_JSON__",
+	"Category": "Other",
+	"CreatedBy": "__PUBLISHER_JSON__",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"SupportURL": "",
+	"FabURL": "",
+	"EngineVersion": "5.8.0",
+	"CanContainContent": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "__NAME__",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64"
+			]
+		}
+	]
+}

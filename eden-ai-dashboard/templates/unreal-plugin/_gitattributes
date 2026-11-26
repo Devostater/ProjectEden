@@ -1,0 +1,7 @@
+# The same line endings on every PC, so git never lists a file as changed when only its line ends differ.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.uasset binary
+*.umap binary
+*.png binary
