@@ -8,6 +8,7 @@ import type { spawn, SpawnOptions } from 'node:child_process';
 import express from 'express';
 import { createRunners, registerRunnerRoutes } from '../runners';
 import { interruptedWork } from '../restartWork';
+import { applying } from '../oneWriter';
 
 function fixture(t: TestContext) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eden-runners-'));
@@ -20,14 +21,15 @@ function fixture(t: TestContext) {
   const spawned: { command: string; options: SpawnOptions; child: EventEmitter }[] = [];
   const killed: number[] = [];
   const processes: string[] = [];
+  const livePids = new Set<number>();
   const fakeSpawn = ((_executable: string, args: string[], options: SpawnOptions) => {
     const child = Object.assign(new EventEmitter(), { pid: 101 + spawned.length });
     spawned.push({ command: args[3], options, child });
     return child;
   }) as typeof spawn;
-  const deps = { spawn: fakeSpawn, processNames: () => processes, killTree: (pid: number) => { killed.push(pid); } };
+  const deps = { spawn: fakeSpawn, processNames: () => processes, killTree: (pid: number) => { killed.push(pid); }, lockProcessExists: (pid: number) => livePids.has(pid) };
   const runners = createRunners(dir, deps);
-  return { dir, runners, spawned, killed, processes, deps };
+  return { dir, runners, spawned, killed, processes, deps, entries, livePids };
 }
 
 test('reads TASKS.md progress and truncates the first unfinished task', (t) => {
@@ -66,12 +68,45 @@ test('stop uses the tree killer and keeps the slot until exit', (t) => {
 });
 
 test('running runners are named, so the hub can warn before a restart stops them', (t) => {
-  const { runners, spawned } = fixture(t);
+  const { dir, runners, spawned } = fixture(t);
   assert.deepEqual(runners.runningNames(), []);
   runners.start('levelgen', undefined);
   assert.deepEqual(runners.runningNames(), ['LevelGen']);
+  assert.deepEqual(runners.workingIn(path.join(dir, 'child')), ['LevelGen']);
   spawned[0].child.emit('exit', 0);
   assert.deepEqual(runners.runningNames(), []);
+  assert.deepEqual(runners.workingIn(dir), []);
+});
+
+test('live locks count as work but cannot be stopped from the hub', (t) => {
+  const { dir, runners, entries, livePids, spawned, killed } = fixture(t);
+  const registry = path.join(dir, '.eden-runners.json');
+  const runnersWithLocks = [{ ...entries[0], lockFile: 'levelgen.lock' }, { ...entries[1], lockFile: 'swarm.lock' }];
+  fs.writeFileSync(registry, JSON.stringify({ runners: runnersWithLocks }));
+  fs.writeFileSync(path.join(dir, 'levelgen.lock'), JSON.stringify({ pid: 123, image: 'powershell.exe' }));
+  fs.writeFileSync(path.join(dir, 'swarm.lock'), JSON.stringify({ pid: 124 }));
+  livePids.add(123);
+  assert.deepEqual(runners.workingIn(dir), ['LevelGen']);
+  assert.equal(runners.status(undefined).runners[0].state, 'Running outside the hub');
+  assert.equal(runners.status(undefined).runners[1].state, 'Stopped');
+  assert.throws(() => runners.start('levelgen', undefined), /LevelGen is already running outside the hub/);
+  assert.throws(() => runners.stop('levelgen'), /LevelGen was started outside the hub/);
+  assert.equal(spawned.length, 0);
+  assert.deepEqual(killed, []);
+  fs.writeFileSync(registry, JSON.stringify({ runners: [{ ...entries[0], lockFile: 123 }] }));
+  assert.throws(() => runners.status(undefined), /Invalid runner entry/);
+});
+
+test('start waits while the hub is applying an update in the folder', (t) => {
+  const { dir, runners, spawned } = fixture(t);
+  applying(dir, 'Fix the header', () => {
+    assert.throws(() => runners.start('levelgen', undefined), {
+      message: 'Wait: the hub is changing this folder right now (Fix the header). Start LevelGen when it is done.',
+    });
+    assert.equal(spawned.length, 0);
+  });
+  runners.start('levelgen', undefined);
+  assert.equal(spawned.length, 1);
 });
 
 test('the restart warning lists code updates, cards and runners that would be cut off', () => {

@@ -11,6 +11,7 @@ import type { Project } from './src/types/index';
 import { githubToken } from './github';
 import { addCodebase, findCodebase } from './updates';
 import { logActivity } from './activity';
+import { runnerHold } from './oneWriter';
 
 export const AZI_ROOT = process.env.AZI_ROOT || 'C:\\AZI';
 const KEYS_DIR = () => path.join(AZI_ROOT, 'Security', 'Keys');
@@ -498,6 +499,11 @@ export interface SyncResult {
 export async function syncProject(dir: string, commitMessage?: string): Promise<SyncResult> {
   const steps: Step[] = [];
   const add = (step: string, state: StepState, detail: string) => steps.push({ step, state, detail });
+  const held = runnerHold(dir, 'Sync');
+  if (held) {
+    add('Sync', 'fail', held);
+    return { ok: false, steps, secretsMoved: [], hint: held };
+  }
   const name = path.basename(dir);
   const fail = (reason: SyncReason, n = 0, secretsMoved: string[] = []): SyncResult => {
     const list = reason === 'uncommitted' ? changedFiles(dir) : undefined;
@@ -871,7 +877,9 @@ export async function runSyncAll(reason: 'manual' | 'start' | 'daily'): Promise<
     const notes = path.join(AZI_ROOT, 'NOTES_26');
     try {
       const from = path.join(AZI_ROOT, 'AI handoff');
-      if (fs.existsSync(from) && fs.existsSync(path.join(notes, '.git'))) fs.cpSync(from, path.join(notes, 'AI handoff'), { recursive: true });
+      if (fs.existsSync(from) && fs.existsSync(path.join(notes, '.git')) && !runnerHold(notes, 'Sync')) {
+        fs.cpSync(from, path.join(notes, 'AI handoff'), { recursive: true });
+      }
     } catch {}
     for (const dir of aziRepoDirs()) {
       // Repos without a GitHub remote have nothing to sync: skip them quietly when it runs by itself.
@@ -1006,6 +1014,8 @@ export function registerNewProjectRoutes(app: Express, getStore: () => Store, sa
     const dryRun = req.body?.dryRun === true;
     const key = path.resolve(dir).toLowerCase();
     if (!dryRun) {
+      const held = runnerHold(dir, 'Saving to GitHub');
+      if (held) return res.status(409).json({ error: held });
       if (syncBusy || commitPushBusy.has(key)) return res.status(409).json({ error: `${p.name} is already being synced or saved. Try again in a moment.` });
       commitPushBusy.add(key);
     }
@@ -1032,6 +1042,8 @@ export function registerNewProjectRoutes(app: Express, getStore: () => Store, sa
     const dryRun = req.body?.dryRun === true;
     const key = dir.toLowerCase();
     if (!dryRun) {
+      const held = runnerHold(dir, 'Saving to GitHub');
+      if (held) return res.status(409).json({ error: held });
       if (syncBusy || commitPushBusy.has(key)) return res.status(409).json({ error: `${cb.name} is already being synced or saved. Try again in a moment.` });
       commitPushBusy.add(key);
     }

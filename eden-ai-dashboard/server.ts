@@ -28,6 +28,7 @@ import { registerUsageGuard } from './usageGuard';
 import { registerUpdateRoutes } from './updates';
 import { registerRestartRoutes } from './restart';
 import { createRunners, registerRunnerRoutes } from './runners';
+import { setRunnerLookup } from './oneWriter';
 import { registerBusyRoutes } from './busy';
 import { registerOfflineRoutes } from './offline';
 import { registerKnowledgeRoutes } from './knowledge';
@@ -338,6 +339,7 @@ async function startServer() {
   // A restart stops running runners, so the restart warning lists them with the code updates and cards.
   registerRestartRoutes(app, () => runners?.runningNames() ?? []);
   if (runners) {
+    setRunnerLookup((dir) => runners.workingIn(dir));
     process.once('exit', runners.shutdown);
     registerRunnerRoutes(app, runners);
   }

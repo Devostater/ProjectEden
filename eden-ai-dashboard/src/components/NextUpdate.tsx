@@ -17,6 +17,7 @@ import { Wand2, Loader2, ChevronDown, ListPlus, Lightbulb, RefreshCw, X, Pencil,
 //   NextUpdate      – puts the pieces together in one card
 
 export interface CodebaseInfo {
+  runners?: string[];
   id: string;
   name: string;
   dir: string;

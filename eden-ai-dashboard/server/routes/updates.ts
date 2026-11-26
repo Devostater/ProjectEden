@@ -11,6 +11,7 @@ import { applyWithRecovery } from '../../scripts/recover.mjs';
 import { mayOverrideUpdateCheck, updateCheckIssue } from '../../updateReleaseGate';
 import { codebaseAI, DEFAULT_PROOF_MINUTES } from '../../codebaseSettings';
 import { proofIssue } from '../../proof';
+import { applying, runnerHold, runnersWorkingIn } from '../../oneWriter';
 import type { UpdateRouteServices, UpdateJob } from '../../updates';
 
 const LOCKED = 'Code updates are only available on the computer running the hub.';
@@ -65,7 +66,7 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
         const ok = fs.existsSync(c.dir);
         return {
           id: c.id, name: c.name, dir: c.dir, check: c.check, restartHint: c.restartHint, ai: codebaseAI(c), unreal: c.unreal,
-          ok, uncommitted: ok ? uncommittedNow(c) : undefined,
+          ok, uncommitted: ok ? uncommittedNow(c) : undefined, runners: runnersWorkingIn(c.dir),
           proof: c.proof, proofMinutes: c.proofMinutes ?? DEFAULT_PROOF_MINUTES, packageFiles: c.packageFiles, package: ok && c.packageFiles ? packageNow(c) : undefined,
         };
       }),
@@ -153,6 +154,8 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
     const cb = job && findCodebase(job.codebaseId);
     if (!job || !job.diff || !cb) return res.status(404).json({ error: 'Update not found.' });
     if (job.status !== 'ready' && job.status !== 'undone') return res.status(400).json({ error: 'This update has already been dealt with.' });
+    const held = runnerHold(cb.dir, 'Apply');
+    if (held) return res.status(409).json({ error: held });
     const checkIssue = updateCheckIssue(cb.id, job.check);
     if (checkIssue && !mayOverrideUpdateCheck(isLocal(req), req.body?.overrideChecks)) {
       return res.status(409).json({ error: `${checkIssue} Applying anyway requires explicit confirmation on the owner PC.` });
@@ -181,51 +184,54 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
     } catch (err: any) {
       return doesNotFit(err);
     }
-    holdForApply(); // Eden projects pause while the real code changes, and resume by themselves shortly after
-    // A restore point comes first: nothing is applied unless it was saved. For the hub that is also a full backup.
-    const ref = `refs/eden-restore/${job.id}`;
-    let restore: NonNullable<UpdateJob['restore']>;
-    try {
-      let backup: string | undefined;
-      if (cb.id === 'hub') {
-        runBackup(false);
-        try {
-          backup = git(['rev-parse', '--verify', '-q', `refs/heads/${BACKUP_BRANCH}`], repoRoot(cb)).trim();
-        } catch {}
-      }
-      const files = patchPaths(cb, job.diff);
-      restore = { ref, commit: saveRestorePoint(cb, files, ref, `Eden restore point before update ${job.id}`), files, backup, at: now() };
-    } catch (err: any) {
-      return res.status(500).json({ error: `Nothing was changed, because a restore point could not be saved first. (${err.message})` });
-    }
-    try {
-      const diff = job.diff;
-      if (cb.id === 'hub') {
-        const root = repoRoot(cb);
-        const paths = restore.files.map(file => path.relative(APP_DIR, path.resolve(root, file)).split(path.sep).join('/'));
-        applyWithRecovery(APP_DIR, job.id, restore.commit, paths, () => applyPatch(cb, diff));
-      } else {
-        applyPatch(cb, diff);
-      }
-    } catch (err: any) {
+    const diff = job.diff;
+    // While this runs, a runner for the same folder cannot be started (one writer per folder).
+    return applying(cb.dir, `Apply: ${job.request.replace(/\s+/g, ' ').trim().slice(0, 60)}`, () => {
+      holdForApply(); // Eden projects pause while the real code changes, and resume by themselves shortly after
+      // A restore point comes first: nothing is applied unless it was saved. For the hub that is also a full backup.
+      const ref = `refs/eden-restore/${job.id}`;
+      let restore: NonNullable<UpdateJob['restore']>;
       try {
-        git(['update-ref', '-d', ref], repoRoot(cb));
-      } catch {}
-      if (cb.id !== 'hub') return doesNotFit(err);
-      return res.status(500).json({ error: `Could not apply the hub update with offline recovery. (${err.message})` });
-    }
-    job.restore = restore;
-    job.status = 'applied';
-    if (checkIssue) job.log.push('Applied after the owner confirmed a release check override on the PC.');
-    delete job.stale;
-    delete job.olderBase;
-    delete job.olderBaseSameFiles;
-    recheckAfter(job, cb);
-    if (cb.id === 'hub' && job.needsRestart) services.markRestartPending();
-    save();
-    logActivity('done', `Code update applied (${cb.name}): ${job.request.slice(0, 80)}${job.needsRestart ? ` (${cb.restartHint} to finish)` : ''}`);
-    onApplied(job, cb);
-    res.json({ ok: true, needsRestart: !!job.needsRestart, restartHint: cb.restartHint });
+        let backup: string | undefined;
+        if (cb.id === 'hub') {
+          runBackup(false);
+          try {
+            backup = git(['rev-parse', '--verify', '-q', `refs/heads/${BACKUP_BRANCH}`], repoRoot(cb)).trim();
+          } catch {}
+        }
+        const files = patchPaths(cb, diff);
+        restore = { ref, commit: saveRestorePoint(cb, files, ref, `Eden restore point before update ${job.id}`), files, backup, at: now() };
+      } catch (err: any) {
+        return res.status(500).json({ error: `Nothing was changed, because a restore point could not be saved first. (${err.message})` });
+      }
+      try {
+        if (cb.id === 'hub') {
+          const root = repoRoot(cb);
+          const paths = restore.files.map(file => path.relative(APP_DIR, path.resolve(root, file)).split(path.sep).join('/'));
+          applyWithRecovery(APP_DIR, job.id, restore.commit, paths, () => applyPatch(cb, diff));
+        } else {
+          applyPatch(cb, diff);
+        }
+      } catch (err: any) {
+        try {
+          git(['update-ref', '-d', ref], repoRoot(cb));
+        } catch {}
+        if (cb.id !== 'hub') return doesNotFit(err);
+        return res.status(500).json({ error: `Could not apply the hub update with offline recovery. (${err.message})` });
+      }
+      job.restore = restore;
+      job.status = 'applied';
+      if (checkIssue) job.log.push('Applied after the owner confirmed a release check override on the PC.');
+      delete job.stale;
+      delete job.olderBase;
+      delete job.olderBaseSameFiles;
+      recheckAfter(job, cb);
+      if (cb.id === 'hub' && job.needsRestart) services.markRestartPending();
+      save();
+      logActivity('done', `Code update applied (${cb.name}): ${job.request.slice(0, 80)}${job.needsRestart ? ` (${cb.restartHint} to finish)` : ''}`);
+      onApplied(job, cb);
+      res.json({ ok: true, needsRestart: !!job.needsRestart, restartHint: cb.restartHint });
+    });
   });
 
   app.post('/api/updates/:id/undo', (req, res) => {
@@ -234,6 +240,8 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
     const job = jobs.find((j) => j.id === req.params.id);
     const cb = job && findCodebase(job.codebaseId);
     if (!job || !job.diff || !cb || job.status !== 'applied') return res.status(400).json({ error: 'Only an applied update can be undone.' });
+    const held = runnerHold(cb.dir, 'Undo');
+    if (held) return res.status(409).json({ error: held });
     if (job.restore) {
       // Put every file back as it was before Apply. What the files look like right now is saved first,
       // so even changes made on top of this update afterwards can be found again.

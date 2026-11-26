@@ -9,4 +9,5 @@ export const ui = {
   btnPrimary: 'inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-40',
   chip: 'inline-flex h-8 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium',
   empty: 'text-sm text-slate-500 dark:text-slate-400',
+  warning: 'text-sm text-amber-700 dark:text-amber-300',
 } as const;

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import type { Express } from 'express';
 import { fromOwnPage, isLocal } from './server/localRequest';
+import { applyingIn, sameWorkFolder } from './oneWriter';
 
 interface Runner {
   id: string;
@@ -11,6 +12,7 @@ interface Runner {
   command: string;
   tasksFile?: string;
   logFile?: string;
+  lockFile?: string;
   needsClosed?: string[];
   args?: 'issueNumbers';
 }
@@ -116,13 +118,51 @@ function killTree(pid: number) {
   }
 }
 
-export function createRunners(appDir: string, deps = { spawn, processNames, killTree }) {
+function lockProcessExists(pid: number, image?: string) {
+  try {
+    if (windows && image) {
+      const output = execFileSync(path.join(systemTools, 'tasklist.exe'), ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
+        windowsHide: true, encoding: 'utf8',
+      });
+      return output.split(/\r?\n/).some((line) => {
+        const fields = line.match(/^"([^"]*)","(\d+)"/);
+        return fields && Number(fields[2]) === pid && fields[1].toLowerCase() === image.toLowerCase();
+      });
+    }
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+export function createRunners(appDir: string, deps: {
+  spawn: typeof spawn; processNames: typeof processNames; killTree: typeof killTree; lockProcessExists?: typeof lockProcessExists;
+} = { spawn, processNames, killTree }) {
   const registry = path.join(appDir, '.eden-runners.json');
   const logDir = path.join(appDir, '.eden-logs', 'runners');
   const stateFile = path.join(logDir, 'state.json');
   const states = new Map<string, RunState>(Object.entries(readJson(stateFile, {})));
   const active = new Map<string, ChildProcess>();
   const stopping = new Set<string>();
+  const locks = new Map<string, { pid: number; image?: string; live: boolean; until: number }>();
+  const workDir = (runner: Runner) => path.resolve(appDir, expand(runner.cwd));
+
+  function liveLock(runner: Runner, cwd = workDir(runner)) {
+    if (!runner.lockFile) return false;
+    const file = path.resolve(cwd, expand(runner.lockFile));
+    let live = false;
+    try {
+      const lock = readJson(file, null);
+      if (!Number.isSafeInteger(lock?.pid) || lock.pid <= 0 || lock.pid > 2147483647) return false;
+      const image = typeof lock.image === 'string' ? lock.image : undefined;
+      const cached = locks.get(file);
+      if (cached && cached.until > Date.now() && cached.pid === lock.pid && cached.image === image) return cached.live;
+      live = (deps.lockProcessExists ?? lockProcessExists)(lock.pid, image);
+      locks.set(file, { live, until: Date.now() + 10_000, pid: lock.pid, image });
+    } catch {}
+    return live;
+  }
 
   function save() {
     fs.mkdirSync(logDir, { recursive: true });
@@ -139,7 +179,7 @@ export function createRunners(appDir: string, deps = { spawn, processNames, kill
     for (const runner of runners) {
       if (!runner || typeof runner.id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(runner.id) ||
           ids.has(runner.id) || !['name', 'cwd', 'command'].every((key) => typeof runner[key] === 'string' && runner[key].trim()) ||
-          !['tasksFile', 'logFile'].every((key) => runner[key] === undefined || typeof runner[key] === 'string') ||
+          !['tasksFile', 'logFile', 'lockFile'].every((key) => runner[key] === undefined || typeof runner[key] === 'string') ||
           (runner.args !== undefined && runner.args !== 'issueNumbers') ||
           (runner.needsClosed !== undefined && (!Array.isArray(runner.needsClosed) ||
             !runner.needsClosed.every((name: unknown) => typeof name === 'string' && name.trim())))) {
@@ -156,25 +196,24 @@ export function createRunners(appDir: string, deps = { spawn, processNames, kill
 
   function status(logId: unknown) {
     const { runners } = load();
-    return {
-      running: active.size,
-      runners: runners.map((runner) => {
-        const { id, name, args, tasksFile, logFile } = runner;
-        const cwd = path.resolve(appDir, expand(runner.cwd));
-        let progress: ReturnType<typeof readProgress> | undefined;
-        if (tasksFile) {
-          try { progress = readProgress(fs.readFileSync(path.resolve(cwd, expand(tasksFile)), 'utf8')); } catch {}
-        }
-        return {
-          id, name, args, progress, ...states.get(id),
-          state: stopping.has(id) ? 'Stopping' : states.get(id)?.state ?? 'Stopped',
-          ...(id === logId ? {
-            log: logTail(captureFile(id)),
-            projectLog: logFile ? logTail(path.resolve(cwd, expand(logFile))) : undefined,
-          } : {}),
-        };
-      }),
-    };
+    const rows = runners.map((runner) => {
+      const { id, name, args, tasksFile, logFile } = runner;
+      const cwd = workDir(runner);
+      const outside = !active.has(id) && liveLock(runner, cwd);
+      let progress: ReturnType<typeof readProgress> | undefined;
+      if (tasksFile) {
+        try { progress = readProgress(fs.readFileSync(path.resolve(cwd, expand(tasksFile)), 'utf8')); } catch {}
+      }
+      return {
+        id, name, args, progress, ...(outside ? undefined : states.get(id)),
+        state: outside ? 'Running outside the hub' : stopping.has(id) ? 'Stopping' : states.get(id)?.state ?? 'Stopped',
+        ...(id === logId ? {
+          log: logTail(captureFile(id)),
+          projectLog: logFile ? logTail(path.resolve(cwd, expand(logFile))) : undefined,
+        } : {}),
+      };
+    });
+    return { running: active.size + rows.filter((row) => row.state === 'Running outside the hub').length, runners: rows };
   }
 
   function start(id: string, args: unknown) {
@@ -182,7 +221,13 @@ export function createRunners(appDir: string, deps = { spawn, processNames, kill
     const runner = runners.find((entry) => entry.id === id);
     if (!runner) throw new Error('Runner not found.');
     if (active.has(id)) throw new Error('This runner is already running.');
+    const cwd = workDir(runner);
+    const label = applyingIn(cwd);
+    if (label !== undefined) throw new Error(`Wait: the hub is changing this folder right now (${label}). Start ${runner.name} when it is done.`);
+    if (liveLock(runner, cwd)) throw new Error(`${runner.name} is already running outside the hub. Stop it where it was started.`);
     if (active.size >= maxRunners) throw new Error(`Only ${maxRunners} runners can run at once.`);
+    const working = workingIn(cwd);
+    if (working.length) throw new Error(`Wait for ${working.join(', ')} to finish working in this folder before starting ${runner.name}.`);
     if (runner.needsClosed?.length) {
       const running = new Set(deps.processNames());
       const blocked = runner.needsClosed.find((name) => running.has(name.trim().toLowerCase()));
@@ -204,7 +249,7 @@ export function createRunners(appDir: string, deps = { spawn, processNames, kill
       try {
         fs.writeSync(fd, `\n--- Started ${startedAt} ---\n`);
         const child = deps.spawn(process.execPath, ['-e', watchHub, '--', command, taskkill], {
-          cwd: path.resolve(appDir, expand(runner.cwd)), windowsHide: true,
+          cwd, windowsHide: true,
           detached: !windows, stdio: ['ignore', fd, fd, 'ipc'],
         });
         active.set(id, child);
@@ -231,6 +276,10 @@ export function createRunners(appDir: string, deps = { spawn, processNames, kill
   function stop(id: string) {
     if (stopping.has(id)) return;
     const child = active.get(id);
+    if (!child) {
+      const runner = load().runners.find((entry) => entry.id === id);
+      if (runner && liveLock(runner)) throw new Error(`${runner.name} was started outside the hub. Stop it where it was started.`);
+    }
     if (!child?.pid) throw new Error('This runner has no running process.');
     deps.killTree(child.pid);
     stopping.add(id);
@@ -249,8 +298,18 @@ export function createRunners(appDir: string, deps = { spawn, processNames, kill
     return [...active.keys()].map((id) => names.get(id) || id);
   }
 
+  function workingIn(dir: string) {
+    return load().runners
+      .filter((runner) => {
+        const cwd = workDir(runner);
+        // Working first (cheap), the folder second: comparing folders can ask git.
+        return (active.has(runner.id) || liveLock(runner, cwd)) && sameWorkFolder(dir, cwd);
+      })
+      .map((runner) => runner.name);
+  }
+
   return {
-    status, start, stop, runningNames,
+    status, start, stop, runningNames, workingIn,
     shutdown() {
       for (const [id, child] of active) {
         if (!child.pid) continue;

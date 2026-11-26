@@ -18,6 +18,7 @@ const unrealToolsLabel: Record<UnrealToolsStatus, string> = {
 };
 import { diagnose, applyFix, canFix, planFixAll, retryCodeAI, type Fix } from '../updateFixes.ts';
 import { notSignedIn } from '../../codebaseSettings';
+import { runnerHoldText } from '../runnerHoldText';
 import { markUpdatesSeen, refreshUpdatesFeed } from '../readyUpdates.ts';
 import { updateCheckIssue, type UpdateCheck } from '../../updateReleaseGate.ts';
 
@@ -365,8 +366,13 @@ export const UpdatesView: React.FC = () => {
   };
 
   const readyWithDiff = jobs.filter((j) => j.status === 'ready' && j.hasDiff);
-  const applyable = readyWithDiff.filter((j) => !j.proofIssue && !j.proofRunning && !updateCheckIssue(j.codebaseId || 'hub', j.check)).reverse();
-  const skippedChecks = readyWithDiff.length - applyable.length;
+  const holdForJob = (job: Job, what: 'Apply' | 'Undo') =>
+    runnerHoldText(codebases.find((c) => c.id === (job.codebaseId || 'hub'))?.runners ?? [], what);
+  const checked = readyWithDiff.filter((j) => !j.proofIssue && !j.proofRunning && !updateCheckIssue(j.codebaseId || 'hub', j.check));
+  const applyable = checked.filter((j) => !holdForJob(j, 'Apply')).reverse();
+  const skippedChecks = readyWithDiff.length - checked.length;
+  const confirmApplyHold = confirmApply && holdForJob(confirmApply, 'Apply');
+  const confirmUndoHold = confirmUndo && holdForJob(confirmUndo, 'Undo');
   const confirmOverride = !!confirmApply && !!updateCheckIssue(confirmApply.codebaseId || 'hub', confirmApply.check);
 
   // Applies them one at a time through the same safe route as the single button (each saves its own restore point).
@@ -657,6 +663,8 @@ export const UpdatesView: React.FC = () => {
           const fix = diagnose(job, jobs, Date.now(), codebases);
           const fixReady = fix && canFix(job, fix, claudeReady, codexReady, codebases);
           const canApply = (job.status === 'ready' || job.status === 'undone') && job.hasDiff;
+          const canUndo = job.status === 'applied' && job.hasDiff;
+          const runnerHold = canApply ? holdForJob(job, 'Apply') : canUndo ? holdForJob(job, 'Undo') : '';
           const checkIssue = canApply ? updateCheckIssue(job.codebaseId || 'hub', job.check) : undefined;
           const codebase = codebases.find((c) => c.id === (job.codebaseId || 'hub'));
           // Two or more updates waiting for review share one row in Active. Press it to see them one by one.
@@ -854,6 +862,7 @@ export const UpdatesView: React.FC = () => {
                     // When the red box above already gives this reason, it is not said twice.
                     <p className={ui.empty}>{job.proof && !job.proof.ok && job.proofIssue === proofFailedText(job.proof) ? '' : `${job.proofIssue} `}Apply waits until the proof has passed.</p>
                   )}
+                  {runnerHold && <p className={ui.warning}>{runnerHold}</p>}
                   {job.status === 'applied' && <PackageWarning codebase={codebase} applied />}
 
                   {job.needsRestart && job.status === 'ready' && (
@@ -882,15 +891,15 @@ export const UpdatesView: React.FC = () => {
                     {canApply && (!remote || !checkIssue) && (
                       <button
                         onClick={() => (remote || checkIssue ? setConfirmApply(job) : act(job, 'apply'))}
-                        disabled={acting === job.id || !!job.proofIssue || !!job.proofRunning}
-                        title={job.proofIssue}
+                        disabled={acting === job.id || !!job.proofIssue || !!job.proofRunning || !!runnerHold}
+                        title={runnerHold || job.proofIssue}
                         className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${checkIssue ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
                       >
                         <Check className="h-4 w-4" /> {checkIssue ? 'Review override' : 'Apply to the app'}
                       </button>
                     )}
-                    {job.status === 'applied' && job.hasDiff && (
-                      <button onClick={() => setConfirmUndo(job)} disabled={acting === job.id} className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+                    {canUndo && (
+                      <button onClick={() => setConfirmUndo(job)} disabled={acting === job.id || !!runnerHold} title={runnerHold || undefined} className={ui.btn}>
                         <RotateCcw className="h-4 w-4" /> Undo
                       </button>
                     )}
@@ -941,13 +950,16 @@ export const UpdatesView: React.FC = () => {
               <button autoFocus onClick={() => setConfirmApply(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
                 Not yet
               </button>
+              {confirmApplyHold && <p className={ui.warning}>{confirmApplyHold}</p>}
               <button
+                disabled={!!confirmApplyHold}
+                title={confirmApplyHold || undefined}
                 onClick={() => {
                   const job = confirmApply;
                   setConfirmApply(null);
                   act(job, 'apply', confirmOverride);
                 }}
-                className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white ${confirmOverride ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
+                className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${confirmOverride ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
               >
                 <Check className="h-4 w-4" /> {confirmOverride ? 'Apply anyway' : 'Yes, apply it'}
               </button>
@@ -1020,7 +1032,7 @@ export const UpdatesView: React.FC = () => {
               <button autoFocus onClick={() => setConfirmAll(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
                 Not yet
               </button>
-              <button onClick={applyAll} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+              <button onClick={applyAll} disabled={!applyable.length} className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50">
                 <Check className="h-4 w-4" /> Yes, apply them all
               </button>
             </div>
@@ -1052,13 +1064,16 @@ export const UpdatesView: React.FC = () => {
               <button autoFocus onClick={() => setConfirmUndo(null)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
                 Keep it
               </button>
+              {confirmUndoHold && <p className={ui.warning}>{confirmUndoHold}</p>}
               <button
+                disabled={!!confirmUndoHold}
+                title={confirmUndoHold || undefined}
                 onClick={() => {
                   const job = confirmUndo;
                   setConfirmUndo(null);
                   act(job, 'undo');
                 }}
-                className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-500"
+                className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-500 disabled:opacity-50"
               >
                 <RotateCcw className="h-4 w-4" /> Yes, undo it
               </button>
