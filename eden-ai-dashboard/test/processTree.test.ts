@@ -40,3 +40,25 @@ test('stopping a job started through a shell also stops the work it started', as
   for (let i = 0; i < 100 && running(worker); i++) await delay(50);
   assert.equal(running(worker), false, 'the work was still running after the job was stopped');
 });
+
+// While the hub closes there is no "a moment later": with `wait` the work must be gone when the call returns.
+// (Only Windows needs the wait; elsewhere the stop is immediate already.)
+test('stopping with wait has ended the work by the time it returns', { skip: process.platform !== 'win32' }, async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eden-tree-'));
+  let worker = 0;
+  t.after(() => {
+    if (worker && running(worker)) process.kill(worker);
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  });
+  const script = path.join(dir, 'work.js');
+  fs.writeFileSync(script, 'console.log(process.pid); setTimeout(() => {}, 60000);');
+  const child = spawn(`"${process.execPath}" "${script}"`, { shell: true, windowsHide: true });
+  let said = '';
+  child.stdout.on('data', (d) => (said += d));
+  for (let i = 0; i < 100 && !/\d+\s/.test(said); i++) await delay(50);
+  worker = Number(said.trim());
+  assert.ok(worker > 0, `the work did not start: "${said}"`);
+
+  stopProcessTree(child, { wait: true });
+  assert.equal(running(worker), false, 'the work was still running when the stop returned');
+});

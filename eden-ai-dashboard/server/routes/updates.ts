@@ -9,7 +9,8 @@ import { mayManage, mayView } from '../../permissions';
 import { cliSignedIn } from '../../providers';
 import { applyWithRecovery } from '../../scripts/recover.mjs';
 import { mayOverrideUpdateCheck, updateCheckIssue } from '../../updateReleaseGate';
-import { codebaseAI } from '../../codebaseSettings';
+import { codebaseAI, DEFAULT_PROOF_MINUTES } from '../../codebaseSettings';
+import { proofIssue } from '../../proof';
 import type { UpdateRouteServices, UpdateJob } from '../../updates';
 
 const LOCKED = 'Code updates are only available on the computer running the hub.';
@@ -17,6 +18,7 @@ const LOCKED = 'Code updates are only available on the computer running the hub.
 export function registerUpdateRoutes(app: Express, services: UpdateRouteServices) {
   const {
     jobs, codebases, findCodebase, uncommittedNow, runBackup, requestCodeUpdate, addCodebase, setCodebaseSettings,
+    currentHead, headNow, packageNow, startProofAgain, stopProof,
     save, startRetry, git, repoRoot, patchPaths, saveRestorePoint, applyPatch, recheckAfter, restoreFromPoint, now,
     onApplied, appDir: APP_DIR, backupBranch: BACKUP_BRANCH,
   } = services;
@@ -51,10 +53,21 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
     const estimateMs = took.length ? took[Math.floor(took.length / 2)] : 8 * 60 * 1000;
     res.json({
       estimateMs,
-      jobs: [...jobs].reverse().map(({ diff, restore, ...rest }) => ({ ...rest, hasDiff: !!diff, hasRestorePoint: !!restore, codebaseName: findCodebase(rest.codebaseId)?.name || rest.codebaseId })),
+      jobs: [...jobs].reverse().map(({ diff, restore, ...rest }) => {
+        const cb = findCodebase(rest.codebaseId);
+        const issue = diff && (rest.status === 'ready' || rest.status === 'undone')
+          ? proofIssue({ proof: cb?.proof, job: rest, head: cb?.proof ? headNow(cb) : undefined })
+            || (rest.proofRunning ? 'The proof is still running.' : undefined)
+          : undefined;
+        return { ...rest, hasDiff: !!diff, hasRestorePoint: !!restore, codebaseName: cb?.name || rest.codebaseId, proofIssue: issue };
+      }),
       codebases: codebases.map((c) => {
         const ok = fs.existsSync(c.dir);
-        return { id: c.id, name: c.name, dir: c.dir, check: c.check, restartHint: c.restartHint, ai: codebaseAI(c), unreal: c.unreal, ok, uncommitted: ok ? uncommittedNow(c) : undefined };
+        return {
+          id: c.id, name: c.name, dir: c.dir, check: c.check, restartHint: c.restartHint, ai: codebaseAI(c), unreal: c.unreal,
+          ok, uncommitted: ok ? uncommittedNow(c) : undefined,
+          proof: c.proof, proofMinutes: c.proofMinutes ?? DEFAULT_PROOF_MINUTES, packageFiles: c.packageFiles, package: ok && c.packageFiles ? packageNow(c) : undefined,
+        };
       }),
       busy: services.busy,
       claudeReady: cliSignedIn('anthropic'),
@@ -106,10 +119,31 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
     if (!isLocal(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'Codebase settings can only be changed from the hub on this computer.' });
     try {
       const cb = setCodebaseSettings(req.params.id, req.body);
-      res.json({ ok: true, codebase: { id: cb.id, ai: codebaseAI(cb), unreal: cb.unreal === true } });
+      res.json({ ok: true, codebase: { id: cb.id, ai: codebaseAI(cb), unreal: cb.unreal === true, proof: cb.proof, proofMinutes: cb.proofMinutes ?? DEFAULT_PROOF_MINUTES, packageFiles: cb.packageFiles } });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
+  });
+
+  app.post('/api/updates/:id/proof', (req, res) => {
+    const denied = guard(req);
+    if (denied) return res.status(403).json({ error: denied });
+    const job = jobs.find((j) => j.id === req.params.id);
+    const cb = job && findCodebase(job.codebaseId);
+    if (!job || !cb) return res.status(404).json({ error: 'Update not found.' });
+    if (!job.diff || (job.status !== 'ready' && job.status !== 'undone')) return res.status(400).json({ error: 'Only a finished update with changes can run the proof again.' });
+    if (!cb.proof) return res.status(400).json({ error: 'This codebase has no proof command.' });
+    if (services.busy) return res.status(409).json({ error: 'Another update is running. Run the proof again when it has finished.' });
+    startProofAgain(job, cb, cb.proof);
+    res.json({ ok: true });
+  });
+
+  app.post('/api/updates/:id/proof/stop', (req, res) => {
+    const denied = guard(req);
+    if (denied) return res.status(403).json({ error: denied });
+    const job = jobs.find((j) => j.id === req.params.id);
+    if (!job || !stopProof(job)) return res.status(400).json({ error: 'There is no proof running for this update.' });
+    res.json({ ok: true });
   });
 
   app.post('/api/updates/:id/apply', (req, res) => {
@@ -123,6 +157,9 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
     if (checkIssue && !mayOverrideUpdateCheck(isLocal(req), req.body?.overrideChecks)) {
       return res.status(409).json({ error: `${checkIssue} Applying anyway requires explicit confirmation on the owner PC.` });
     }
+    const issue = proofIssue({ proof: cb.proof, job, head: cb.proof ? currentHead(cb) : undefined })
+      || (job.proofRunning ? 'The proof is still running.' : undefined);
+    if (issue) return res.status(409).json({ error: `${issue} Apply is waiting for the proof.` });
     const doesNotFit = (err: any) => {
       job.stale = true; // lets "Try again" start a fresh update on the current code
       save();
@@ -234,6 +271,7 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
     if (denied) return res.status(403).json({ error: denied });
     const job = jobs.find((j) => j.id === req.params.id);
     if (!job) return res.status(404).json({ error: 'Update not found.' });
+    if (job.proofRunning) return res.status(409).json({ error: 'Wait for the proof to finish, or stop it first.' });
     // Stale (no longer fits) or made on older code (fits, but another update changed the same files after its checks).
     const noLongerFits = (!!job.stale || !!job.olderBase) && (job.status === 'ready' || job.status === 'undone');
     // A finished update whose checks failed can be redone in one step ("Ask the AI to fix it"): like every retry,
@@ -284,6 +322,7 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
     if (denied) return res.status(403).json({ error: denied });
     const job = jobs.find((j) => j.id === req.params.id);
     if (!job) return res.status(404).json({ error: 'Update not found.' });
+    if (job.proofRunning) return res.status(409).json({ error: 'Wait for the proof to finish, or stop it first.' });
     if (job.status === 'applied') return res.status(400).json({ error: 'Undo it first.' });
     if (job.status === 'working' || job.status === 'checking') return res.status(409).json({ error: 'Wait for it to finish first.' });
     job.status = 'discarded';

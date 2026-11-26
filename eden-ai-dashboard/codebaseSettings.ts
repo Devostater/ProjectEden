@@ -1,11 +1,12 @@
 export type CodeAI = 'claude' | 'codex';
-type CodebaseSettings = { ai?: CodeAI; unreal?: boolean };
+export const DEFAULT_PROOF_MINUTES = 30;
+export type CodebaseSettings = { ai?: CodeAI; unreal?: boolean; proof?: string; proofMinutes?: number; packageFiles?: string };
 
 export function codebaseAI(cb: { ai?: unknown }): CodeAI {
   return cb.ai === 'codex' ? 'codex' : 'claude';
 }
 
-export function readSettings(input: unknown): CodebaseSettings {
+export function readSettings(input: unknown, id?: string): CodebaseSettings {
   if (!input || typeof input !== 'object') return {};
   const settings: CodebaseSettings = {};
   if ('ai' in input) {
@@ -15,6 +16,26 @@ export function readSettings(input: unknown): CodebaseSettings {
   if ('unreal' in input) {
     if (typeof input.unreal !== 'boolean') throw new Error('The Unreal project setting must be on or off.');
     settings.unreal = input.unreal;
+  }
+  if ('proof' in input) {
+    if (typeof input.proof !== 'string' || /[\r\n\0\u2028\u2029]/.test(input.proof) || input.proof.trim().length > 500) {
+      throw new Error('Enter a proof command on one line, up to 500 characters.');
+    }
+    settings.proof = input.proof.trim() || undefined;
+    if (id === 'hub' && settings.proof) throw new Error('The hub uses its type check, tests and build as its proof.');
+  }
+  if ('proofMinutes' in input) {
+    if (input.proofMinutes === '') settings.proofMinutes = undefined;
+    else if (typeof input.proofMinutes === 'number' && Number.isInteger(input.proofMinutes) && input.proofMinutes >= 1 && input.proofMinutes <= 240) {
+      settings.proofMinutes = input.proofMinutes;
+    } else throw new Error('Enter a time limit from 1 to 240 whole minutes.');
+  }
+  if ('packageFiles' in input) {
+    const value = typeof input.packageFiles === 'string' ? input.packageFiles.trim() : null;
+    if (value === null || value.length > 200 || /[<>:"?|\x00-\x1f]|\.\./.test(value) || /^[\\/]|[\\/]$/.test(value) || /\*.*[\\/]|\*.*\*/.test(value)) {
+      throw new Error('Enter an upload package path within this folder, up to 200 characters, with at most one * in the file name.');
+    }
+    settings.packageFiles = value || undefined;
   }
   return settings;
 }

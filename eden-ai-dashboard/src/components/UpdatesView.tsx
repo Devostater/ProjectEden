@@ -4,7 +4,10 @@ import { picksAsText, clearPicks } from '../picker.ts';
 import { api } from '../api.ts';
 import { Wand2, Loader2, CheckCircle2, XCircle, RotateCcw, Check, Trash2, ChevronDown, AlertTriangle, FileCode, RefreshCw, Lock, Wrench, ArrowUp, ArrowDown, ChevronsUp, RotateCw } from 'lucide-react';
 import { Formatted } from './ChatView.tsx';
-import { NextUpdate, type CodebaseInfo } from './NextUpdate.tsx';
+import { NextUpdate, PackageWarning, type CodebaseInfo } from './NextUpdate.tsx';
+import { FoldHeader } from './Foldable.tsx';
+import { ui } from '../ui.ts';
+import type { ProofResult } from '../../proof';
 import type { UnrealToolsStatus } from '../../unrealUpdate';
 
 const unrealToolsLabel: Record<UnrealToolsStatus, string> = {
@@ -30,6 +33,10 @@ interface Job {
   lastAiMessage?: string; // the last thing the AI said in words (already included in the error text when nothing changed)
   files?: { path: string; added: number; removed: number }[];
   check?: UpdateCheck;
+  proof?: ProofResult;
+  proofIssue?: string;
+  proofRunning?: boolean;
+  proofStartedAt?: string;
   needsRestart?: boolean;
   error?: string;
   hasDiff?: boolean;
@@ -47,6 +54,38 @@ interface Job {
   retriedAs?: string; // "Try again" was pressed: the newer update that took its place
   autoRetry?: boolean; // the hub re-made it by itself because the earlier one no longer fit (only done once)
   local?: boolean; // ran on an AI on this PC instead of your Claude plan
+}
+
+const resultBox = (ok: boolean) => `flex items-start gap-2 rounded-lg px-3 py-2 text-sm ${ok ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200' : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200'}`;
+
+// Why a proof did not pass, in the same words the hub uses when it holds Apply for it.
+const proofFailedText = (proof: ProofResult) => (proof.stopped ? 'The proof was stopped.' : proof.timedOut ? 'The proof ran out of time.' : 'The proof did not pass.');
+
+function ProofReview({ proof }: { proof: ProofResult }) {
+  const [folded, setFolded] = useState(true);
+  const log = <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-xs">{proof.output}</pre>;
+  return (
+    <>
+      <div className={resultBox(proof.ok)}>
+        {proof.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+        <div className="min-w-0">
+          {proof.ok ? (
+            <>
+              <p className="break-all">Proof passed: {proof.command}</p>
+              <FoldHeader title={folded ? 'Show the log' : 'Hide the log'} folded={folded} onToggle={() => setFolded(!folded)} />
+              {!folded && log}
+            </>
+          ) : (
+            <>
+              {proofFailedText(proof)}
+              {log}
+            </>
+          )}
+        </div>
+      </div>
+      {!!proof.touches?.length && <p className="break-words text-sm text-amber-700 dark:text-amber-300">This change also edits the proof script itself ({proof.touches.join(', ')}). Read that part of the change before you trust the result.</p>}
+    </>
+  );
 }
 
 const unsavedNote = (n: number) => `Based on your current files, including ${n} not yet saved to GitHub`;
@@ -266,7 +305,7 @@ export const UpdatesView: React.FC = () => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
-      await load();
+      if (!document.hidden) await load();
       if (alive) timer = setTimeout(tick, live.current ? 2000 : 8000);
     };
     tick();
@@ -276,7 +315,7 @@ export const UpdatesView: React.FC = () => {
     };
   }, []);
 
-  const running = jobs.some((j) => j.status === 'queued' || j.status === 'working' || j.status === 'checking');
+  const running = jobs.some((j) => j.proofRunning || j.status === 'queued' || j.status === 'working' || j.status === 'checking');
   useEffect(() => {
     if (!running) return;
     setClock(Date.now());
@@ -301,13 +340,13 @@ export const UpdatesView: React.FC = () => {
     }
   };
 
-  const act = async (job: Job, action: 'apply' | 'undo' | 'discard', overrideChecks = false) => {
+  const act = async (job: Job, action: 'apply' | 'undo' | 'discard' | 'proof' | 'proof/stop', overrideChecks = false) => {
     setError('');
     setNote('');
     setActing(job.id);
     try {
       const d = await post(`/api/updates/${job.id}/${action}`, overrideChecks ? { overrideChecks: true } : undefined);
-      if (action !== 'discard') {
+      if (action === 'apply' || action === 'undo') {
         const hub = (job.codebaseId || 'hub') === 'hub';
         setNote(
           d.needsRestart
@@ -326,7 +365,7 @@ export const UpdatesView: React.FC = () => {
   };
 
   const readyWithDiff = jobs.filter((j) => j.status === 'ready' && j.hasDiff);
-  const applyable = readyWithDiff.filter((j) => !updateCheckIssue(j.codebaseId || 'hub', j.check)).reverse();
+  const applyable = readyWithDiff.filter((j) => !j.proofIssue && !j.proofRunning && !updateCheckIssue(j.codebaseId || 'hub', j.check)).reverse();
   const skippedChecks = readyWithDiff.length - applyable.length;
   const confirmOverride = !!confirmApply && !!updateCheckIssue(confirmApply.codebaseId || 'hub', confirmApply.check);
 
@@ -545,7 +584,7 @@ export const UpdatesView: React.FC = () => {
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
             <span className="min-w-0 flex-1">
               {applyable.length} updates are ready to apply.
-              {skippedChecks > 0 && ` ${skippedChecks} with check issues need individual review.`}
+              {skippedChecks > 0 && ` ${skippedChecks} with check or proof issues need individual review.`}
             </span>
             <button
               onClick={() => setConfirmAll(true)}
@@ -619,6 +658,7 @@ export const UpdatesView: React.FC = () => {
           const fixReady = fix && canFix(job, fix, claudeReady, codexReady, codebases);
           const canApply = (job.status === 'ready' || job.status === 'undone') && job.hasDiff;
           const checkIssue = canApply ? updateCheckIssue(job.codebaseId || 'hub', job.check) : undefined;
+          const codebase = codebases.find((c) => c.id === (job.codebaseId || 'hub'));
           // Two or more updates waiting for review share one row in Active. Press it to see them one by one.
           const readyJobs = jobs.filter((j) => j.status === 'ready');
           const grouped = tab === 'active' && job.status === 'ready' && readyJobs.length > 1;
@@ -793,7 +833,7 @@ export const UpdatesView: React.FC = () => {
 
                   {checkIssue && job.check?.ok !== false && <p className="text-sm text-red-600 dark:text-red-400">{checkIssue}</p>}
                   {job.check && (!checkIssue || !job.check.ok) && (
-                    <div className={`flex items-start gap-2 rounded-lg px-3 py-2 text-sm ${job.check.ok ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200' : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-200'}`}>
+                    <div className={resultBox(job.check.ok)}>
                       {job.check.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}
                       <div className="min-w-0">
                         {job.check.ok ? 'Checks passed.' : 'Checks failed. Applying anyway requires confirmation on the owner PC.'}
@@ -801,6 +841,20 @@ export const UpdatesView: React.FC = () => {
                       </div>
                     </div>
                   )}
+
+                  {job.proofRunning ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className={ui.empty}>Running the proof… {job.proofStartedAt && duration(Math.max(0, clock - Date.parse(job.proofStartedAt)))}</p>
+                      <button className={ui.btn} disabled={acting === job.id} onClick={() => act(job, 'proof/stop')}>Stop the proof</button>
+                    </div>
+                  ) : job.proof ? <ProofReview key={job.proof.startedAt} proof={job.proof} /> : (
+                    job.check && codebase && codebase.id !== 'hub' && !codebase.proof && <p className={ui.empty}>No proof is set for {codebase.name}: only the general checks ran.</p>
+                  )}
+                  {job.proofIssue && !job.proofRunning && (
+                    // When the red box above already gives this reason, it is not said twice.
+                    <p className={ui.empty}>{job.proof && !job.proof.ok && job.proofIssue === proofFailedText(job.proof) ? '' : `${job.proofIssue} `}Apply waits until the proof has passed.</p>
+                  )}
+                  {job.status === 'applied' && <PackageWarning codebase={codebase} applied />}
 
                   {job.needsRestart && job.status === 'ready' && (
                     <p className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300">
@@ -822,10 +876,14 @@ export const UpdatesView: React.FC = () => {
                   )}
 
                   <div className="flex flex-wrap items-center gap-2">
+                    {job.proofIssue && !job.proofRunning && canApply && (
+                      <button className={ui.btn} disabled={acting === job.id || busy} onClick={() => act(job, 'proof')}>{job.proof ? 'Run proof again' : 'Run proof'}</button>
+                    )}
                     {canApply && (!remote || !checkIssue) && (
                       <button
                         onClick={() => (remote || checkIssue ? setConfirmApply(job) : act(job, 'apply'))}
-                        disabled={acting === job.id}
+                        disabled={acting === job.id || !!job.proofIssue || !!job.proofRunning}
+                        title={job.proofIssue}
                         className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50 ${checkIssue ? 'bg-red-600 hover:bg-red-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
                       >
                         <Check className="h-4 w-4" /> {checkIssue ? 'Review override' : 'Apply to the app'}
@@ -840,7 +898,7 @@ export const UpdatesView: React.FC = () => {
                     {(job.status === 'failed' || job.status === 'discarded' || checkIssue || ((job.stale || job.olderBase) && (job.status === 'ready' || job.status === 'undone'))) && !(fix && fix.action !== 'discard') && (
                       <button
                         onClick={() => retry(job)}
-                        disabled={acting === job.id || !(retryCodeAI(job, codebases) === 'codex' ? codexReady : claudeReady)}
+                        disabled={acting === job.id || !!job.proofRunning || !(retryCodeAI(job, codebases) === 'codex' ? codexReady : claudeReady)}
                         title={busy ? 'Another update is in progress, so this one will wait in the queue' : undefined}
                         className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
                       >
@@ -848,7 +906,7 @@ export const UpdatesView: React.FC = () => {
                       </button>
                     )}
                     {(job.status === 'queued' || job.status === 'ready' || job.status === 'undone' || job.status === 'failed') && (
-                      <button onClick={() => act(job, 'discard')} disabled={acting === job.id} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 hover:text-red-600 dark:hover:bg-slate-800">
+                      <button onClick={() => act(job, 'discard')} disabled={acting === job.id || !!job.proofRunning} className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100 hover:text-red-600 dark:hover:bg-slate-800">
                         <Trash2 className="h-4 w-4" /> {job.status === 'queued' ? 'Take out of the queue' : 'Discard'}
                       </button>
                     )}
@@ -956,7 +1014,7 @@ export const UpdatesView: React.FC = () => {
             </ul>
             <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
               They are applied one after another, oldest first. Each one saves its own restore point first, so you can still Undo any of them. If one no longer fits, it is skipped and the others carry on.
-              {skippedChecks > 0 && ` ${skippedChecks} with check issues need individual review.`}
+              {skippedChecks > 0 && ` ${skippedChecks} with check or proof issues need individual review.`}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button autoFocus onClick={() => setConfirmAll(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">

@@ -66,3 +66,18 @@ test('a Codex model error never offers a switch to Claude', () => {
   assert.notEqual(plan.plan[0].fix.action, 'retryClaude');
   assert.equal(planFixAll([localJob], Date.now(), true, false, codebases).blocked, 1);
 });
+test('proof settings trim, clear and validate the saved values', () => {
+  assert.deepEqual(readSettings({ proof: ' build.cmd ', proofMinutes: 240, packageFiles: ' dist\\*.zip ' }), {
+    proof: 'build.cmd', proofMinutes: 240, packageFiles: 'dist\\*.zip',
+  });
+  assert.deepEqual(readSettings({ proof: ' ', proofMinutes: '', packageFiles: '' }), {
+    proof: undefined, proofMinutes: undefined, packageFiles: undefined,
+  });
+  for (const proofMinutes of [0, 241, 1.5]) assert.throws(() => readSettings({ proofMinutes }), /1 to 240 whole minutes/);
+  for (const packageFiles of ['../a.zip', 'dist/**.zip', 'dist*/a.zip', 'C:\\a.zip', '/a.zip']) {
+    assert.throws(() => readSettings({ packageFiles }), /upload package path/);
+  }
+  assert.throws(() => readSettings({ proof: 'a\nb' }), /one line/);
+  assert.throws(() => readSettings({ proof: 'a'.repeat(501) }), /500 characters/);
+  assert.throws(() => readSettings({ proof: 'build.cmd' }, 'hub'), /type check, tests and build/);
+});
