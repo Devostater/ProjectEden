@@ -2,6 +2,10 @@
 // and one button that does the right thing for that kind of failure. "Fix all" runs the same buttons for every
 // failed update in one go (see UpdatesView).
 
+import { codebaseAI } from '../codebaseSettings';
+
+type FixCodebase = { id: string; ai?: unknown };
+
 export interface FixableJob {
   id: string;
   request: string;
@@ -16,6 +20,11 @@ export interface FixableJob {
   codex?: boolean;
   retriedAs?: string;
   codebaseId?: string;
+}
+
+export function retryCodeAI(job: FixableJob, codebases: FixCodebase[] = []) {
+  const cb = codebases.find((c) => c.id === (job.codebaseId || 'hub'));
+  return cb ? codebaseAI(cb) : job.codex ? 'codex' : 'claude';
 }
 
 // What the button does:
@@ -103,7 +112,7 @@ export const sameRequest = (a: string, b: string) => {
 
 // `jobs` is the whole list, newest first (as the hub sends it). Returns null when there is nothing to fix:
 // only failed updates, and finished ones whose checks failed (they wait in Active with "Apply anyway"), get a fix.
-export function diagnose(job: FixableJob, jobs: FixableJob[], now = Date.now()): Fix | null {
+export function diagnose(job: FixableJob, jobs: FixableJob[], now = Date.now(), codebases: FixCodebase[] = []): Fix | null {
   const checksFailed = job.status === 'ready' && !!job.check && !job.check.ok;
   if (job.status !== 'failed' && !checksFailed) return null;
   const err = whatWentWrong(job.error);
@@ -140,7 +149,7 @@ export function diagnose(job: FixableJob, jobs: FixableJob[], now = Date.now()):
     return { kind: 'claude-missing', reason: "Eden couldn't start Claude when this ran. That's fixed now, so it can simply run again.", action: 'retry', label: 'Run it again' };
   }
 
-  if (/unrecognized_model|model.*not (found|supported)|no AI on this PC/i.test(err)) {
+  if (!job.codex && retryCodeAI(job, codebases) === 'claude' && /unrecognized_model|model.*not (found|supported)|no AI on this PC/i.test(err)) {
     return { kind: 'local-model', reason: "The AI on this PC can't do code updates (its model isn't supported for this). Your Claude plan can.", action: 'retryClaude', label: 'Run it with Claude' };
   }
 
@@ -198,16 +207,16 @@ export async function applyFix(job: FixableJob, fix: Fix, post: (url: string, bo
   return d?.job?.id;
 }
 
-export const canFix = (job: FixableJob, fix: Fix, claudeReady: boolean, codexReady = false) =>
-  fix.action === 'discard' || (job.codex ? codexReady : claudeReady || (fix.action === 'retry' && job.local === true));
+export const canFix = (job: FixableJob, fix: Fix, claudeReady: boolean, codexReady = false, codebases: FixCodebase[] = []) =>
+  fix.action === 'discard' || (retryCodeAI(job, codebases) === 'codex' ? codexReady : claudeReady || (fix.action === 'retry' && job.local === true));
 
 // The plan "Fix all" shows before it runs: what happens to each failed update. `blocked` ones would run the AI
-// but can't right now (Claude isn't signed in), so Fix all leaves them and says so.
-export function planFixAll(jobs: FixableJob[], now = Date.now(), claudeReady = true, codexReady = false) {
+// but can't right now (the selected AI isn't signed in), so Fix all leaves them and says so.
+export function planFixAll(jobs: FixableJob[], now = Date.now(), claudeReady = true, codexReady = false, codebases: FixCodebase[] = []) {
   const plan = jobs
-    .map((j) => ({ job: j, fix: diagnose(j, jobs, now) }))
+    .map((j) => ({ job: j, fix: diagnose(j, jobs, now, codebases) }))
     .filter((p): p is { job: FixableJob; fix: Fix } => !!p.fix)
-    .map((p) => ({ ...p, blocked: p.fix.action !== 'wait' && !canFix(p.job, p.fix, claudeReady, codexReady) }));
+    .map((p) => ({ ...p, blocked: p.fix.action !== 'wait' && !canFix(p.job, p.fix, claudeReady, codexReady, codebases) }));
   const runs = plan.filter((p) => !p.blocked && (p.fix.action === 'retry' || p.fix.action === 'retryClaude' || p.fix.action === 'fixChecks'));
   return {
     plan,

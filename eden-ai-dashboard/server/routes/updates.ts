@@ -9,13 +9,14 @@ import { mayManage, mayView } from '../../permissions';
 import { cliSignedIn } from '../../providers';
 import { applyWithRecovery } from '../../scripts/recover.mjs';
 import { mayOverrideUpdateCheck, updateCheckIssue } from '../../updateReleaseGate';
+import { codebaseAI } from '../../codebaseSettings';
 import type { UpdateRouteServices, UpdateJob } from '../../updates';
 
 const LOCKED = 'Code updates are only available on the computer running the hub.';
 
 export function registerUpdateRoutes(app: Express, services: UpdateRouteServices) {
   const {
-    jobs, codebases, findCodebase, uncommittedNow, runBackup, requestCodeUpdate, addCodebase,
+    jobs, codebases, findCodebase, uncommittedNow, runBackup, requestCodeUpdate, addCodebase, setCodebaseSettings,
     save, startRetry, git, repoRoot, patchPaths, saveRestorePoint, applyPatch, recheckAfter, restoreFromPoint, now,
     onApplied, appDir: APP_DIR, backupBranch: BACKUP_BRANCH,
   } = services;
@@ -53,7 +54,7 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
       jobs: [...jobs].reverse().map(({ diff, restore, ...rest }) => ({ ...rest, hasDiff: !!diff, hasRestorePoint: !!restore, codebaseName: findCodebase(rest.codebaseId)?.name || rest.codebaseId })),
       codebases: codebases.map((c) => {
         const ok = fs.existsSync(c.dir);
-        return { id: c.id, name: c.name, dir: c.dir, check: c.check, restartHint: c.restartHint, unreal: c.unreal, ok, uncommitted: ok ? uncommittedNow(c) : undefined };
+        return { id: c.id, name: c.name, dir: c.dir, check: c.check, restartHint: c.restartHint, ai: codebaseAI(c), unreal: c.unreal, ok, uncommitted: ok ? uncommittedNow(c) : undefined };
       }),
       busy: services.busy,
       claudeReady: cliSignedIn('anthropic'),
@@ -77,7 +78,6 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
     if (!request) return res.status(400).json({ error: 'Describe what you want changed.' });
     try {
       const id = requestCodeUpdate(String(req.body?.codebaseId || 'hub'), request, typeof req.body?.cardId === 'string' ? req.body.cardId : undefined, req.body?.local === true, {
-        codex: req.body?.codex === true,
         allowUnrealChanges: req.body?.allowUnrealChanges === true,
       });
       res.json({ job: { id }, uncommitted: jobs.find((j) => j.id === id)?.uncommitted });
@@ -97,6 +97,16 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
     }
     try {
       res.json({ ok: true, id: addCodebase(name, dir) });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/codebases/:id/settings', (req, res) => {
+    if (!isLocal(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'Codebase settings can only be changed from the hub on this computer.' });
+    try {
+      const cb = setCodebaseSettings(req.params.id, req.body);
+      res.json({ ok: true, codebase: { id: cb.id, ai: codebaseAI(cb), unreal: cb.unreal === true } });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -291,7 +301,7 @@ function registerIdeaRoutes(app: Express, guard: (req: Request) => string, servi
     const set = ideaSet(cb.id);
     // Refresh by itself when the ideas are a day old (only while someone is looking at the page).
     const stale = !set.at || Date.now() - new Date(set.at).getTime() > IDEAS_MAX_AGE;
-    if (req.query.auto && stale && !set.running && !set.error && !isOffline() && cliSignedIn('anthropic')) generateIdeas(cb);
+    if (req.query.auto && codebaseAI(cb) === 'claude' && stale && !set.running && !set.error && !isOffline() && cliSignedIn('anthropic')) generateIdeas(cb);
     const { dismissed, ...rest } = set;
     res.json({ ...rest, running: ideaSet(cb.id).running });
   });

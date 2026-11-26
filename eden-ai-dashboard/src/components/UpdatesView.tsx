@@ -13,7 +13,8 @@ const unrealToolsLabel: Record<UnrealToolsStatus, string> = {
   closed: 'off (editor closed)',
   missing: 'off',
 };
-import { diagnose, applyFix, canFix, planFixAll, type Fix } from '../updateFixes.ts';
+import { diagnose, applyFix, canFix, planFixAll, retryCodeAI, type Fix } from '../updateFixes.ts';
+import { notSignedIn } from '../../codebaseSettings';
 import { markUpdatesSeen, refreshUpdatesFeed } from '../readyUpdates.ts';
 import { updateCheckIssue, type UpdateCheck } from '../../updateReleaseGate.ts';
 
@@ -100,7 +101,7 @@ const progressOf = (job: Job) => {
   let p = 5;
   for (const l of job.log.slice(restart + 1)) {
     if (l.startsWith('Making a separate copy')) p = Math.max(p, 15);
-    else if (l === 'Claude is working on the copy' || l.startsWith('Running on this PC')) p = Math.max(p, 50);
+    else if (l === 'Claude is working on the copy' || l === 'Codex is working on the copy' || l.startsWith('Running on this PC')) p = Math.max(p, 50);
     else if (l === 'Running the type check' || l === 'Checking the code and running the tests') p = Math.max(p, 85);
   }
   return job.status === 'checking' ? Math.max(p, 85) : p;
@@ -213,7 +214,7 @@ export const UpdatesView: React.FC = () => {
       const d = await res.json();
       await load();
       const list = d.jobs || [];
-      const plan = planFixAll(list, Date.now(), !!d.claudeReady, !!d.codexReady);
+      const plan = planFixAll(list, Date.now(), !!d.claudeReady, !!d.codexReady, d.codebases || []);
       const ready = list.filter((j: Job) => j.status === 'ready').length;
       const failed = list.filter((j: Job) => j.status === 'failed').length;
       const parts = [];
@@ -283,11 +284,12 @@ export const UpdatesView: React.FC = () => {
     return () => clearInterval(t);
   }, [running]);
 
-  const start = async (codex: boolean, allowUnrealChanges: boolean) => {
+  const start = async (allowUnrealChanges: boolean) => {
     setError('');
     setNote('');
     try {
-      const d = await post('/api/updates', { request: request + picksAsText(), codebaseId: target, local: !codex && onThisPc, codex, allowUnrealChanges });
+      const local = codebases.find((c) => c.id === target)?.ai !== 'codex' && onThisPc;
+      const d = await post('/api/updates', { request: request + picksAsText(), codebaseId: target, local, allowUnrealChanges });
       setRequest('');
       clearPicks();
       setOpenId(d.job.id);
@@ -417,7 +419,7 @@ export const UpdatesView: React.FC = () => {
     }
   };
 
-  const fixPlan = planFixAll(jobs, Date.now(), claudeReady, codexReady);
+  const fixPlan = planFixAll(jobs, Date.now(), claudeReady, codexReady, codebases);
   const fixAll = async () => {
     setConfirmFixAll(false);
     setError('');
@@ -586,6 +588,7 @@ export const UpdatesView: React.FC = () => {
         codexReady={codexReady}
         remote={remote}
         onStart={start}
+        onSettingsChanged={load}
         onAdded={async (id) => {
           setTarget(id);
           await load();
@@ -612,7 +615,8 @@ export const UpdatesView: React.FC = () => {
           const elapsed = runningNow ? Math.max(0, clock - new Date(since!).getTime()) : 0;
           const percent = progressOf(job);
           const overdue = job.status !== 'queued' && elapsed > estimateMs;
-          const fix = diagnose(job, jobs);
+          const fix = diagnose(job, jobs, Date.now(), codebases);
+          const fixReady = fix && canFix(job, fix, claudeReady, codexReady, codebases);
           const canApply = (job.status === 'ready' || job.status === 'undone') && job.hasDiff;
           const checkIssue = canApply ? updateCheckIssue(job.codebaseId || 'hub', job.check) : undefined;
           // Two or more updates waiting for review share one row in Active. Press it to see them one by one.
@@ -736,8 +740,8 @@ export const UpdatesView: React.FC = () => {
                       <span className="min-w-0 flex-1 text-indigo-950 dark:text-indigo-100">{fix.reason}</span>
                       <button
                         onClick={() => fixOne(job, fix)}
-                        disabled={acting === job.id || fixingAll || !canFix(job, fix, claudeReady, codexReady)}
-                        title={canFix(job, fix, claudeReady, codexReady) ? undefined : `Sign in to ${job.codex ? 'ChatGPT' : 'Claude'} in Account → Connections first`}
+                        disabled={acting === job.id || fixingAll || !fixReady}
+                        title={fixReady ? undefined : notSignedIn(retryCodeAI(job, codebases))}
                         className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-medium disabled:opacity-50 ${fix.action === 'wait' ? 'border border-indigo-300 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-700 dark:text-indigo-200 dark:hover:bg-indigo-900/50' : 'bg-indigo-600 text-white hover:bg-indigo-500'}`}
                       >
                         {acting === job.id ? <Loader2 className="h-4 w-4 animate-spin" /> : fix.action === 'discard' ? <Trash2 className="h-4 w-4" /> : <Wrench className="h-4 w-4" />} {fix.label}
@@ -836,7 +840,7 @@ export const UpdatesView: React.FC = () => {
                     {(job.status === 'failed' || job.status === 'discarded' || checkIssue || ((job.stale || job.olderBase) && (job.status === 'ready' || job.status === 'undone'))) && !(fix && fix.action !== 'discard') && (
                       <button
                         onClick={() => retry(job)}
-                        disabled={acting === job.id || !(job.codex ? codexReady : claudeReady)}
+                        disabled={acting === job.id || !(retryCodeAI(job, codebases) === 'codex' ? codexReady : claudeReady)}
                         title={busy ? 'Another update is in progress, so this one will wait in the queue' : undefined}
                         className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40"
                       >
@@ -912,7 +916,7 @@ export const UpdatesView: React.FC = () => {
                 <li key={job.id} className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-800/60">
                   <span className="block text-slate-800 dark:text-slate-100">{job.request.length > 90 ? `${job.request.slice(0, 90)}…` : job.request}</span>
                   <span className={`block text-xs ${fix.action === 'wait' || blocked ? 'text-amber-700 dark:text-amber-300' : 'text-slate-600 dark:text-slate-400'}`}>
-                    {fix.action === 'wait' ? 'Left for now: out of Claude usage.' : blocked ? 'Left for now: sign in to Claude first.' : fix.action === 'discard' ? `Cleared: ${fix.reason}` : `${fix.label}.`}
+                    {fix.action === 'wait' ? `Left for now: ${fix.reason}` : blocked ? notSignedIn(retryCodeAI(job, codebases)) : fix.action === 'discard' ? `Cleared: ${fix.reason}` : `${fix.label}.`}
                   </span>
                 </li>
               ))}

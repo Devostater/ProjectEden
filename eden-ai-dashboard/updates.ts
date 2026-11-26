@@ -29,6 +29,7 @@ import { isOffline, onOfflineChange } from './offline';
 import { localAgentModel, localClaudeEnv, planClaudeEnv } from './localClaude';
 import { registerUpdateRoutes as mountUpdateRoutes } from './server/routes/updates';
 import { codexExecArgs, unrealAnswerStatus, unrealUpdate, type UnrealToolsStatus } from './unrealUpdate';
+import { codebaseAI, followCodebaseAI, notSignedIn, readSettings, restoreHubSettings, savedHubSettings, type CodeAI } from './codebaseSettings';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STORE = path.join(APP_DIR, '.eden-updates.json');
@@ -51,6 +52,7 @@ export interface Codebase {
   about: string; // what the AI is told about the codebase
   protect: string[]; // paths the AI must not touch
   unreal?: boolean;
+  ai?: CodeAI;
 }
 
 const HUB: Codebase = {
@@ -81,23 +83,40 @@ const lyraPreset = (): Codebase => ({
   protect: ['data/ (personal data and settings)', 'tools/', 'node_modules', 'tablet-pin.txt', 'tablet-session.txt', '*.nova-bak and *.forge-bak files'],
 });
 
-const codebaseFile = jsonStore<Codebase[]>(CODEBASES_FILE, (value) =>
+const codebaseFile = jsonStore<(Codebase | ReturnType<typeof savedHubSettings>)[]>(CODEBASES_FILE, (value) =>
   Array.isArray(value) && value.every((c) => jsonObject(c) && typeof c.id === 'string' && typeof c.dir === 'string'), 2);
 function loadCodebases(): Codebase[] {
   const extra = codebaseFile.read() ?? [];
-  const list = [HUB, ...extra.filter((c) => c.id !== 'hub')];
+  const list = [restoreHubSettings(HUB, extra.find((c) => c.id === 'hub')), ...extra.filter((c): c is Codebase => c.id !== 'hub')];
   if (!list.some((c) => c.id === 'lyra') && fs.existsSync(path.join(LYRA_DIR, 'server.js'))) list.push(lyraPreset());
   return list;
 }
 let codebases = loadCodebases();
-const saveCodebases = () => {
-  try {
-    codebaseFile.write(codebases.filter((c) => c.id !== 'hub'));
-  } catch (err: any) {
-    fileProblem('save your codebases', err);
-  }
+// The hub itself is built in: only its settings are saved, and only when one differs from the default.
+const saveCodebases = (list = codebases) => {
+  codebaseFile.write(list.flatMap((c): (Codebase | ReturnType<typeof savedHubSettings>)[] => {
+    if (c.id !== 'hub') return [c];
+    const hub = savedHubSettings(c);
+    return Object.keys(hub).length > 2 ? [hub] : [];
+  }));
 };
 export const findCodebase = (id?: string) => codebases.find((c) => c.id === (id || 'hub'));
+
+export function setCodebaseSettings(id: string, input: unknown): Codebase {
+  const cb = codebases.find((c) => c.id === id);
+  if (!cb) throw new Error('That codebase is not set up in the hub.');
+  const settings = readSettings(input);
+  const next = { ...cb, ...settings };
+  if (settings.unreal === false) delete next.unreal;
+  try {
+    saveCodebases(codebases.map((c) => c === cb ? next : c));
+  } catch (err: any) {
+    fileProblem('save your codebases', err);
+    throw new Error('Could not save the codebase settings.');
+  }
+  codebases[codebases.indexOf(cb)] = next;
+  return next;
+}
 
 // Adds a codebase (a folder inside a git repository) and returns its id. Throws a message a person can act on.
 export function addCodebase(rawName: string, rawDir: string): string {
@@ -127,7 +146,11 @@ export function addCodebase(rawName: string, rawDir: string): string {
     about: aboutNewCodebase(name),
     protect: ['.env files', 'node_modules', 'data and settings files'],
   });
-  saveCodebases();
+  try {
+    saveCodebases();
+  } catch (err: any) {
+    fileProblem('save your codebases', err);
+  }
   return id;
 }
 
@@ -611,6 +634,9 @@ async function process_(job: UpdateJob) {
   try {
     // A queued update whose codebase has since been removed fails by itself instead of blocking the queue.
     if (!cb) throw new Error('That codebase is not set up in the hub any more.');
+    // The codebase's AI setting as it is now decides who does the work, also for an update that waited in the queue.
+    followCodebaseAI(job, cb);
+    if (job.codex && !cliSignedIn('openai')) throw new Error(notSignedIn('codex'));
     logActivity('work', `Code update started (${cb.name}): ${job.request.slice(0, 100)}`);
     job.log.push(`Making a separate copy of ${cb.name} to work on`);
     save();
@@ -646,6 +672,7 @@ async function process_(job: UpdateJob) {
         } catch {}
         if (changed.length) throw new Error(`${realFolderChangedMessage(cb.name, cb.dir, changed)}${job.lastAiMessage ? ` The AI said: "${job.lastAiMessage}"` : ''}`);
       };
+      if (job.codex && !cliSignedIn('openai')) throw new Error(notSignedIn('codex'));
       await runAI(cb, job, copy.appDir);
       readChange(cb, job, copy.dir);
       mustHaveStayedInTheCopy();
@@ -654,6 +681,7 @@ async function process_(job: UpdateJob) {
         // The AI only said "Understood" or made a plan: run it once more, telling it to edit the files this time.
         job.log.push('The AI replied without changing anything, so it is being asked once more to make the change');
         save();
+        if (job.codex && !cliSignedIn('openai')) throw new Error(notSignedIn('codex'));
         await runAI(cb, job, copy.appDir, MAKE_CHANGE_NOW);
         readChange(cb, job, copy.dir);
         mustHaveStayedInTheCopy();
@@ -873,14 +901,14 @@ export function activeUpdateNames(): { working: string[]; queued: string[] } {
   };
 }
 
-export function requestCodeUpdate(codebaseId: string, request: string, cardId?: string, local = false, options: { codex?: boolean; allowUnrealChanges?: boolean } = {}): string {
+export function requestCodeUpdate(codebaseId: string, request: string, cardId?: string, local = false, options: { allowUnrealChanges?: boolean } = {}): string {
   const cb = findCodebase(codebaseId);
   if (!cb) throw new Error('That codebase is not set up in the hub.');
   // Uses the saved sign-in check (it refreshes itself every so often) so adding to the queue is quick and never freezes the hub.
-  const codex = options.codex === true;
-  if (codex && !cliSignedIn('openai')) throw new Error('Sign in to ChatGPT in Account → Connections first.');
+  const codex = codebaseAI(cb) === 'codex';
+  if (codex && !cliSignedIn('openai')) throw new Error(notSignedIn('codex'));
   if (!codex && local && !localAgentModel()) throw new Error('No AI on this PC can do code updates yet. Start Ollama (gpt-oss-20b or a coder model).');
-  if (!codex && !local && !isOffline() && !cliSignedIn('anthropic')) throw new Error('Code updates use Claude Code. Sign in to Claude in Account → Connections first.');
+  if (!codex && !local && !isOffline() && !cliSignedIn('anthropic')) throw new Error(notSignedIn('claude'));
   // If another update is running, this one waits in the queue.
   const job: UpdateJob = { id: `upd-${Date.now().toString(36)}`, codebaseId: cb.id, request, cardId, local: local || undefined, status: 'queued', createdAt: now(), log: [] };
   if (codex) {
@@ -906,7 +934,7 @@ function startRetry(job: UpdateJob, opts: { note?: string; useClaude?: boolean; 
   const base = job.request.split(header.trimEnd())[0].trimEnd();
   const request = note ? `${base.slice(0, Math.max(500, 4000 - header.length - note.length))}${header}${note}`.slice(0, 4000 + 3000) : job.request;
   const local = opts.useClaude === true ? false : job.local === true;
-  const id = requestCodeUpdate(job.codebaseId, request, job.cardId, local, { codex: !opts.useClaude && job.codex });
+  const id = requestCodeUpdate(job.codebaseId, request, job.cardId, local);
   const fresh = jobs.find((j) => j.id === id);
   if (fresh) {
     fresh.retryOf = job.id;
@@ -1196,7 +1224,7 @@ async function runIdeas(cb: Codebase) {
 
 function updateRouteServices() {
   return {
-    jobs, codebases, findCodebase, uncommittedNow, runBackup, requestCodeUpdate, addCodebase,
+    jobs, codebases, findCodebase, uncommittedNow, runBackup, requestCodeUpdate, addCodebase, setCodebaseSettings,
     save, startRetry, git, repoRoot, patchPaths, saveRestorePoint, applyPatch, recheckAfter, restoreFromPoint, now,
     ideaSet, generateIdeas, saveIdeas, findSameUpdate,
     get lastBackup() { return lastBackup; },

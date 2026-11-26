@@ -8,6 +8,7 @@ import express from 'express';
 import { registerConversationRoutes } from '../server/routes/chat';
 import { createChatHistory } from '../server/routes/chats';
 import { registerUpdateRoutes } from '../server/routes/updates';
+import { readSettings } from '../codebaseSettings';
 import type { Codebase, UpdateJob, UpdateRouteServices } from '../updates';
 
 async function listen(t: TestContext, app: express.Express) {
@@ -72,7 +73,15 @@ test('update routes return a saved diff and enforce owner permissions and the ap
   const unexpected = () => assert.fail('The rejected update must not call the update worker');
   const services: UpdateRouteServices = {
     jobs: [job], codebases: [cb], findCodebase: id => id === cb.id ? cb : undefined,
-    uncommittedNow: unexpected, runBackup: unexpected, requestCodeUpdate: unexpected,
+    uncommittedNow: unexpected, runBackup: unexpected,
+    requestCodeUpdate: (...args) => {
+      assert.deepEqual(args, [cb.id, 'Make a change', undefined, false, { allowUnrealChanges: false }]);
+      return 'new-job';
+    },
+    setCodebaseSettings: (id, body) => {
+      assert.equal(id, cb.id);
+      return Object.assign(cb, readSettings(body));
+    },
     addCodebase: unexpected, save: unexpected, startRetry: unexpected, git: unexpected,
     repoRoot: unexpected, patchPaths: unexpected, saveRestorePoint: unexpected, applyPatch: unexpected,
     recheckAfter: unexpected, restoreFromPoint: unexpected, now: unexpected,
@@ -100,4 +109,25 @@ test('update routes return a saved diff and enforce owner permissions and the ap
   assert.equal(blocked.status, 409);
   assert.match((await blocked.json()).error, /no dashboard release gate result/);
   assert.equal(job.status, 'ready');
+
+  const post = (url: string, body: unknown, origin = base) => fetch(base + url, {
+    method: 'POST', headers: { 'content-type': 'application/json', origin }, body: JSON.stringify(body),
+  });
+  const settingsUrl = '/api/codebases/hub/settings';
+  const deniedSettings = await post(settingsUrl, { ai: 'codex' }, 'https://example.test');
+  assert.equal(deniedSettings.status, 403);
+  assert.deepEqual(await deniedSettings.json(), { error: 'Codebase settings can only be changed from the hub on this computer.' });
+
+  const list = async () => (await (await fetch(base + '/api/updates')).json()).codebases;
+  assert.equal((await list())[0].ai, 'claude');
+  const invalid = await post(settingsUrl, { ai: 'other' });
+  assert.equal(invalid.status, 400);
+  assert.match((await invalid.json()).error, /Choose Claude or Codex/);
+  const started = await post('/api/updates', { request: 'Make a change', codex: true });
+  assert.equal(started.status, 200);
+  assert.deepEqual(await started.json(), { job: { id: 'new-job' } });
+  const saved = await post(settingsUrl, { ai: 'codex', unreal: true });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { ok: true, codebase: { id: 'hub', ai: 'codex', unreal: true } });
+  assert.equal((await list())[0].ai, 'codex');
 });
