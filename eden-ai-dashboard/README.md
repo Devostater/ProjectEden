@@ -21,6 +21,8 @@ View your app in AI Studio: https://ai.studio/apps/a4d7dae2-92b7-4785-8544-a81d4
 
 On this PC, use **Start Eden** (`Start Eden.bat`) instead. It checks the code first and keeps Eden running.
 
+Start Eden shows a built copy of the pages (`dist`). Each time the hub starts or restarts, the keeper (`scripts/hub-supervisor.mjs`) builds the pages again if the code has changed since the last build, for example after a Code update or a pull from GitHub. So an applied hub update shows after **Restart Eden now**. If the build fails, the last working pages stay and the reason is in `.eden-logs\hub.log`. Only `npm run dev` reloads pages live.
+
 ### Unreal tools for Codex jobs
 
 Add the optional `"unreal": true` field to the relevant codebase object in `.eden-codebases.json`, then restart Eden. In Construction, select that codebase and tick **Run this job with Codex**. Eden checks for an open Unreal Editor and the Aura plugin files at launch. Set `unrealEngineDir` in Settings if Unreal is installed outside the default `C:\Unreal Engine 5\UE_5.8`.

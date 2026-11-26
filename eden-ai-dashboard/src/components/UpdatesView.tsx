@@ -351,7 +351,7 @@ export const UpdatesView: React.FC = () => {
     setApplyingAll(false);
     if (done > 0) {
       setNote(
-        `Applied ${done} update${done === 1 ? '' : 's'}.${needsRestart ? ' Some change the server part, so press "Restart Eden now" above (or restart the app) to finish.' : ' The page updates by itself in a moment.'}`
+        `Applied ${done} update${done === 1 ? '' : 's'}.${needsRestart ? ' Some need a restart: press "Restart Eden now" above (or restart the app) to finish.' : ' The page updates by itself in a moment.'}`
       );
     }
     if (problems.length) setError(`${problems.length} update${problems.length === 1 ? ' was' : 's were'} not applied, and nothing was changed for ${problems.length === 1 ? 'it' : 'them'}. ${problems.join(' ')}`);
@@ -503,7 +503,7 @@ export const UpdatesView: React.FC = () => {
           <div className="min-w-0 flex-1">
             <div className="font-medium">{restarting ? 'Reconnecting…' : 'Restart needed'}</div>
             <div className="text-xs opacity-90">
-              {restarting ? 'The hub is restarting. This page reloads by itself as soon as it answers.' : 'An update changed the server part of the hub, so it only takes effect after a restart. It takes a few seconds.'}
+              {restarting ? 'The hub is restarting. This page reloads by itself as soon as it answers.' : 'An applied update only takes effect after a restart. It takes a few seconds.'}
             </div>
           </div>
           <button onClick={restartHub} disabled={restarting} className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-500 disabled:opacity-60">
@@ -800,7 +800,7 @@ export const UpdatesView: React.FC = () => {
 
                   {job.needsRestart && job.status === 'ready' && (
                     <p className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300">
-                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> This changes the server part, so after applying: {codebases.find((c) => c.id === job.codebaseId)?.restartHint || 'restart the app'}.
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> This needs a restart, so after applying: {codebases.find((c) => c.id === job.codebaseId)?.restartHint || 'restart the app'}.
                     </p>
                   )}
 

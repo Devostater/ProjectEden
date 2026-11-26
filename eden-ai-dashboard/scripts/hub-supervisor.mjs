@@ -1,5 +1,6 @@
 // Keeps Eden AI Hub running on this computer.
 //   - starts the hub (server.ts) and starts it again if it stops or crashes
+//   - builds the dashboard again first when its code has changed, so a restart always shows the current pages
 //   - restarts it if it stops answering (hung) for about a minute and a half
 //   - writes what happened to .eden-logs/hub.log, so "it stopped and I don't know why" has an answer
 //   - only one copy runs; a hub that was started some other way is watched, and started here when it stops
@@ -13,7 +14,7 @@ import { networkInterfaces } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { findBuild } from './build-paths.mjs';
+import { buildIsCurrent, findBuild, sourceStamp } from './build-paths.mjs';
 import { livePid, RECOVERY_LOCK } from './recover.mjs';
 
 // Console handle: who and what is running in this window, so it's easy to tell apart from other consoles.
@@ -172,16 +173,42 @@ if (recoveryRunning()) {
   process.exit(1);
 }
 const recoveryHint = 'With EDEN closed, run Recover Eden.bat, then run Start Eden.bat.';
-if (!adoptedPid && !findBuild(APP)) {
-  log('No dashboard build found. Building EDEN for production.');
-  const result = spawnSync(process.execPath, ['scripts/build-dashboard.mjs'], {
-    cwd: APP, env: HUB_ENV, stdio: 'inherit', windowsHide: true,
-  });
-  if (result.status !== 0 || !findBuild(APP)) {
-    log(`Could not build the EDEN dashboard${result.error ? `: ${result.error.message}` : '.'}`);
-    log(recoveryHint);
-    process.exit(1);
+
+// ---- the dashboard build ----
+// The hub serves the built dashboard, not the page code itself. So the dashboard is built again here, each
+// time before the hub starts, when the code it is made from has changed since the last build (a Code update
+// was applied, or new code came from GitHub). Without this the hub kept showing the old pages.
+// A build that fails leaves the last working build in place. False means there is no build to show at all.
+let failedSources = '';
+function refreshBuild() {
+  let sources = '';
+  try {
+    sources = sourceStamp(APP);
+  } catch (err) {
+    log(`Could not check whether the dashboard is up to date: ${err?.message || err}`);
   }
+  const existing = findBuild(APP);
+  // Without a fingerprint, or after a failed try on this same code, the build that exists is shown as it is.
+  if (existing && (!sources || sources === failedSources || buildIsCurrent(APP, sources))) return true;
+  log(existing ? 'The dashboard code has changed since it was built. Building it again…' : 'No dashboard build found. Building EDEN for production.');
+  const result = spawnSync(process.execPath, ['scripts/build-dashboard.mjs'], {
+    cwd: APP, env: HUB_ENV, encoding: 'utf8', windowsHide: true,
+  });
+  if (result.status === 0 && findBuild(APP)) {
+    failedSources = '';
+    log('The dashboard is built and up to date.');
+    return true;
+  }
+  failedSources = sources;
+  const why = result.error?.message || `${result.stderr || ''}\n${result.stdout || ''}`
+    .replace(/\x1b\[[0-9;]*m/g, '').split('\n').map((line) => line.trim()).filter(Boolean).slice(-6).join(' | ');
+  if (findBuild(APP)) {
+    log(`Could not build the dashboard, so the last working build is shown. ${why}`);
+    return true;
+  }
+  log(`Could not build the EDEN dashboard. ${why}`);
+  log(recoveryHint);
+  return false;
 }
 
 // Whatever goes wrong in here, keep supervising; and always leave a line saying why this stopped.
@@ -206,6 +233,7 @@ async function start() {
     await delay(250);
   }
   if (stopping) return;
+  if (!refreshBuild()) process.exit(1);
   startedAt = Date.now();
   booted = false;
   misses = 0;

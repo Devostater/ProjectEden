@@ -93,7 +93,7 @@ export const NotificationsPanel = React.forwardRef<
                 </li>
               ))}
               {feed.restartPending && (
-                <Row icon={<AlertTriangle className="h-4 w-4 text-amber-500" />} title="Restart needed" detail="An update changed the server part of the hub. It only takes effect after a restart." action="Open to restart" onClick={go(onOpenUpdates)} />
+                <Row icon={<AlertTriangle className="h-4 w-4 text-amber-500" />} title="Restart needed" detail="An applied update only takes effect after a restart." action="Open to restart" onClick={go(onOpenUpdates)} />
               )}
               {feed.ready.length > 0 && (
                 <Row
