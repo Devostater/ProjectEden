@@ -7,6 +7,7 @@ import { test, type TestContext } from 'node:test';
 import type { spawn, SpawnOptions } from 'node:child_process';
 import express from 'express';
 import { createRunners, registerRunnerRoutes } from '../runners';
+import { interruptedWork } from '../restartWork';
 
 function fixture(t: TestContext) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eden-runners-'));
@@ -62,6 +63,33 @@ test('stop uses the tree killer and keeps the slot until exit', (t) => {
   assert.equal(runners.status(undefined).runners[0].state, 'Stopped');
   assert.equal(runners.status(undefined).runners[0].exitCode, 1);
   runners.start('swarm', undefined);
+});
+
+test('running runners are named, so the hub can warn before a restart stops them', (t) => {
+  const { runners, spawned } = fixture(t);
+  assert.deepEqual(runners.runningNames(), []);
+  runners.start('levelgen', undefined);
+  assert.deepEqual(runners.runningNames(), ['LevelGen']);
+  spawned[0].child.emit('exit', 0);
+  assert.deepEqual(runners.runningNames(), []);
+});
+
+test('the restart warning lists code updates, cards and runners that would be cut off', () => {
+  assert.deepEqual(interruptedWork({ working: [], queued: [] }, [], []), { codeUpdates: 0, cards: 0, runners: 0, interrupted: [] });
+  assert.deepEqual(
+    interruptedWork({ working: ['Fix the header'], queued: ['Add a filter'] }, ['"Store page" (Nova)'], ['LevelGen autopilot']),
+    {
+      codeUpdates: 2, cards: 1, runners: 1,
+      interrupted: [
+        'Code update being worked on: Fix the header',
+        'Code update waiting in the queue: Add a filter',
+        'Card being written: "Store page" (Nova)',
+        'Runner still going: LevelGen autopilot',
+      ],
+    },
+  );
+  // With only a runner going, a restart must still be held back for the owner to confirm.
+  assert.equal(interruptedWork({ working: [], queued: [] }, [], ['Reel autopilot']).interrupted.length, 1);
 });
 
 test('status restores an interrupted runner and returns the last 40 captured lines', (t) => {

@@ -240,8 +240,17 @@ export function createRunners(appDir: string, deps = { spawn, processNames, kill
     if (state.state === 'Running') state.state = 'Stopped by restart';
   }
 
+  // The names of the runners going right now. The hub lists them before a restart, because a restart stops them.
+  function runningNames() {
+    let names = new Map<string, string>();
+    try {
+      names = new Map(load().runners.map((runner) => [runner.id, runner.name]));
+    } catch {}
+    return [...active.keys()].map((id) => names.get(id) || id);
+  }
+
   return {
-    status, start, stop,
+    status, start, stop, runningNames,
     shutdown() {
       for (const [id, child] of active) {
         if (!child.pid) continue;

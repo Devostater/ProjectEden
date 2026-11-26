@@ -334,9 +334,10 @@ async function startServer() {
       saveStore(store);
     },
   });
-  registerRestartRoutes(app);
-  if (!ON_DEVICE) {
-    const runners = createRunners(__dirname);
+  const runners = ON_DEVICE ? undefined : createRunners(__dirname);
+  // A restart stops running runners, so the restart warning lists them with the code updates and cards.
+  registerRestartRoutes(app, () => runners?.runningNames() ?? []);
+  if (runners) {
     process.once('exit', runners.shutdown);
     registerRunnerRoutes(app, runners);
   }

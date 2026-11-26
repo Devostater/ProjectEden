@@ -62,16 +62,20 @@ const RestartCard: React.FC = () => {
   const [stopError, setStopError] = useState('');
 
   // Work that a restart would cut off. We ask the hub first, then wait to hear "Restart anyway" or "Wait".
-  const [busy, setBusy] = useState<{ codeUpdates: number; cards: number } | null>(null);
+  const [busy, setBusy] = useState<{ codeUpdates: number; cards: number; runners: number } | null>(null);
 
   const countOf = (n: unknown) => (typeof n === 'number' && n > 0 ? n : 0);
-  const busyMessage = (b: { codeUpdates: number; cards: number }) => {
-    const total = b.codeUpdates + b.cards;
+  // The hub's answer about what is still running. An older hub does not send "runners": countOf gives 0 then.
+  const busyFrom = (data: any) => ({ codeUpdates: countOf(data?.codeUpdates), cards: countOf(data?.cards), runners: countOf(data?.runners) });
+  const busyMessage = (b: { codeUpdates: number; cards: number; runners: number }) => {
+    const total = b.codeUpdates + b.cards + b.runners;
     const parts = [
       b.codeUpdates ? (b.codeUpdates === 1 ? 'a code update' : `${b.codeUpdates} code updates`) : '',
       b.cards ? (b.cards === 1 ? 'a card' : `${b.cards} cards`) : '',
+      b.runners ? (b.runners === 1 ? 'a runner' : `${b.runners} runners`) : '',
     ].filter(Boolean);
-    return `${total} thing${total === 1 ? ' is' : 's are'} still running (${parts.join(' and ')}). Restarting will stop ${total === 1 ? 'it' : 'them'}. Restart anyway?`;
+    const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+    return `${total} thing${total === 1 ? ' is' : 's are'} still running (${list}). Restarting will stop ${total === 1 ? 'it' : 'them'}. Restart anyway?`;
   };
 
   // Press of the "Restart hub" button: restart straight away unless something is still running.
@@ -83,8 +87,8 @@ const RestartCard: React.FC = () => {
       const res = await fetch('/api/restart/status');
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        const found = { codeUpdates: countOf(data.codeUpdates), cards: countOf(data.cards) };
-        if (found.codeUpdates + found.cards > 0) {
+        const found = busyFrom(data);
+        if (found.codeUpdates + found.cards + found.runners > 0) {
           setBusy(found);
           setState('idle');
           return;
@@ -105,7 +109,7 @@ const RestartCard: React.FC = () => {
       const data = await res.json().catch(() => ({}));
       if (res.status === 409 && Array.isArray(data.interrupted) && data.interrupted.length) {
         // Something started since we checked: ask again.
-        setBusy({ codeUpdates: countOf(data.codeUpdates), cards: countOf(data.cards) });
+        setBusy(busyFrom(data));
         setState('idle');
         return;
       }
