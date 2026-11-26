@@ -29,6 +29,7 @@ export interface CodebaseInfo {
   proof?: string;
   proofMinutes?: number;
   packageFiles?: string;
+  packageFrom?: string;
   package?: PackageState;
   uncommitted?: number; // files changed here that are not saved to GitHub yet
 }
@@ -115,6 +116,7 @@ function ProofSettings({ codebase, onSave }: { codebase: CodebaseInfo; onSave: (
   const [proof, setProof] = useState(codebase.proof ?? '');
   const [minutes, setMinutes] = useState(String(codebase.proofMinutes ?? DEFAULT_PROOF_MINUTES));
   const [packageFiles, setPackageFiles] = useState(codebase.packageFiles ?? '');
+  const [packageFrom, setPackageFrom] = useState(codebase.packageFrom ?? '');
   return (
     <div className="space-y-2">
       <label className={`${ui.label} flex-wrap`}>Proof command
@@ -128,8 +130,12 @@ function ProofSettings({ codebase, onSave }: { codebase: CodebaseInfo; onSave: (
         <input className={ui.field} value={packageFiles} maxLength={200} onChange={(e) => setPackageFiles(e.target.value)} aria-describedby="proof-package-hint" />
       </label>
       <p id="proof-package-hint" className={ui.empty}>Optional. The hub warns when this file is older than the source.</p>
+      <label className={`${ui.label} flex-wrap`}>Package is made from (folder)
+        <input className={ui.field} value={packageFrom} maxLength={200} onChange={(e) => setPackageFrom(e.target.value)} aria-describedby="proof-package-from-hint" />
+      </label>
+      <p id="proof-package-from-hint" className={ui.empty}>Optional. Only files in this folder count as the source. Leave it empty to count every file in the project.</p>
       <PackageWarning codebase={codebase} />
-      <button className={ui.btn} onClick={() => onSave({ proof, proofMinutes: minutes === '' ? '' : Number(minutes), packageFiles })}>Save</button>
+      <button className={ui.btn} onClick={() => onSave({ proof, proofMinutes: minutes === '' ? '' : Number(minutes), packageFiles, packageFrom })}>Save</button>
     </div>
   );
 }
@@ -165,7 +171,7 @@ const CodebaseSettings: React.FC<{
           <p className={ui.empty}>Codex can then look at the open Unreal editor.</p>
           {codebase.id === 'hub'
             ? <p className={ui.empty}>The hub uses its type check, tests and build as its proof.</p>
-            : <ProofSettings key={JSON.stringify([codebase.id, codebase.proof, codebase.proofMinutes, codebase.packageFiles])} codebase={codebase} onSave={onSave} />}
+            : <ProofSettings key={JSON.stringify([codebase.id, codebase.proof, codebase.proofMinutes, codebase.packageFiles, codebase.packageFrom])} codebase={codebase} onSave={onSave} />}
         </fieldset>
       ))}
     </div>

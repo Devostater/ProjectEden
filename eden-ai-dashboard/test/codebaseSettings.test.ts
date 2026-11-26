@@ -77,6 +77,11 @@ test('proof settings trim, clear and validate the saved values', () => {
   for (const packageFiles of ['../a.zip', 'dist/**.zip', 'dist*/a.zip', 'C:\\a.zip', '/a.zip']) {
     assert.throws(() => readSettings({ packageFiles }), /upload package path/);
   }
+  assert.deepEqual(readSettings({ packageFrom: ' Plugins\\Kit ' }), { packageFrom: 'Plugins\\Kit' });
+  assert.deepEqual(readSettings({ packageFrom: '' }), { packageFrom: undefined });
+  for (const packageFrom of ['..\\Other', 'C:\\Kit', '/Kit', 'Plugins\\*', 7]) {
+    assert.throws(() => readSettings({ packageFrom }), /folder the package is made from/);
+  }
   assert.throws(() => readSettings({ proof: 'a\nb' }), /one line/);
   assert.throws(() => readSettings({ proof: 'a'.repeat(501) }), /500 characters/);
   assert.throws(() => readSettings({ proof: 'build.cmd' }, 'hub'), /type check, tests and build/);

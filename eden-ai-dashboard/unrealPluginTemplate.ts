@@ -61,7 +61,8 @@ export function unrealPluginSignUp(name: string, display: string) {
   return {
     settings: {
       ai: 'codex', unreal: true, proof: 'powershell -NoProfile -ExecutionPolicy Bypass -File autopilot\\proof.ps1',
-      proofMinutes: 120, packageFiles: 'dist\\*.zip',
+      // The zip is made from the plugin's folder only, so only that folder counts for "package older than source".
+      proofMinutes: 120, packageFiles: 'dist\\*.zip', packageFrom: `Plugins\\${name}`,
     },
     codebase: {
       // Read after "You are improving …" in the AI's instructions, like the other codebases' descriptions.

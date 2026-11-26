@@ -22,7 +22,7 @@ import { stopProcessTree } from './processTree';
 import { changedSince, realFolderChangedMessage, unsavedWork, type UnsavedWork } from './realFolder';
 import { aboutNewCodebase, updateRules } from './updatePrompt';
 import { filesInDiff, recheckWaiting } from './updateOverlap';
-import { packageState, proofFilesTouched, runProof, type ProofResult } from './proof';
+import { packageSourceFiles, packageState, proofFilesTouched, runProof, type ProofResult } from './proof';
 import { runReleaseGate, type UpdateCheck } from './updateReleaseGate';
 import { cliSignedIn, providerUnavailable, recordFailure } from './providers';
 import { pcBusy, onBusyChange } from './busy';
@@ -310,12 +310,11 @@ const headNow = cachedReading(currentHead, (cb) => cb.dir);
 const packageNow = cachedReading((cb) => {
   if (!cb.packageFiles) return;
   try {
-    const sourceFiles = git(['ls-files', '-z', '-co', '--exclude-standard', '--', '.'], cb.dir).split('\0').filter(Boolean);
-    return packageState({ dir: cb.dir, pattern: cb.packageFiles, sourceFiles });
+    return packageState({ dir: cb.dir, pattern: cb.packageFiles, sourceFiles: packageSourceFiles(cb.dir, cb.packageFrom) });
   } catch {
     return undefined;
   }
-}, (cb) => JSON.stringify([cb.dir, cb.packageFiles]));
+}, (cb) => JSON.stringify([cb.dir, cb.packageFiles, cb.packageFrom]));
 
 function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skippedLarge: number; uncommitted?: number; real: UnsavedWork; head: string } {
   const root = repoRoot(cb);

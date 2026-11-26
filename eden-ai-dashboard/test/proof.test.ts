@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { packageState, proofFilesTouched, proofIssue, runProof, type ProofResult } from '../proof';
+import { execFileSync } from 'node:child_process';
+import { packageSourceFiles, packageState, proofFilesTouched, proofIssue, runProof, type ProofResult } from '../proof';
 import { stopProcessTree } from '../processTree';
 
 const command = (code: string) => `"${process.execPath}" -e "${code}"`;
@@ -98,4 +99,35 @@ test('package age compares the oldest package to source and skips every package'
   times['source.cpp'] = 11;
   assert.deepEqual(packageState({ ...opts, fileTime }), { state: 'older', file: 'dist/a.zip', newer: 'source.cpp' });
   assert.deepEqual(packageState({ ...opts, readFiles: () => ['ignore.txt'], fileTime }), { state: 'missing' });
+});
+
+test('only the folder the package is made from counts as its source', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eden-package-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
+  const write = (file: string, at: number) => {
+    const full = path.join(dir, file);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, file);
+    fs.utimesSync(full, at, at);
+  };
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
+  git('init', '-q');
+  fs.writeFileSync(path.join(dir, '.gitignore'), 'dist/\nPlugins/Kit/Intermediate/\n');
+  write('Plugins/Kit/Source/Kit.cpp', 1000);
+  write('Plugins/Kit/Intermediate/made-by-a-build.obj', 3000); // ignored: never part of the source
+  write('dist/Kit-1.0.zip', 2000);
+  write('autopilot/TASKS.md', 3000); // ticked after the package was built
+  write('README.md', 3000);
+
+  const everything = packageSourceFiles(dir);
+  assert.ok(everything.includes('autopilot/TASKS.md'));
+  assert.ok(!everything.some((file) => file.includes('Intermediate')));
+  const pattern = ['dist', '*.zip'].join('\\'); // typed the Windows way, as the owner would
+  assert.equal(packageState({ dir, pattern, sourceFiles: everything }).state, 'older');
+
+  const plugin = packageSourceFiles(dir, ['Plugins', 'Kit'].join('\\'));
+  assert.deepEqual(plugin, ['Plugins/Kit/Source/Kit.cpp']);
+  assert.deepEqual(packageState({ dir, pattern, sourceFiles: plugin }), { state: 'fresh', file: 'dist/Kit-1.0.zip' });
+  write('Plugins/Kit/Source/Kit.cpp', 4000); // a real change to the plugin after the package
+  assert.equal(packageState({ dir, pattern, sourceFiles: packageSourceFiles(dir, 'Plugins/Kit') }).state, 'older');
 });
