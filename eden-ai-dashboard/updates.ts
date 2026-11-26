@@ -9,7 +9,7 @@ import { jsonObject, jsonStore } from './jsonStore';
 //   One update runs at a time; any others asked for meanwhile wait in a queue and start by themselves.
 // Every request here must come from the hub's own page, on this computer or on a paired device the owner
 // switched "Code updates" on for (see pairing.ts).
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -17,6 +17,7 @@ import { fileURLToPath } from 'url';
 import type { Express } from 'express';
 import { logActivity, recentActivity, fileProblem } from './activity';
 import { dashboardMode, liveDashboardDirs } from './dashboardSite';
+import { git } from './gitRun';
 import { recheckWaiting } from './updateOverlap';
 import { runReleaseGate, type UpdateCheck } from './updateReleaseGate';
 import { cliSignedIn, providerUnavailable, recordFailure } from './providers';
@@ -204,12 +205,6 @@ for (const j of jobs) {
   }
 }
 if (interrupted.length) save();
-
-const git = (args: string[], cwd: string, input?: string, env?: NodeJS.ProcessEnv) => {
-  const r = spawnSync('git', args, { cwd, encoding: 'utf-8', input, windowsHide: true, maxBuffer: 64 * 1024 * 1024, env: env ? { ...process.env, ...env } : undefined });
-  if (r.status !== 0) throw new Error((r.stderr || r.stdout || `git ${args[0]} failed`).trim().split('\n').slice(-3).join(' '));
-  return r.stdout;
-};
 
 const repoRoot = (cb: Codebase) => git(['rev-parse', '--show-toplevel'], cb.dir).trim();
 // The codebase's folder relative to its repository root ('' when the codebase is the whole repository).
