@@ -9,6 +9,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import type { Express, Request } from 'express';
+import { stopProcessTree } from './processTree';
 import type { Project, ProjectTool, ProjectLink } from './src/types/index';
 import { AZI_ROOT, folderName, dirForProject } from './newproject';
 import { runWithSpendingControl, UnconfirmedPaidRequestError, type GenerateRequest } from './providers';
@@ -409,7 +410,7 @@ export function registerToolboxRoutes(app: Express, getStore: () => Store, save:
     child.stderr.on('data', add);
     const timer = setTimeout(() => {
       add(Buffer.from('\n[Stopped by Eden after 15 minutes]\n'));
-      child.kill();
+      stopProcessTree(child); // the tool is a child of the shell: ending only the shell would leave it running
     }, 15 * 60 * 1000);
     child.on('error', (err) => add(Buffer.from(`\n[Could not start: ${err.message}]\n`)));
     child.on('close', (code) => {

@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import type { Express } from 'express';
 import { mayManage } from './permissions';
 import { logActivity } from './activity';
+import { stopProcessTree } from './processTree';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const TIMEOUT_MS = 120000;
@@ -62,7 +63,7 @@ export function registerTerminalRoutes(app: Express) {
       res.json({ output: (clean.length >= MAX_OUTPUT ? `${clean}\n… output cut off` : clean) + note, exitCode: exitCode ?? 1, cwd });
     };
     const timer = setTimeout(() => {
-      child.kill();
+      stopProcessTree(child);
       finish(124, `\nStopped: still running after ${TIMEOUT_MS / 1000} seconds.`);
     }, TIMEOUT_MS);
     child.on('error', (err) => finish(1, `\n${err.message}`));
