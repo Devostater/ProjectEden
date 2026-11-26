@@ -6,7 +6,7 @@ import path from 'node:path';
 import { test, type TestContext } from 'node:test';
 import type { spawn, SpawnOptions } from 'node:child_process';
 import express from 'express';
-import { createRunners, registerRunnerRoutes } from '../runners';
+import { addRunnerToRegistry, createRunners, registerRunnerRoutes } from '../runners';
 import { interruptedWork } from '../restartWork';
 import { applying } from '../oneWriter';
 
@@ -164,4 +164,27 @@ test('HTTP starts require the hub page and use only registry commands and issue 
   assert.equal(spawned[0].command, 'registered-swarm 46 47');
   assert.equal(spawned[0].options.windowsHide, true);
   assert.equal(spawned[0].options.shell, undefined);
+});
+
+test('runner registration preserves the registry and uses the same checks as status', (t) => {
+  const { dir, entries, runners } = fixture(t);
+  const file = path.join(dir, '.eden-runners.json');
+  const entry = { id: 'skytools', name: 'Sky Tools autopilot', cwd: dir, command: 'run-plugin' };
+  fs.unlinkSync(file);
+  assert.equal(addRunnerToRegistry(dir, entry), 'added');
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { maxRunners: 3, runners: [entry] });
+  assert.equal(runners.status(undefined).runners[0].id, entry.id);
+
+  const original = { maxRunners: 1, other: { enabled: true }, runners: [{ ...entries[0], extra: [1, 2] }, entries[1]] };
+  fs.writeFileSync(file, JSON.stringify(original));
+  assert.equal(addRunnerToRegistry(dir, entry), 'added');
+  const updated = fs.readFileSync(file, 'utf8');
+  assert.deepEqual(JSON.parse(updated), { ...original, runners: [...original.runners, entry] });
+  assert.deepEqual(runners.status(undefined).runners.map((runner) => runner.id), ['levelgen', 'swarm', 'skytools']);
+  assert.equal(addRunnerToRegistry(dir, { ...entry, name: 'Another name' }), 'exists');
+  assert.throws(() => addRunnerToRegistry(dir, { ...entry, id: 'Bad id' }), /Invalid runner entry/);
+  assert.equal(fs.readFileSync(file, 'utf8'), updated);
+  fs.writeFileSync(file, '{ broken');
+  assert.throws(() => addRunnerToRegistry(dir, entry), SyntaxError);
+  assert.equal(fs.readFileSync(file, 'utf8'), '{ broken');
 });

@@ -1,6 +1,6 @@
 export type CodeAI = 'claude' | 'codex';
 export const DEFAULT_PROOF_MINUTES = 30;
-export type CodebaseSettings = { ai?: CodeAI; unreal?: boolean; proof?: string; proofMinutes?: number; packageFiles?: string };
+export type CodebaseSettings = { ai?: CodeAI; unreal?: boolean; proof?: string; proofMinutes?: number; packageFiles?: string; packageFrom?: string };
 
 export function codebaseAI(cb: { ai?: unknown }): CodeAI {
   return cb.ai === 'codex' ? 'codex' : 'claude';
@@ -36,6 +36,15 @@ export function readSettings(input: unknown, id?: string): CodebaseSettings {
       throw new Error('Enter an upload package path within this folder, up to 200 characters, with at most one * in the file name.');
     }
     settings.packageFiles = value || undefined;
+  }
+  // The folder the package is made from. Only its files count as "the source" for the package's age: without it
+  // a ticked task list or an edited README would make a fresh package look old.
+  if ('packageFrom' in input) {
+    const value = typeof input.packageFrom === 'string' ? input.packageFrom.trim() : null;
+    if (value === null || value.length > 200 || /[<>:"?|*\x00-\x1f]|\.\./.test(value) || /^[\\/]|[\\/]$/.test(value)) {
+      throw new Error('Enter the folder the package is made from, within this folder, up to 200 characters.');
+    }
+    settings.packageFrom = value || undefined;
   }
   return settings;
 }

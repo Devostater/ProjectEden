@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { git } from './gitRun';
 import { stopProcessTree, wasProcessTreeStopped } from './processTree';
 
 export interface ProofResult {
@@ -86,6 +87,14 @@ export interface PackageState {
   state: 'fresh' | 'older' | 'missing';
   file?: string;
   newer?: string;
+}
+
+// The files that count as the package's source: what git tracks or would track in the codebase's folder, or
+// only in the folder the package is made from when the codebase names one. Without that folder, a ticked task
+// list or an edited README would make a fresh package look old.
+export function packageSourceFiles(dir: string, from?: string): string[] {
+  const folder = from ? slashes(from) : '.';
+  return git(['ls-files', '-z', '-co', '--exclude-standard', '--', folder], dir, undefined, { GIT_LITERAL_PATHSPECS: '1' }).split('\0').filter(Boolean);
 }
 
 export function packageState({

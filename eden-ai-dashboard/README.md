@@ -77,3 +77,11 @@ Eden starts runners in hidden processes and appends their output to `.eden-logs/
 **One writer per folder.** While a runner works in a folder, Eden does not change that folder: Apply, Undo, "Save to GitHub now" and Sync (pressed or automatic) wait and name the runner. A runner cannot be started while Eden is changing its folder, and two runners cannot work in the same folder at once. Folders count as the same when one is inside the other or both are in the same git repository.
 
 A runner that was started outside Eden (a double-click, a shortcut) is only seen if its entry names a `lockFile` (a path relative to `cwd`) and the script keeps that file while it works. The file is JSON with the script's process id, for example `{ "pid": 1234, "image": "powershell.exe" }`; `image` is optional and guards against a reused process id on Windows. Eden then shows the runner as **Running outside the hub**, does not start a second copy and does not stop it. A runner started outside Eden with no lock file is not seen.
+
+## Unreal plugin starter
+
+Choose **Unreal plugin (UE 5.8, with autopilot)** in New project. It creates an Unreal host project, a plugin with one automation test, and an autopilot task list. Eden adds the project to Code updates with Codex and registers its runner. Press Start to run it. The project stays on this PC unless you tick the GitHub box.
+
+The proof script `autopilot\proof.ps1` checks Fab's rules, builds the project, runs the automation tests and Epic's packaging build, and makes the upload zip. A task is done only after the proof passes.
+
+Eden asks for the publisher name for the generated plugin's copyright lines. The publisher name is never stored in this repository. The starter files live in `templates/unreal-plugin/`.

@@ -67,7 +67,7 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
         return {
           id: c.id, name: c.name, dir: c.dir, check: c.check, restartHint: c.restartHint, ai: codebaseAI(c), unreal: c.unreal,
           ok, uncommitted: ok ? uncommittedNow(c) : undefined, runners: runnersWorkingIn(c.dir),
-          proof: c.proof, proofMinutes: c.proofMinutes ?? DEFAULT_PROOF_MINUTES, packageFiles: c.packageFiles, package: ok && c.packageFiles ? packageNow(c) : undefined,
+          proof: c.proof, proofMinutes: c.proofMinutes ?? DEFAULT_PROOF_MINUTES, packageFiles: c.packageFiles, packageFrom: c.packageFrom, package: ok && c.packageFiles ? packageNow(c) : undefined,
         };
       }),
       busy: services.busy,
@@ -120,7 +120,7 @@ export function registerUpdateRoutes(app: Express, services: UpdateRouteServices
     if (!isLocal(req) || !fromOwnPage(req)) return res.status(403).json({ error: 'Codebase settings can only be changed from the hub on this computer.' });
     try {
       const cb = setCodebaseSettings(req.params.id, req.body);
-      res.json({ ok: true, codebase: { id: cb.id, ai: codebaseAI(cb), unreal: cb.unreal === true, proof: cb.proof, proofMinutes: cb.proofMinutes ?? DEFAULT_PROOF_MINUTES, packageFiles: cb.packageFiles } });
+      res.json({ ok: true, codebase: { id: cb.id, ai: codebaseAI(cb), unreal: cb.unreal === true, proof: cb.proof, proofMinutes: cb.proofMinutes ?? DEFAULT_PROOF_MINUTES, packageFiles: cb.packageFiles, packageFrom: cb.packageFrom } });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

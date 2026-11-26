@@ -1,4 +1,5 @@
 ﻿import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import type { Express } from 'express';
@@ -136,6 +137,52 @@ function lockProcessExists(pid: number, image?: string) {
   }
 }
 
+function validateRegistry(value: any): { runners: Runner[]; maxRunners: number } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid runners registry.');
+  }
+  const { runners = [], maxRunners = 3 } = value;
+  if (!Array.isArray(runners) || !Number.isSafeInteger(maxRunners) || maxRunners < 1 || maxRunners > 3) {
+    throw new Error('Invalid runners registry or maxRunners setting.');
+  }
+  const ids = new Set<string>();
+  for (const runner of runners) {
+    if (!runner || typeof runner.id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(runner.id) ||
+        ids.has(runner.id) || !['name', 'cwd', 'command'].every((key) => typeof runner[key] === 'string' && runner[key].trim()) ||
+        !['tasksFile', 'logFile', 'lockFile'].every((key) => runner[key] === undefined || typeof runner[key] === 'string') ||
+        (runner.args !== undefined && runner.args !== 'issueNumbers') ||
+        (runner.needsClosed !== undefined && (!Array.isArray(runner.needsClosed) ||
+          !runner.needsClosed.every((name: unknown) => typeof name === 'string' && name.trim())))) {
+      throw new Error('Invalid runner entry in .eden-runners.json.');
+    }
+    ids.add(runner.id);
+  }
+  return { runners, maxRunners };
+}
+
+export function addRunnerToRegistry(appDir: string, entry: Runner): 'added' | 'exists' {
+  const file = path.join(appDir, '.eden-runners.json');
+  let registry;
+  try {
+    registry = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err: any) {
+    if (err.code !== 'ENOENT') throw err;
+    registry = { maxRunners: 3 };
+  }
+  const { runners } = validateRegistry(registry);
+  if (runners.some((runner) => runner.id === entry?.id)) return 'exists';
+  const next = { ...registry, runners: [...runners, entry] };
+  validateRegistry(next);
+  const temp = path.join(appDir, `.eden-runners-${randomUUID()}.tmp`);
+  try {
+    fs.writeFileSync(temp, JSON.stringify(next, null, 2) + '\n', { flag: 'wx' });
+    fs.renameSync(temp, file);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
+  return 'added';
+}
+
 export function createRunners(appDir: string, deps: {
   spawn: typeof spawn; processNames: typeof processNames; killTree: typeof killTree; lockProcessExists?: typeof lockProcessExists;
 } = { spawn, processNames, killTree }) {
@@ -171,23 +218,7 @@ export function createRunners(appDir: string, deps: {
   }
 
   function load(): { runners: Runner[]; maxRunners: number } {
-    const { runners = [], maxRunners = 3 } = readJson(registry, {});
-    if (!Array.isArray(runners) || !Number.isSafeInteger(maxRunners) || maxRunners < 1 || maxRunners > 3) {
-      throw new Error('Invalid runners registry or maxRunners setting.');
-    }
-    const ids = new Set<string>();
-    for (const runner of runners) {
-      if (!runner || typeof runner.id !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(runner.id) ||
-          ids.has(runner.id) || !['name', 'cwd', 'command'].every((key) => typeof runner[key] === 'string' && runner[key].trim()) ||
-          !['tasksFile', 'logFile', 'lockFile'].every((key) => runner[key] === undefined || typeof runner[key] === 'string') ||
-          (runner.args !== undefined && runner.args !== 'issueNumbers') ||
-          (runner.needsClosed !== undefined && (!Array.isArray(runner.needsClosed) ||
-            !runner.needsClosed.every((name: unknown) => typeof name === 'string' && name.trim())))) {
-        throw new Error('Invalid runner entry in .eden-runners.json.');
-      }
-      ids.add(runner.id);
-    }
-    return { runners, maxRunners };
+    return validateRegistry(readJson(registry, {}));
   }
 
   function captureFile(id: string) {
