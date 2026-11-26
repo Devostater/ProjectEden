@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.ts';
-import { notSignedIn, type CodeAI } from '../../codebaseSettings';
+import { DEFAULT_PROOF_MINUTES, notSignedIn, type CodeAI, type CodebaseSettings as Settings } from '../../codebaseSettings';
+import type { PackageState } from '../../proof';
 import { useFolded, FoldHeader } from './Foldable.tsx';
 import { ui } from '../ui.ts';
 import { Wand2, Loader2, ChevronDown, ListPlus, Lightbulb, RefreshCw, X, Pencil, AlertTriangle } from 'lucide-react';
@@ -24,6 +25,10 @@ export interface CodebaseInfo {
   ok: boolean;
   unreal?: boolean;
   ai?: CodeAI;
+  proof?: string;
+  proofMinutes?: number;
+  packageFiles?: string;
+  package?: PackageState;
   uncommitted?: number; // files changed here that are not saved to GitHub yet
 }
 
@@ -96,11 +101,43 @@ export const CodebasePicker: React.FC<{
   );
 };
 
+export function PackageWarning({ codebase, applied }: { codebase?: CodebaseInfo; applied?: boolean }) {
+  const info = codebase?.package;
+  if (info?.state === 'older') return <p className={ui.empty}>The package <span className="break-all">{info.file?.replaceAll('/', '\\')}</span> is older than the source: <span className="break-all">{info.newer}</span> changed after it was made. Build it again before you upload it.</p>;
+  if (info?.state === 'missing' && !applied) return <p className={ui.empty}>No package file matches <span className="break-all">{codebase?.packageFiles}</span> yet.</p>;
+  return null;
+}
+
+type SettingsInput = Omit<Settings, 'proofMinutes'> & { proofMinutes?: number | '' };
+
+function ProofSettings({ codebase, onSave }: { codebase: CodebaseInfo; onSave: (settings: SettingsInput) => void }) {
+  const [proof, setProof] = useState(codebase.proof ?? '');
+  const [minutes, setMinutes] = useState(String(codebase.proofMinutes ?? DEFAULT_PROOF_MINUTES));
+  const [packageFiles, setPackageFiles] = useState(codebase.packageFiles ?? '');
+  return (
+    <div className="space-y-2">
+      <label className={`${ui.label} flex-wrap`}>Proof command
+        <input className={ui.field} value={proof} maxLength={500} onChange={(e) => setProof(e.target.value)} aria-describedby="proof-command-hint" />
+      </label>
+      <p id="proof-command-hint" className={ui.empty}>Run by the hub in the job's copy after the general checks. Apply waits until it passed.</p>
+      <label className={`${ui.label} flex-wrap`}>Time limit (minutes)
+        <input className={ui.field} type="number" min={1} max={240} step={1} value={minutes} onChange={(e) => setMinutes(e.target.value)} />
+      </label>
+      <label className={`${ui.label} flex-wrap`}>Upload package
+        <input className={ui.field} value={packageFiles} maxLength={200} onChange={(e) => setPackageFiles(e.target.value)} aria-describedby="proof-package-hint" />
+      </label>
+      <p id="proof-package-hint" className={ui.empty}>Optional. The hub warns when this file is older than the source.</p>
+      <PackageWarning codebase={codebase} />
+      <button className={ui.btn} onClick={() => onSave({ proof, proofMinutes: minutes === '' ? '' : Number(minutes), packageFiles })}>Save</button>
+    </div>
+  );
+}
+
 const CodebaseSettings: React.FC<{
   codebase: CodebaseInfo;
   remote: boolean;
   saving: boolean;
-  onSave: (settings: { ai?: CodeAI; unreal?: boolean }) => void;
+  onSave: (settings: SettingsInput) => void;
 }> = ({ codebase, remote, saving, onSave }) => {
   const [folded, toggle] = useFolded('eden_codebase_settings_folded', true);
   const ai = codebase.ai === 'codex' ? 'codex' : 'claude';
@@ -108,7 +145,10 @@ const CodebaseSettings: React.FC<{
     <div className={`${ui.section} mb-3`}>
       <FoldHeader title={`Settings for ${codebase.name}${folded ? ':' : ''}`} folded={folded} onToggle={toggle} foldedHint={`${ai === 'codex' ? 'Codex' : 'Claude'}${codebase.unreal === true ? ', Unreal project' : ''}`} />
       {!folded && (remote ? (
-        <p className={`mt-2 ${ui.empty}`}>AI that changes the code: {ai === 'codex' ? 'Codex (ChatGPT)' : 'Claude'}. {codebase.unreal === true ? 'Unreal project.' : 'Unreal project setting is off.'} Change these settings on the hub computer.</p>
+        <div className="mt-2 space-y-2">
+          <p className={ui.empty}>AI that changes the code: {ai === 'codex' ? 'Codex (ChatGPT)' : 'Claude'}. {codebase.unreal === true ? 'Unreal project.' : 'Unreal project setting is off.'} Change these settings on the hub computer.</p>
+          {codebase.id === 'hub' ? <p className={ui.empty}>The hub uses its type check, tests and build as its proof.</p> : <PackageWarning codebase={codebase} />}
+        </div>
       ) : (
         <fieldset disabled={saving} className="mt-2 space-y-2">
           <label className={`${ui.label} flex-wrap`}>AI that changes the code
@@ -122,6 +162,9 @@ const CodebaseSettings: React.FC<{
             This is an Unreal project
           </label>
           <p className={ui.empty}>Codex can then look at the open Unreal editor.</p>
+          {codebase.id === 'hub'
+            ? <p className={ui.empty}>The hub uses its type check, tests and build as its proof.</p>
+            : <ProofSettings key={JSON.stringify([codebase.id, codebase.proof, codebase.proofMinutes, codebase.packageFiles])} codebase={codebase} onSave={onSave} />}
         </fieldset>
       ))}
     </div>
@@ -404,7 +447,7 @@ export const NextUpdate: React.FC<{
   useEffect(() => {
     setAllowUnrealChanges(false);
   }, [p.target, codexUnreal]);
-  const saveSettings = async (settings: { ai?: CodeAI; unreal?: boolean }) => {
+  const saveSettings = async (settings: SettingsInput) => {
     if (!current || savingSettings) return;
     setSavingSettings(true);
     p.onError('');

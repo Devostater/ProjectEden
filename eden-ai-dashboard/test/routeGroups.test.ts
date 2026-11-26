@@ -71,6 +71,7 @@ test('update routes return a saved diff and enforce owner permissions and the ap
     createdAt: '2026-11-23T00:00:00Z', log: [], diff: 'fixture patch',
   };
   const unexpected = () => assert.fail('The rejected update must not call the update worker');
+  let proofLaneBusy = false;
   const services: UpdateRouteServices = {
     jobs: [job], codebases: [cb], findCodebase: id => id === cb.id ? cb : undefined,
     uncommittedNow: unexpected, runBackup: unexpected,
@@ -80,13 +81,15 @@ test('update routes return a saved diff and enforce owner permissions and the ap
     },
     setCodebaseSettings: (id, body) => {
       assert.equal(id, cb.id);
-      return Object.assign(cb, readSettings(body));
+      return Object.assign(cb, readSettings(body, id));
     },
     addCodebase: unexpected, save: unexpected, startRetry: unexpected, git: unexpected,
+    currentHead: () => 'current', headNow: () => 'current', packageNow: unexpected,
+    startProofAgain: unexpected, stopProof: () => false,
     repoRoot: unexpected, patchPaths: unexpected, saveRestorePoint: unexpected, applyPatch: unexpected,
     recheckAfter: unexpected, restoreFromPoint: unexpected, now: unexpected,
     ideaSet: unexpected, generateIdeas: unexpected, saveIdeas: unexpected, findSameUpdate: unexpected,
-    lastBackup: null, backingUp: false, busy: false, restartPending: false,
+    lastBackup: null, backingUp: false, get busy() { return proofLaneBusy; }, restartPending: false,
     markRestartPending: unexpected, onApplied: unexpected,
     appDir: cb.dir, backupBranch: 'fixture', ideasMaxAge: 0, sameIdeaBusy: [],
   };
@@ -128,6 +131,19 @@ test('update routes return a saved diff and enforce owner permissions and the ap
   assert.deepEqual(await started.json(), { job: { id: 'new-job' } });
   const saved = await post(settingsUrl, { ai: 'codex', unreal: true });
   assert.equal(saved.status, 200);
-  assert.deepEqual(await saved.json(), { ok: true, codebase: { id: 'hub', ai: 'codex', unreal: true } });
+  assert.deepEqual(await saved.json(), { ok: true, codebase: { id: 'hub', ai: 'codex', unreal: true, proofMinutes: 30 } });
   assert.equal((await list())[0].ai, 'codex');
+
+  cb.id = job.codebaseId = 'plugin';
+  cb.proof = 'build.cmd';
+  proofLaneBusy = true;
+  const proofBlocked = await apply(base);
+  assert.equal(proofBlocked.status, 409);
+  assert.deepEqual(await proofBlocked.json(), { error: 'This update has no proof yet. Press "Run proof". Apply is waiting for the proof.' });
+  const busy = await post('/api/updates/saved/proof', {});
+  assert.equal(busy.status, 409);
+  assert.deepEqual(await busy.json(), { error: 'Another update is running. Run the proof again when it has finished.' });
+  const stop = await post('/api/updates/saved/proof/stop', {});
+  assert.equal(stop.status, 400);
+  assert.deepEqual(await stop.json(), { error: 'There is no proof running for this update.' });
 });

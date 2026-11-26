@@ -9,7 +9,7 @@ import { jsonObject, jsonStore } from './jsonStore';
 //   One update runs at a time; any others asked for meanwhile wait in a queue and start by themselves.
 // Every request here must come from the hub's own page, on this computer or on a paired device the owner
 // switched "Code updates" on for (see pairing.ts).
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -21,7 +21,8 @@ import { git } from './gitRun';
 import { stopProcessTree } from './processTree';
 import { changedSince, realFolderChangedMessage, unsavedWork, type UnsavedWork } from './realFolder';
 import { aboutNewCodebase, updateRules } from './updatePrompt';
-import { recheckWaiting } from './updateOverlap';
+import { filesInDiff, recheckWaiting } from './updateOverlap';
+import { packageState, proofFilesTouched, runProof, type ProofResult } from './proof';
 import { runReleaseGate, type UpdateCheck } from './updateReleaseGate';
 import { cliSignedIn, providerUnavailable, recordFailure } from './providers';
 import { pcBusy, onBusyChange } from './busy';
@@ -29,7 +30,7 @@ import { isOffline, onOfflineChange } from './offline';
 import { localAgentModel, localClaudeEnv, planClaudeEnv } from './localClaude';
 import { registerUpdateRoutes as mountUpdateRoutes } from './server/routes/updates';
 import { codexExecArgs, unrealAnswerStatus, unrealUpdate, type UnrealToolsStatus } from './unrealUpdate';
-import { codebaseAI, followCodebaseAI, notSignedIn, readSettings, restoreHubSettings, savedHubSettings, type CodeAI } from './codebaseSettings';
+import { codebaseAI, DEFAULT_PROOF_MINUTES, followCodebaseAI, notSignedIn, readSettings, restoreHubSettings, savedHubSettings, type CodebaseSettings } from './codebaseSettings';
 
 const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const STORE = path.join(APP_DIR, '.eden-updates.json');
@@ -42,7 +43,7 @@ const MAX_COPY_BYTES = 5 * 1024 * 1024; // untracked files bigger than this aren
 
 type CheckKind = 'tsc' | 'node'; // tsc: TypeScript check; node: syntax check of changed .js files + npm test
 
-export interface Codebase {
+export interface Codebase extends CodebaseSettings {
   id: string;
   name: string;
   dir: string; // folder of the app inside its git repository
@@ -51,8 +52,6 @@ export interface Codebase {
   restartHint: string;
   about: string; // what the AI is told about the codebase
   protect: string[]; // paths the AI must not touch
-  unreal?: boolean;
-  ai?: CodeAI;
 }
 
 const HUB: Codebase = {
@@ -105,7 +104,7 @@ export const findCodebase = (id?: string) => codebases.find((c) => c.id === (id 
 export function setCodebaseSettings(id: string, input: unknown): Codebase {
   const cb = codebases.find((c) => c.id === id);
   if (!cb) throw new Error('That codebase is not set up in the hub.');
-  const settings = readSettings(input);
+  const settings = readSettings(input, id);
   const next = { ...cb, ...settings };
   if (settings.unreal === false) delete next.unreal;
   try {
@@ -178,6 +177,9 @@ export interface UpdateJob {
   diff?: string; // the change, as a patch against the codebase's git repository
   files?: { path: string; added: number; removed: number }[];
   check?: UpdateCheck;
+  proof?: ProofResult;
+  proofRunning?: boolean;
+  proofStartedAt?: string;
   needsRestart?: boolean;
   error?: string;
   interruptions?: number; // how many times the hub closed while this was running
@@ -206,14 +208,25 @@ const save = () => {
   }
 };
 const now = () => new Date().toISOString();
+const failedProof = (command: string, output: string, startedAt = now()): ProofResult =>
+  ({ command, ok: false, output, exitCode: null, startedAt, finishedAt: now() });
 
 // Updates that were running when the hub closed. Nothing is running yet at this point, so they can't still be
 // alive. The first time, an update goes back into the queue and starts again by itself (it keeps its place, so
 // it runs before anything asked for later). Cut short a second time, it is marked failed with "Try again", so
 // an update that keeps stopping the hub can't go round in circles.
 const interrupted: UpdateJob[] = [];
+let interruptedProof = false;
 for (const j of jobs) {
   j.codebaseId = j.codebaseId || 'hub';
+  if (j.proofRunning) {
+    interruptedProof = true;
+    delete j.proofRunning;
+    if (j.status === 'ready' || j.status === 'undone') {
+      j.proof = failedProof(findCodebase(j.codebaseId)?.proof || '', 'The hub restarted while the proof was running. Press "Run proof again".', j.proofStartedAt);
+    } else delete j.proof;
+    delete j.proofStartedAt;
+  }
   if (j.status !== 'working' && j.status !== 'checking') continue;
   interrupted.push(j);
   j.interruptions = (j.interruptions || 0) + 1;
@@ -230,7 +243,7 @@ for (const j of jobs) {
     logActivity('error', `Code update stopped: the hub restarted twice while it was running. ${j.request.slice(0, 80)}`, { retry: { kind: 'update', id: j.id } });
   }
 }
-if (interrupted.length) save();
+if (interrupted.length || interruptedProof) save();
 
 const repoRoot = (cb: Codebase) => git(['rev-parse', '--show-toplevel'], cb.dir).trim();
 // The codebase's folder relative to its repository root ('' when the codebase is the whole repository).
@@ -260,7 +273,40 @@ function uncommittedNow(cb: Codebase): number | undefined {
   return n;
 }
 
-function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skippedLarge: number; uncommitted?: number; real: UnsavedWork } {
+function currentHead(cb: Codebase): string | undefined {
+  try {
+    return git(['rev-parse', 'HEAD'], cb.dir).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function cachedReading<T>(read: (cb: Codebase) => T, key: (cb: Codebase) => string) {
+  const cache = new Map<string, { at: number; value: T; key: string }>();
+  const reading = (cb: Codebase) => {
+    const hit = cache.get(cb.id);
+    if (hit && hit.at > Date.now() - 20_000 && hit.key === key(cb)) return hit.value;
+    const value = read(cb);
+    cache.set(cb.id, { at: Date.now(), value, key: key(cb) });
+    return value;
+  };
+  // Read again next time: the hub itself just changed what this reading is compared with.
+  reading.forget = (id: string) => void cache.delete(id);
+  return reading;
+}
+
+const headNow = cachedReading(currentHead, (cb) => cb.dir);
+const packageNow = cachedReading((cb) => {
+  if (!cb.packageFiles) return;
+  try {
+    const sourceFiles = git(['ls-files', '-z', '-co', '--exclude-standard', '--', '.'], cb.dir).split('\0').filter(Boolean);
+    return packageState({ dir: cb.dir, pattern: cb.packageFiles, sourceFiles });
+  } catch {
+    return undefined;
+  }
+}, (cb) => JSON.stringify([cb.dir, cb.packageFiles]));
+
+function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skippedLarge: number; uncommitted?: number; real: UnsavedWork; head: string } {
   const root = repoRoot(cb);
   const rel = relOf(cb);
   const uncommitted = countUncommitted(cb);
@@ -274,7 +320,8 @@ function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skip
     git(['worktree', 'prune'], root);
   } catch {}
   if (fs.existsSync(dir)) throw new Error(`An old working copy of this update is still at ${dir} and could not be removed. Close anything using that folder (an editor, a terminal), then press Try again.`);
-  git(['worktree', 'add', '--detach', dir, 'HEAD'], root);
+  const head = git(['rev-parse', 'HEAD'], root).trim();
+  git(['worktree', 'add', '--detach', dir, head], root);
   // Bring over uncommitted work, so the AI starts from what you actually have. The same reading is kept, to
   // tell afterwards whether the real folder changed while the AI ran (see realFolder.ts).
   const real = unsavedWork(root, rel);
@@ -301,7 +348,7 @@ function makeCopy(cb: Codebase, id: string): { dir: string; appDir: string; skip
   const appDir = rel ? path.join(dir, rel) : dir;
   const modules = path.join(cb.dir, 'node_modules');
   if (fs.existsSync(modules) && !fs.existsSync(path.join(appDir, 'node_modules'))) fs.symlinkSync(modules, path.join(appDir, 'node_modules'), 'junction');
-  return { dir, appDir, skippedLarge, uncommitted, real };
+  return { dir, appDir, skippedLarge, uncommitted, real, head };
 }
 
 function removeCopy(cb: Codebase, id: string) {
@@ -628,6 +675,104 @@ let busy = false;
 let restartPending = false;
 let onApplied: (job: UpdateJob, cb: Codebase) => void = () => {};
 
+const proofChildren = new Map<string, ChildProcess>();
+const proofStops = new Set<string>();
+// A proof can be a long build. When the hub closes (restart, stop) it ends the proof too: left alone it would
+// keep building in a copy that the next start clears away. The update then says the hub restarted.
+process.once('exit', () => {
+  for (const child of proofChildren.values()) stopProcessTree(child, { wait: true });
+});
+
+function markProofRunning(job: UpdateJob) {
+  job.proofRunning = true;
+  job.proofStartedAt = now();
+  save();
+}
+
+function finishProof(job: UpdateJob) {
+  proofChildren.delete(job.id);
+  proofStops.delete(job.id);
+  delete job.proofRunning;
+  delete job.proofStartedAt;
+  // The list compares this proof with the codebase's current commit: read that again, not from 20 seconds ago.
+  headNow.forget(job.codebaseId);
+  save();
+}
+
+function stopProof(job: UpdateJob) {
+  if (!job.proofRunning) return false;
+  if (!proofStops.has(job.id)) {
+    proofStops.add(job.id);
+    const child = proofChildren.get(job.id);
+    if (child) stopProcessTree(child);
+  }
+  return true;
+}
+
+const appliedIds = (cb: Codebase) => jobs.filter((x) => x.codebaseId === cb.id && x.status === 'applied').map((x) => x.id);
+function changedAppliedId(cb: Codebase, before: string[]) {
+  const after = appliedIds(cb);
+  return after.find((id) => !before.includes(id)) || before.find((id) => !after.includes(id));
+}
+
+async function proveCopy(job: UpdateJob, cb: Codebase, command: string, copy: ReturnType<typeof makeCopy>) {
+  const minutes = cb.proofMinutes ?? DEFAULT_PROOF_MINUTES;
+  job.log.push(`Running the proof: ${command} (time limit ${minutes} minutes)`);
+  save();
+  const rel = path.relative(copy.dir, copy.appDir).split(path.sep).join('/');
+  const files = filesInDiff(job.diff || '').map((file) => rel && file.startsWith(`${rel}/`) ? file.slice(rel.length + 1) : file);
+  const result = await runProof(command, { cwd: copy.appDir, minutes, onChild: (child) => proofChildren.set(job.id, child) });
+  proofChildren.delete(job.id);
+  job.proof = { ...result, head: copy.head, touches: proofFilesTouched(command, files) };
+  job.log.push(result.ok ? 'Proof passed.' : result.stopped ? 'The proof was stopped.' : result.timedOut ? 'The proof ran out of time.' : 'The proof did not pass.');
+  return result;
+}
+
+function startProofAgain(job: UpdateJob, cb: Codebase, command: string) {
+  busy = true;
+  markProofRunning(job);
+  setImmediate(async () => {
+    const before = appliedIds(cb);
+    let attemptedCopy = false;
+    try {
+      if (proofStops.has(job.id)) {
+        job.proof = { ...failedProof(command, 'Stopped before it finished.', job.proofStartedAt), stopped: true };
+        return;
+      }
+      attemptedCopy = true;
+      const copy = makeCopy(cb, job.id);
+      try {
+        git(['apply', '--whitespace=nowarn', '-'], copy.dir, job.diff);
+      } catch {
+        job.stale = true;
+        job.proof = { ...failedProof(command, 'The change no longer fits. Press "Try again" to redo it on the current code.', job.proofStartedAt), head: copy.head };
+        return;
+      }
+      delete job.stale;
+      const result = await proveCopy(job, cb, command, copy);
+      if (result.ok) {
+        const changed = changedAppliedId(cb, before);
+        if (changed) job.olderBase = changed;
+        else {
+          delete job.olderBase;
+          delete job.olderBaseSameFiles;
+          job.baseApplied = before;
+        }
+      }
+    } catch (err) {
+      job.proof = failedProof(command, String(err).slice(-6000), job.proofStartedAt);
+    } finally {
+      try {
+        if (attemptedCopy) removeCopy(cb, job.id);
+      } finally {
+        finishProof(job);
+        busy = false;
+        startNext();
+      }
+    }
+  });
+}
+
 async function process_(job: UpdateJob) {
   busy = true;
   const cb = findCodebase(job.codebaseId);
@@ -641,7 +786,7 @@ async function process_(job: UpdateJob) {
     job.log.push(`Making a separate copy of ${cb.name} to work on`);
     save();
     const copy = makeCopy(cb, job.id);
-    job.baseApplied = jobs.filter((x) => x.codebaseId === cb.id && x.status === 'applied').map((x) => x.id);
+    job.baseApplied = appliedIds(cb);
     if (copy.uncommitted !== undefined) job.uncommitted = copy.uncommitted; // the count at the moment the copy was made
     if (copy.skippedLarge) job.log.push(`Left out ${copy.skippedLarge} large file${copy.skippedLarge === 1 ? '' : 's'} (over 5 MB) from the working copy`);
     try {
@@ -698,9 +843,24 @@ async function process_(job: UpdateJob) {
       job.log.push(cb.id === 'hub' ? 'Running the type check, tests and production build' : cb.check === 'tsc' ? 'Running the type check' : 'Checking the code and running the tests');
       save();
       job.check = await runCheck(cb, copy.appDir, job.files.map((f) => f.path), baselineFailed, baselineTypeProblems);
+      delete job.proof;
+      const proofCodebase = findCodebase(cb.id);
+      let proofFailed = false;
+      if (job.check.ok && proofCodebase?.proof) {
+        markProofRunning(job);
+        try {
+          proofFailed = !(await proveCopy(job, proofCodebase, proofCodebase.proof, copy)).ok;
+          const changed = changedAppliedId(cb, job.baseApplied);
+          if (changed) job.olderBase = changed;
+        } finally {
+          finishProof(job);
+        }
+      }
       job.status = 'ready';
       const fileCount = `${job.files.length} file${job.files.length === 1 ? '' : 's'}`;
-      if (job.check.ok) {
+      if (proofFailed) {
+        logActivity('error', `Code update ready for review (${cb.name}, ${fileCount}) but its proof failed. Open it to see the log or run the proof again.`);
+      } else if (job.check.ok) {
         logActivity('done', `Code update ready for review (${cb.name}, ${fileCount}).`);
       } else {
         // Say what the check found and what to do, not only that it failed.
@@ -896,7 +1056,8 @@ function autoBackup() {
 export function activeUpdateNames(): { working: string[]; queued: string[] } {
   const name = (j: UpdateJob) => `"${j.request.replace(/\s+/g, ' ').slice(0, 80)}" (${findCodebase(j.codebaseId)?.name || 'a codebase'})`;
   return {
-    working: jobs.filter((j) => j.status === 'working').map(name),
+    // Checking counts too, and so does a proof that is being run again: a proof can be a long build.
+    working: jobs.filter((j) => j.status === 'working' || j.status === 'checking' || j.proofRunning).map(name),
     queued: jobs.filter((j) => j.status === 'queued').map(name),
   };
 }
@@ -1225,6 +1386,7 @@ async function runIdeas(cb: Codebase) {
 function updateRouteServices() {
   return {
     jobs, codebases, findCodebase, uncommittedNow, runBackup, requestCodeUpdate, addCodebase, setCodebaseSettings,
+    currentHead, headNow: (cb: Codebase) => headNow(cb), packageNow: (cb: Codebase) => packageNow(cb), startProofAgain, stopProof,
     save, startRetry, git, repoRoot, patchPaths, saveRestorePoint, applyPatch, recheckAfter, restoreFromPoint, now,
     ideaSet, generateIdeas, saveIdeas, findSameUpdate,
     get lastBackup() { return lastBackup; },
