@@ -8,6 +8,7 @@ import express from 'express';
 import { registerConversationRoutes } from '../server/routes/chat';
 import { createChatHistory } from '../server/routes/chats';
 import { registerUpdateRoutes } from '../server/routes/updates';
+import { setRunnerLookup } from '../oneWriter';
 import { readSettings } from '../codebaseSettings';
 import type { Codebase, UpdateJob, UpdateRouteServices } from '../updates';
 
@@ -133,6 +134,24 @@ test('update routes return a saved diff and enforce owner permissions and the ap
   assert.equal(saved.status, 200);
   assert.deepEqual(await saved.json(), { ok: true, codebase: { id: 'hub', ai: 'codex', unreal: true, proofMinutes: 30 } });
   assert.equal((await list())[0].ai, 'codex');
+  assert.deepEqual((await list())[0].runners, []);
+
+  setRunnerLookup((dir) => dir === cb.dir ? ['LevelGen autopilot'] : []);
+  t.after(() => setRunnerLookup(undefined));
+  assert.deepEqual((await list())[0].runners, ['LevelGen autopilot']);
+  const beforeApply = { ...job };
+  const runnerBlockedApply = await post('/api/updates/saved/apply', { overrideChecks: true });
+  assert.equal(runnerBlockedApply.status, 409);
+  assert.match((await runnerBlockedApply.json()).error, /^Apply is waiting: "LevelGen autopilot"/);
+  assert.deepEqual(job, beforeApply);
+  job.status = 'applied';
+  const beforeUndo = { ...job };
+  const runnerBlockedUndo = await post('/api/updates/saved/undo', {});
+  assert.equal(runnerBlockedUndo.status, 409);
+  assert.match((await runnerBlockedUndo.json()).error, /^Undo is waiting: "LevelGen autopilot"/);
+  assert.deepEqual(job, beforeUndo);
+  job.status = 'ready';
+  setRunnerLookup(undefined);
 
   cb.id = job.codebaseId = 'plugin';
   cb.proof = 'build.cmd';

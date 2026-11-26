@@ -13,6 +13,7 @@ import type { Express } from 'express';
 import { logActivity, fileProblem } from './activity';
 import { mayManage, mayView } from './permissions';
 import { parseRepo } from './github';
+import { applying, runnerHold } from './oneWriter';
 
 const ROOT = process.env.EDEN_REPOS_ROOT || 'C:\\AZI';
 const SKIP = new Set(['archive', 'security', 'node_modules']);
@@ -130,6 +131,12 @@ async function info(name: string, dir: string, fetchFirst: boolean): Promise<Rep
 
 // Bring GitHub's changes down (fast-forward only: never a surprise merge), then send this PC's saved ones up.
 async function sync(name: string, dir: string): Promise<{ ok: boolean; message: string }> {
+  const held = runnerHold(dir, 'Sync');
+  if (held) return { ok: false, message: held };
+  return applying(dir, 'Sync', () => syncRepo(name, dir));
+}
+
+async function syncRepo(name: string, dir: string): Promise<{ ok: boolean; message: string }> {
   const remote = (await git(dir, ['remote', 'get-url', 'origin'], 10000)).out;
   if (!remote) return { ok: false, message: 'This repo isn\'t linked to GitHub yet.' };
   const f = await git(dir, ['fetch', '--prune', 'origin'], 60000);
@@ -196,7 +203,9 @@ export function registerRepoRoutes(app: Express) {
         return r.ok ? done(r.message) : fail(r.message);
       }
       case 'pull': {
-        const p = await git(dir, ['pull', '--ff-only'], 120000);
+        const held = runnerHold(dir, 'Sync');
+        if (held) return fail(held);
+        const p = await applying(dir, 'Sync', () => git(dir, ['pull', '--ff-only'], 120000));
         return p.ok ? done('Brought GitHub\'s changes down.') : fail(explain(p.err));
       }
       case 'push': {
@@ -205,12 +214,16 @@ export function registerRepoRoutes(app: Express) {
         return p.ok ? done('Sent to GitHub.') : fail(explain(p.err));
       }
       case 'commit': {
+        const held = runnerHold(dir, 'Saving to GitHub');
+        if (held) return fail(held);
         // Saves everything that changed in this repo, with your message. Files listed in .gitignore stay out.
         const message = String(req.body?.message || '').trim();
         if (!message) return fail('Write a short note about what changed.');
-        const add = await git(dir, ['add', '-A'], 60000);
-        if (!add.ok) return fail(explain(add.err));
-        const c = await git(dir, ['commit', '-m', message.slice(0, 500)], 60000);
+        const c = await applying(dir, 'Saving to GitHub', async () => {
+          const add = await git(dir, ['add', '-A'], 60000);
+          if (!add.ok) return add;
+          return git(dir, ['commit', '-m', message.slice(0, 500)], 60000);
+        });
         if (!c.ok) return fail(explain(c.err || c.out));
         logActivity('done', `${name}: saved changes ("${message.slice(0, 60)}").`);
         return done('Changes saved. Press Sync to send them to GitHub.');
@@ -238,14 +251,26 @@ export function registerRepoRoutes(app: Express) {
   });
 
   // Auto-sync: every 10 minutes, for the repos you switched it on for. Safe steps only (see the top of this file).
+  const lastRunnerHold = new Map<string, number>();
   const tick = async () => {
     for (const r of listRepoDirs().filter((x) => settings.auto[x.name])) {
-      const before = await info(r.name, r.dir, true);
-      if (before.error || !before.remote) continue;
-      if (before.behind > 0 && before.changeCount > 0) continue; // unsaved work here: don't pull over it
-      if (!before.ahead && !before.behind) continue;
-      const s = await sync(r.name, r.dir);
-      logActivity(s.ok ? 'info' : 'error', `Auto-sync ${r.name}: ${s.message}`);
+      const held = runnerHold(r.dir, 'Sync');
+      if (held) {
+        const now = Date.now();
+        if (now - (lastRunnerHold.get(r.dir) ?? -Infinity) >= 10 * 60 * 1000) {
+          lastRunnerHold.set(r.dir, now);
+          logActivity('info', `Auto-sync ${r.name}: ${held}`);
+        }
+        continue;
+      }
+      await applying(r.dir, 'Sync', async () => {
+        const before = await info(r.name, r.dir, true);
+        if (before.error || !before.remote) return;
+        if (before.behind > 0 && before.changeCount > 0) return; // unsaved work here: don't pull over it
+        if (!before.ahead && !before.behind) return;
+        const s = await syncRepo(r.name, r.dir);
+        logActivity(s.ok ? 'info' : 'error', `Auto-sync ${r.name}: ${s.message}`);
+      });
     }
   };
   setTimeout(() => tick().catch(() => {}), 60000).unref?.();

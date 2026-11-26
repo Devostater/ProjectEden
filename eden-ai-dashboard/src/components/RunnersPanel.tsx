@@ -1,4 +1,5 @@
 ﻿import { useEffect, useState } from 'react';
+import { ui } from '../ui';
 
 interface RunnerRow {
   id: string;
@@ -77,8 +78,10 @@ export default function RunnersPanel() {
       </div>
       {(error || loadError) && <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">{loadError || error}</p>}
       {status?.runners.length === 0 && <p className="mt-2 text-sm">Add runners in .eden-runners.json to get started.</p>}
+      <p className={ui.empty}>A runner started outside the hub is only seen here if it keeps a lock file.</p>
       {status && status.runners.map((runner) => {
-        const running = runner.state === 'Running';
+        const outside = runner.state === 'Running outside the hub';
+        const running = runner.state === 'Running' || outside;
         const progress = runner.progress;
         const current = progress?.current;
         return (
@@ -90,6 +93,7 @@ export default function RunnersPanel() {
               </span>
               {running && runner.startedAt && <time className="text-xs" dateTime={runner.startedAt}>Since {new Date(runner.startedAt).toLocaleString()}</time>}
             </div>
+            {outside && <p className={ui.empty}>Started outside the hub</p>}
             {runner.error && <p className="mt-1 text-sm text-red-600 dark:text-red-400">{runner.error}</p>}
             {progress && progress.total > 0 && (
               <div className="mt-2 text-sm">
@@ -105,10 +109,10 @@ export default function RunnersPanel() {
                     value={args[runner.id] || ''} onChange={(event) => setArgs({ ...args, [runner.id]: event.target.value })} />
                 </label>
               )}
-              <button type="button" disabled={!!pending || !!loadError || runner.state === 'Stopping'} onClick={() => void act(running ? 'stop' : 'start', runner.id)}
+              {!outside && <button type="button" disabled={!!pending || !!loadError || runner.state === 'Stopping'} onClick={() => void act(running ? 'stop' : 'start', runner.id)}
                 className="rounded-md bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50">
                 {running ? 'Stop' : 'Start'}
-              </button>
+              </button>}
               <button type="button" aria-expanded={logId === runner.id} onClick={() => setLogId(logId === runner.id ? undefined : runner.id)}
                 className="rounded-md px-2 py-1 text-sm underline">
                 {logId === runner.id ? 'Hide log' : 'Show log'}
