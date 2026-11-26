@@ -968,38 +968,56 @@ const StepList: React.FC<{ steps: SetupStep[] }> = ({ steps }) => (
   </ul>
 );
 
+const PUBLISHER_KEY = 'eden-unreal-plugin-publisher';
+
 const NewAziProjectDialog: React.FC<{ api: ProjectsApi; onClose: () => void; initialName?: string }> = ({ api, onClose, initialName = '' }) => {
   const [name, setName] = useState(initialName);
   const [purpose, setPurpose] = useState('');
-  const [template, setTemplate] = useState<'blank' | 'node' | 'python' | 'unity'>('blank');
+  const [template, setTemplate] = useState<'blank' | 'node' | 'python' | 'unity' | 'unreal-plugin'>('blank');
+  const [github, setGithub] = useState(true);
+  const [publisher, setPublisher] = useState(() => {
+    try { return localStorage.getItem(PUBLISHER_KEY) || ''; } catch { return ''; }
+  });
+  const unreal = template === 'unreal-plugin';
   const [adopt, setAdopt] = useState(false);
-  const [check, setCheck] = useState<{ name: string; folder: string; exists: boolean; github: boolean } | null>(null);
+  const [check, setCheck] = useState<{ name: string; folder: string; exists: boolean; github: boolean; plugin?: string; problem?: string } | null>(null);
   const [running, setRunning] = useState(false);
   const [report, setReport] = useState<SetupReport | null>(null);
 
   useEffect(() => {
-    if (!name.trim()) return setCheck(null);
+    if (!name.trim()) return;
+    const controller = new AbortController();
     const t = setTimeout(async () => {
       try {
-        const r = await fetch(`/api/projects/new/check?name=${encodeURIComponent(name)}`);
+        const r = await fetch(`/api/projects/new/check?name=${encodeURIComponent(name)}&template=${template}`, { signal: controller.signal });
         if (r.ok) {
           const c = await r.json();
+          if (controller.signal.aborted) return;
           setCheck(c);
-          if (c.exists) setAdopt(true);
+          setAdopt(!unreal && c.exists);
         }
       } catch {}
     }, 300);
-    return () => clearTimeout(t);
-  }, [name]);
+    return () => {
+      clearTimeout(t);
+      controller.abort();
+    };
+  }, [name, template, unreal]);
+
+  const canCreate = !!name.trim() && !running && (!check?.exists || adopt) &&
+    (!unreal || (!!publisher.trim() && !check?.problem));
 
   const submit = async () => {
-    if (!name.trim() || running) return;
+    if (!canCreate) return;
     setRunning(true);
     setReport(null);
     try {
-      const r = await fetch('/api/projects/new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, purpose, template, adopt }) });
+      const r = await fetch('/api/projects/new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, purpose, template, adopt: !unreal && adopt, github, publisher: unreal ? publisher : undefined }) });
       const d = await r.json().catch(() => ({ error: `The hub answered ${r.status}.` }));
       setReport(d.steps ? d : { ok: false, status: 'failed', name, folder: '', secretsMoved: [], steps: [], error: d.error || 'Something went wrong.' });
+      if (unreal && d.projectId) {
+        try { localStorage.setItem(PUBLISHER_KEY, publisher.trim()); } catch {}
+      }
       await api.refresh();
       if (d.projectId) api.setActiveId(d.projectId);
     } catch (err: any) {
@@ -1028,7 +1046,7 @@ const NewAziProjectDialog: React.FC<{ api: ProjectsApi; onClose: () => void; ini
             <button type="button" onClick={onClose} className="ml-auto rounded-lg px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
               Cancel
             </button>
-            <button type="submit" disabled={!name.trim() || running || (!!check?.exists && !adopt)} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40">
+            <button type="submit" disabled={!canCreate} className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-40">
               {running && <Loader2 className="h-4 w-4 animate-spin" />} {running ? 'Setting up…' : adopt ? 'Set up this folder' : 'Create project'}
             </button>
           </>
@@ -1075,15 +1093,16 @@ const NewAziProjectDialog: React.FC<{ api: ProjectsApi; onClose: () => void; ini
       ) : (
         <>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Creates the folder in AZI, sets up git (secret files go to Security\Keys), makes a <b>private</b> GitHub repo, pushes it, adds it here, and tells you when it's ready.
+            Creates the folder in AZI, sets up git (secret files go to Security\Keys) and adds it here. With the GitHub box ticked it also makes a <b>private</b> GitHub repo and pushes it. Without it the project stays on this PC.
           </p>
           <div>
             <label htmlFor="np-name" className={labelClass}>Name</label>
-            <input id="np-name" autoFocus required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Star Courier" className={inputClass} />
+            <input id="np-name" autoFocus required value={name} onChange={(e) => { setName(e.target.value); setCheck(null); setAdopt(false); }} placeholder="e.g. Star Courier" className={inputClass} />
             {check && (
               <p className={`mt-1 text-xs ${check.exists ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500 dark:text-slate-400'}`}>
-                {check.exists ? `${check.folder} already exists.` : `Folder: ${check.folder}`}
-                {!check.github && ' · GitHub not linked yet: the project is made on this PC and the report says how to publish it.'}
+                {check.problem || (check.exists ? `${check.folder} already exists.` : `Folder: ${check.folder}`)}
+                {unreal && check.plugin && <><br />Plugin name in code: {check.plugin}</>}
+                {github && !check.github && !check.problem && ' · GitHub not linked yet: the project is made on this PC and the report says how to publish it.'}
               </p>
             )}
           </div>
@@ -1094,17 +1113,39 @@ const NewAziProjectDialog: React.FC<{ api: ProjectsApi; onClose: () => void; ini
           <div className="flex flex-wrap items-end gap-6">
             <div>
               <label htmlFor="np-template" className={labelClass}>Starter files</label>
-              <select id="np-template" value={template} onChange={(e) => setTemplate(e.target.value as typeof template)} disabled={adopt} className={inputClass}>
+              <select id="np-template" value={template} onChange={(e) => {
+                const next = e.target.value as typeof template;
+                setTemplate(next);
+                setGithub(next !== 'unreal-plugin');
+                setAdopt(false);
+                setCheck(null);
+              }} className={inputClass}>
                 <option value="blank">Blank (README + notes)</option>
                 <option value="node">Node.js</option>
                 <option value="python">Python</option>
                 <option value="unity">Unity (ignore rules only)</option>
+                <option value="unreal-plugin">Unreal plugin (UE 5.8, with autopilot)</option>
               </select>
             </div>
             <label className="flex items-center gap-2 pb-2 text-sm text-slate-600 dark:text-slate-300">
-              <input type="checkbox" checked={adopt} onChange={(e) => setAdopt(e.target.checked)} /> Use the existing folder
+              <input type="checkbox" disabled={unreal} checked={!unreal && adopt} onChange={(e) => setAdopt(e.target.checked)} /> Use the existing folder
             </label>
           </div>
+          <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+            <input type="checkbox" checked={github} onChange={(e) => setGithub(e.target.checked)} /> Also make a private GitHub repo
+          </label>
+          {unreal && (
+            <>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Creates a host project, a plugin with one test, and an autopilot folder. Eden adds it to Code updates with Codex and its proof, and adds a runner. Nothing starts by itself.
+              </p>
+              <div>
+                <label htmlFor="np-publisher" className={labelClass}>Publisher name</label>
+                <input id="np-publisher" required maxLength={80} aria-describedby="np-publisher-hint" value={publisher} onChange={(e) => setPublisher(e.target.value)} className={inputClass} />
+                <p id="np-publisher-hint" className="mt-1 text-xs text-slate-500 dark:text-slate-400">Goes into the copyright line of every source file. Fab requires it.</p>
+              </div>
+            </>
+          )}
         </>
       )}
     </Dialog>
@@ -1289,7 +1330,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({ api, agents, onAsk, 
           <Plus className="h-4 w-4" /> Create your first project
         </button>
         <button onClick={() => setAziDialog(true)} className="ml-2 mt-6 inline-flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-white dark:border-slate-700 dark:text-slate-300">
-          <FolderGit2 className="h-4 w-4" /> New project in AZI + GitHub
+          <FolderGit2 className="h-4 w-4" /> New project in AZI
         </button>
         {projectDialog && <ProjectDialog project={null} api={api} onClose={() => setProjectDialog(null)} />}
         {aziDialog && <NewAziProjectDialog api={api} initialName={aziName} onClose={() => { setAziDialog(false); setAziName(''); }} />}

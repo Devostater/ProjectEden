@@ -118,7 +118,10 @@ export function setCodebaseSettings(id: string, input: unknown): Codebase {
 }
 
 // Adds a codebase (a folder inside a git repository) and returns its id. Throws a message a person can act on.
-export function addCodebase(rawName: string, rawDir: string): string {
+export function addCodebase(rawName: string, rawDir: string, starter?: {
+  codebase: Pick<Codebase, 'about' | 'protect' | 'restartHint' | 'liveDirs'>;
+  settings: unknown;
+}): string {
   const name = rawName.trim().slice(0, 40);
   const dir = rawDir ? path.resolve(rawDir.trim()) : '';
   if (!name || !dir) throw new Error('Give it a name and a folder.');
@@ -135,7 +138,7 @@ export function addCodebase(rawName: string, rawDir: string): string {
     throw new Error('A codebase with that name already exists.');
   }
   const isTs = fs.existsSync(path.join(dir, 'tsconfig.json'));
-  codebases.push({
+  const entry: Codebase = {
     id,
     name,
     dir,
@@ -144,7 +147,15 @@ export function addCodebase(rawName: string, rawDir: string): string {
     restartHint: `restart ${name}`,
     about: aboutNewCodebase(name),
     protect: ['.env files', 'node_modules', 'data and settings files'],
-  });
+    ...starter?.codebase,
+    ...readSettings(starter?.settings, id),
+  };
+  if (starter) {
+    saveCodebases([...codebases, entry]);
+    codebases.push(entry);
+    return id;
+  }
+  codebases.push(entry);
   try {
     saveCodebases();
   } catch (err: any) {

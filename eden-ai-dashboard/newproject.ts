@@ -12,6 +12,8 @@ import { githubToken } from './github';
 import { addCodebase, findCodebase } from './updates';
 import { logActivity } from './activity';
 import { runnerHold } from './oneWriter';
+import { addRunnerToRegistry } from './runners';
+import { pluginName, publisherName, unrealPluginSignUp, writeUnrealPlugin } from './unrealPluginTemplate';
 
 export const AZI_ROOT = process.env.AZI_ROOT || 'C:\\AZI';
 const KEYS_DIR = () => path.join(AZI_ROOT, 'Security', 'Keys');
@@ -21,7 +23,10 @@ const BIG_FILE = 50 * 1024 * 1024; // GitHub warns at 50 MB and refuses 100 MB
 const SECRET = /^(\.env(\..+)?|.*\.(pem|key|keystore|jks|pfx|p12)|keystore\.properties)$/i;
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'Library', 'Temp', 'obj', '.gradle', '__pycache__', '.venv', 'venv']);
 
-type Template = 'blank' | 'node' | 'python' | 'unity';
+const TEMPLATES = ['blank', 'node', 'python', 'unity', 'unreal-plugin'] as const;
+type Template = typeof TEMPLATES[number];
+const HUB_DIR = path.dirname(fileURLToPath(import.meta.url));
+const keptLocal = 'Kept on this PC. Nothing was sent to GitHub.';
 type StepState = 'ok' | 'warn' | 'fail' | 'skip';
 interface Step {
   step: string;
@@ -29,7 +34,7 @@ interface Step {
   detail: string;
 }
 export interface ProjectReport {
-  ok: boolean; // true = Ready: on disk, committed, on GitHub, local = GitHub, no secrets committed
+  ok: boolean; // true = Ready: on disk, committed, registered, and synced if using GitHub
   status: 'ready' | 'partial' | 'failed';
   name: string;
   folder: string;
@@ -91,7 +96,8 @@ build/
 *.log
 __pycache__/
 .venv/
-
+`;
+const GITIGNORE_SECRETS = `
 # Secrets: these live in ${AZI_ROOT}\\Security\\Keys and are never committed
 .env
 .env.*
@@ -122,19 +128,20 @@ function writeIfMissing(file: string, body: string) {
 // Make sure a .gitignore has the secret rules (adds them to an existing one rather than replacing it).
 function ensureGitignore(dir: string, template: Template) {
   const file = path.join(dir, '.gitignore');
-  const want = GITIGNORE_BASE + (template === 'unity' ? GITIGNORE_UNITY : '');
+  const want = (template === 'unreal-plugin' ? '' : GITIGNORE_BASE) + GITIGNORE_SECRETS + (template === 'unity' ? GITIGNORE_UNITY : '');
   if (!fs.existsSync(file)) return fs.writeFileSync(file, want, 'utf-8');
   const have = fs.readFileSync(file, 'utf-8');
-  if (!/keystore\.properties/.test(have)) fs.appendFileSync(file, `\n${want.slice(want.indexOf('# Secrets'))}`, 'utf-8');
+  if (!/keystore\.properties/.test(have)) fs.appendFileSync(file, `\n${GITIGNORE_SECRETS.trimStart()}${template === 'unity' ? GITIGNORE_UNITY : ''}`, 'utf-8');
 }
 
-function scaffold(dir: string, display: string, purpose: string, template: Template) {
-  fs.mkdirSync(dir, { recursive: true });
+function scaffold(dir: string, display: string, purpose: string, template: Template, github: boolean, publisher: string) {
   const date = new Date().toISOString().slice(0, 10);
+  if (template === 'unreal-plugin') writeUnrealPlugin(dir, { name: path.basename(dir), display, purpose, publisher, date });
+  else fs.mkdirSync(dir, { recursive: true });
   writeIfMissing(path.join(dir, 'README.md'), `# ${display}\n\n${purpose || 'A new project.'}\n\nCreated ${date} by Eden in \`${dir}\`.\n`);
   writeIfMissing(
     path.join(dir, 'CLAUDE.md'),
-    `# ${display}\n\nPart of the AZI workspace: read \`${AZI_ROOT}\\CLAUDE.md\` first (layout and rules).\n\n- Purpose: ${purpose || '(not set yet)'}\n- Secrets go in \`${AZI_ROOT}\\Security\\Keys\\${path.basename(dir)}\\\`, never in this folder.\n- GitHub: private repo, kept in sync from Eden (Projects -> Sync).\n`,
+    `# ${display}\n\nPart of the AZI workspace: read \`${AZI_ROOT}\\CLAUDE.md\` first (layout and rules).\n\n- Purpose: ${purpose || '(not set yet)'}\n- Secrets go in \`${AZI_ROOT}\\Security\\Keys\\${path.basename(dir)}\\\`, never in this folder.\n${github ? '- GitHub: private repo, kept in sync from Eden (Projects -> Sync).' : '- This project stays on this PC unless you choose to put it on GitHub.'}\n`,
   );
   ensureGitignore(dir, template);
   if (template === 'node') {
@@ -243,7 +250,7 @@ function writeHandoff(r: ProjectReport) {
       '',
       `Status: **${r.status === 'ready' ? 'Ready' : r.status === 'partial' ? 'Partly ready' : 'Failed'}**`,
       `- Folder: \`${r.folder}\``,
-      `- GitHub: ${r.url ? `[${r.repo}](${r.url}) (private)` : 'not linked'}`,
+      r.url ? `- GitHub: [${r.repo}](${r.url}) (private)` : r.steps.some((s) => s.step === 'GitHub' && s.state === 'skip') ? '- GitHub: none, kept on this PC' : '- GitHub: not linked',
       r.commit ? `- Commit: \`${r.commit}\`` : '',
       r.secretsMoved.length ? `- Secrets moved to Security\\Keys: ${r.secretsMoved.length}` : '',
       '',
@@ -329,12 +336,22 @@ export function syncHint(name: string, reason: SyncReason, n = 0): string {
 const isForge = (dir: string) => path.basename(dir).toLowerCase() === 'forge';
 const isMainBranch = (b: string) => b === 'main' || b === 'master';
 
-export async function createProject(opts: { name: string; purpose?: string; template?: Template; adopt?: boolean; color?: string }, store: Store, save: () => void): Promise<ProjectReport> {
+function projectFolder(display: string, template?: Template) {
+  try {
+    const name = template === 'unreal-plugin' ? pluginName(display) : folderName(display);
+    return { name, folder: path.join(AZI_ROOT, name), plugin: template === 'unreal-plugin' ? name : undefined };
+  } catch (err: any) {
+    return { name: '', folder: '', problem: err.message as string };
+  }
+}
+
+export async function createProject(opts: { name: string; purpose?: string; template?: Template; adopt?: boolean; color?: string; github?: boolean; publisher?: string }, store: Store, save: () => void): Promise<ProjectReport> {
   const display = String(opts.name || '').trim().slice(0, 80);
-  const name = folderName(display);
   const purpose = String(opts.purpose || '').trim().slice(0, 300);
-  const template: Template = (['blank', 'node', 'python', 'unity'] as const).includes(opts.template as Template) ? (opts.template as Template) : 'blank';
-  const dir = path.join(AZI_ROOT, name);
+  const template = opts.template && TEMPLATES.includes(opts.template) ? opts.template : 'blank';
+  const unreal = template === 'unreal-plugin';
+  const github = opts.github ?? !unreal;
+  const { name, folder: dir, problem } = projectFolder(display, template);
   const report: ProjectReport = { ok: false, status: 'failed', name, folder: dir, secretsMoved: [], bigFiles: [], steps: [] };
   const add = (step: string, state: StepState, detail: string) => report.steps.push({ step, state, detail });
   const finish = () => {
@@ -349,17 +366,30 @@ export async function createProject(opts: { name: string; purpose?: string; temp
 
   // 1. Name
   if (!name) {
-    add('Name', 'fail', 'Give the project a name with at least one letter or digit.');
+    add('Name', 'fail', problem || 'Give the project a name with at least one letter or digit.');
     return finish();
   }
   if (OFF_LIMITS.includes(name.toLowerCase())) {
     add('Name', 'fail', `"${name}" is reserved in ${AZI_ROOT}.`);
     return finish();
   }
+  let publisher = '';
+  if (unreal) {
+    try {
+      publisher = publisherName(opts.publisher);
+    } catch (err: any) {
+      add('Name', 'fail', err.message);
+      return finish();
+    }
+    if (opts.adopt) {
+      add('Name', 'fail', 'The Unreal plugin starter needs a new folder.');
+      return finish();
+    }
+  }
   const exists = fs.existsSync(dir);
   if (exists && !opts.adopt) {
-    add('Name', 'fail', `${dir} already exists. Tick "Use the existing folder" to set it up instead.`);
-    report.next = 'Pick another name, or adopt the existing folder.';
+    add('Name', 'fail', `${dir} already exists.${unreal ? '' : ' Tick "Use the existing folder" to set it up instead.'}`);
+    report.next = unreal ? 'Pick another name.' : 'Pick another name, or adopt the existing folder.';
     return finish();
   }
   if (!exists && opts.adopt) {
@@ -370,7 +400,8 @@ export async function createProject(opts: { name: string; purpose?: string; temp
 
   // 2. Folder
   try {
-    scaffold(dir, display, purpose, template);
+    const hasOrigin = exists && fs.existsSync(path.join(dir, '.git')) && git(['remote', 'get-url', 'origin'], dir).ok;
+    scaffold(dir, display, purpose, template, github || hasOrigin, publisher);
     add('Folder', 'ok', exists ? `Using the existing folder; added README/CLAUDE.md/.gitignore only where missing.` : `Created with the ${template} template.`);
   } catch (err: any) {
     add('Folder', 'fail', `Could not create the folder: ${err.message}`);
@@ -421,6 +452,8 @@ export async function createProject(opts: { name: string; purpose?: string; temp
     report.repo = remote.out.replace(/^.*github\.com[:/]/, '').replace(/\.git$/, '');
     report.url = `https://github.com/${report.repo}`;
     add('GitHub', 'ok', `Already linked to ${report.repo}.`);
+  } else if (!github) {
+    add('GitHub', 'skip', keptLocal);
   } else {
     const gh = await ensureGithubRepo(name, purpose || display);
     if (gh.error || !gh.url) {
@@ -439,18 +472,21 @@ export async function createProject(opts: { name: string; purpose?: string; temp
       add('Push', 'warn', `Push failed: ${lastLine(push.err)}`);
       report.next = report.next || 'Check GitHub sign-in on this PC (GitHub Desktop or Git Credential Manager), then press Sync.';
     } else add('Push', 'ok', `Pushed ${branch}.`);
-  } else add('Push', 'skip', 'No GitHub repo yet.');
+  } else add('Push', 'skip', github ? 'No GitHub repo yet.' : 'GitHub was left off.');
 
   // 5. Register in Eden
+  const signup = unreal ? unrealPluginSignUp(name, display) : undefined;
   try {
     const projects = (store.projects = store.projects || []);
-    let p = projects.find((x) => x.name.toLowerCase() === display.toLowerCase() || (report.repo && x.repo === report.repo));
     let codebaseId: string | undefined;
+    let codebaseProblem = '';
     try {
-      codebaseId = addCodebase(display, dir);
-    } catch {
-      /* a codebase is a nice-to-have */
+      codebaseId = addCodebase(display, dir, signup); // the name the owner typed, as in Projects and Runners
+    } catch (err: any) {
+      if (unreal) codebaseProblem = ` Could not add it to Code updates: ${err.message}`;
     }
+    let p = projects.find((x) => (report.repo && x.repo === report.repo) ||
+      (unreal ? !!codebaseId && x.codebaseId === codebaseId : x.name.toLowerCase() === display.toLowerCase()));
     if (!p) {
       p = {
         id: newId('project'),
@@ -470,7 +506,20 @@ export async function createProject(opts: { name: string; purpose?: string; temp
     report.projectId = p.id;
     report.codebaseId = codebaseId;
     addToLayout(name, purpose, report.repo);
-    add('Eden', 'ok', `In Projects${codebaseId ? ' and Code updates' : ''}; listed in ${AZI_ROOT}\\CLAUDE.md.`);
+    let runnerDetail = '';
+    let runnerProblem = false;
+    if (signup) {
+      try {
+        const result = addRunnerToRegistry(HUB_DIR, signup.runner(dir));
+        runnerDetail = result === 'added' ? ' Runner added. Nothing starts until you press Start.' : ' A runner with this ID already exists. Check its folder before pressing Start.';
+        runnerProblem = result === 'exists';
+      } catch (err: any) {
+        runnerProblem = true;
+        runnerDetail = ` Could not add the runner: ${err.message}`;
+      }
+    }
+    const codeUpdates = codebaseId ? (unreal ? ' and Code updates (Codex, with its proof)' : ' and Code updates') : '';
+    add('Eden', codebaseProblem || runnerProblem ? 'warn' : 'ok', `In Projects${codeUpdates}; listed in ${AZI_ROOT}\\CLAUDE.md.${codebaseProblem}${runnerDetail}`);
   } catch (err: any) {
     add('Eden', 'warn', `Could not add it to Projects: ${err.message}`);
   }
@@ -479,9 +528,11 @@ export async function createProject(opts: { name: string; purpose?: string; temp
   if (report.url && report.steps.some((s) => s.step === 'Push' && s.state === 'ok')) {
     const s = syncCheck(dir);
     add('Sync', s.inSync ? 'ok' : 'warn', s.detail);
-  } else add('Sync', 'skip', 'Waiting for GitHub.');
+  } else add('Sync', 'skip', github ? 'Waiting for GitHub.' : 'This project stays on this PC.');
 
-  if (!report.next && report.steps.every((s) => s.state === 'ok' || s.state === 'skip')) report.next = `Open ${dir} and start working. Press Sync in Projects to keep GitHub up to date.`;
+  if (!report.next && report.steps.every((s) => s.state === 'ok' || s.state === 'skip')) report.next = unreal
+    ? `Open Code updates, pick ${display} and ask for the first change. Or write tasks in autopilot\\TASKS.md and press Start on its runner.`
+    : `Open ${dir} and start working.${report.url ? ' Press Sync in Projects to keep GitHub up to date.' : ''}`;
   return finish();
 }
 
@@ -791,7 +842,7 @@ export function aziRepoDirs(): string[] {
 
 // The folder in C:\AZI that belongs to a project: the one whose GitHub remote is the project's repo (the folder
 // can be named differently, e.g. NOVA for Devostater/Project-Nova), else one named after the repo or the project.
-export function dirForProject(p: { name: string; repo?: string }): string {
+export function dirForProject(p: { name: string; repo?: string; codebaseId?: string }): string {
   const want = (p.repo || '').toLowerCase().replace(/\.git$/, '');
   if (want) {
     for (const d of aziRepoDirs()) {
@@ -800,7 +851,9 @@ export function dirForProject(p: { name: string; repo?: string }): string {
     }
   }
   const repoName = p.repo ? p.repo.split('/')[1] : '';
-  return [repoName && path.join(AZI_ROOT, repoName), path.join(AZI_ROOT, folderName(p.name))].find((d) => d && fs.existsSync(d)) || '';
+  const codebaseDir = p.codebaseId ? findCodebase(p.codebaseId)?.dir : undefined;
+  const projectDir = codebaseDir && path.dirname(path.resolve(codebaseDir)) === path.resolve(AZI_ROOT) ? codebaseDir : '';
+  return [repoName && path.join(AZI_ROOT, repoName), projectDir, path.join(AZI_ROOT, folderName(p.name))].find((d) => d && fs.existsSync(d)) || '';
 }
 
 // The owner's GitHub repos (needs a token); empty when GitHub isn't linked.
@@ -837,7 +890,7 @@ interface AutoSync {
   lastRun?: string;
   lastResult?: string;
 }
-const AUTO_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '.eden-azi-sync.json'); // next to the hub, like its other .eden-* files
+const AUTO_FILE = path.join(HUB_DIR, '.eden-azi-sync.json'); // next to the hub, like its other .eden-* files
 const MIN_GAP = 30 * 60 * 1000; // Eden restarts often (code updates): don't sync again within 30 minutes
 const DAY = 24 * 60 * 60 * 1000;
 function loadAuto(): AutoSync {
@@ -976,7 +1029,7 @@ export function registerNewProjectRoutes(app: Express, getStore: () => Store, sa
     busy = true;
     try {
       const b = req.body || {};
-      const report = await createProject({ name: b.name, purpose: b.purpose, template: b.template, adopt: b.adopt === true, color: b.color }, getStore(), save);
+      const report = await createProject({ name: b.name, purpose: b.purpose, template: b.template, adopt: b.adopt === true, color: b.color, github: typeof b.github === 'boolean' ? b.github : undefined, publisher: b.publisher }, getStore(), save);
       res.json(report);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -987,9 +1040,8 @@ export function registerNewProjectRoutes(app: Express, getStore: () => Store, sa
 
   // Preview the folder name and whether it is free (for the form).
   app.get('/api/projects/new/check', (req, res) => {
-    const name = folderName(String(req.query.name || ''));
-    const dir = path.join(AZI_ROOT, name);
-    res.json({ name, folder: dir, exists: !!name && fs.existsSync(dir), github: !!githubToken() });
+    const result = projectFolder(String(req.query.name || '').trim().slice(0, 80), req.query.template === 'unreal-plugin' ? 'unreal-plugin' : undefined);
+    res.json({ ...result, exists: !!result.name && fs.existsSync(result.folder), github: !!githubToken() });
   });
 
   app.post('/api/projects/:id/sync', async (req, res) => {
