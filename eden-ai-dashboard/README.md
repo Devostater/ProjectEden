@@ -66,6 +66,14 @@ Code: `toolbox.ts` (`generateForProject`), `cardRunner.ts`, `src/components/Tool
 
 **Bottom bar (project page).** Flow · Workload · Progress · **Roadmap** · **Toolbox** · **Preview**. Preview browses the project folder and shows files the way they read best (Markdown, images, video, audio, PDF, JSON, CSV tables, code) plus the latest tool output. It is read-only, and secrets, Eden/LYRA state and LYRA's browser profile are never shown. **Large screen** (top right of the bar) fills the window with any tab; Esc returns.
 
+## All projects (Dashboard)
+
+The Dashboard's **All projects** panel has one card for every project in `C:\AZI` (the table in `C:\AZI\AGENTS.md`). Each project keeps its own folder and git repo; the panel only reads them and never commits, pushes or syncs. A card shows the git branch and changed files, a **local only** or **GitHub** mark, the `autopilot\TASKS.md` progress and the runner's state, a **Folder** button, and the project's launchers (PassGuard, SysPulse). Launchers start hidden with a log in `.eden-logs\hub\`, and a server launcher checks its port first so a second copy never starts.
+
+**Reel** also has: **Open Reel Studio** (port 7870), **Music Maker** (`tools\music-maker.ps1`), **Run a step** (`python -m director <step> projects\<name>`, one at a time, waits while a runner works in Reel) and **Finished videos** (`projects\<name>\out\`, played on the page).
+
+Only from the hub on this PC. The list lives in `hub.ts` (`HUB_PROJECTS`). `EDEN_HUB_ROOT` (default `AZI_ROOT`, then `C:\AZI`) sets where the projects are, so a test hub can point `AZI_ROOT` at a scratch folder and still show the real projects. Code: `hub.ts`, `src/components/AllProjectsPanel.tsx`, `test/hub.test.ts`.
+
 ## Runners
 
 On the computer running Eden, open **Code updates → Construction → Runners** to start, stop, and watch local autopilots. Copy `.eden-runners.example.json` to `.eden-runners.json` next to this README and adjust the entries for your machine. Eden reads this local, ignored file when it checks status or starts a runner.
