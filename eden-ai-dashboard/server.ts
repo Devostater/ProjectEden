@@ -28,6 +28,7 @@ import { registerUsageGuard } from './usageGuard';
 import { registerUpdateRoutes } from './updates';
 import { registerRestartRoutes } from './restart';
 import { createRunners, registerRunnerRoutes } from './runners';
+import { createHub, registerHubRoutes } from './hub';
 import { setRunnerLookup } from './oneWriter';
 import { registerBusyRoutes } from './busy';
 import { registerOfflineRoutes } from './offline';
@@ -342,6 +343,8 @@ async function startServer() {
     setRunnerLookup((dir) => runners.workingIn(dir));
     process.once('exit', runners.shutdown);
     registerRunnerRoutes(app, runners);
+    // All projects: every project in C:\AZI on one page (only on the PC)
+    registerHubRoutes(app, createHub(__dirname, { runnerStatus: () => runners.status(undefined), workingIn: (dir) => runners.workingIn(dir) }));
   }
   registerBusyRoutes(app);
   registerOfflineRoutes(app);

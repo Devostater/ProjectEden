@@ -11,6 +11,7 @@ import { useFolded, FoldHeader } from './Foldable.tsx';
 import { setTickerItems } from '../ticker.ts';
 import RadarWidget from './RadarWidget.tsx';
 import { FloatingWidget } from './FloatingWidget.tsx';
+import { AllProjectsPanel } from './AllProjectsPanel.tsx';
 
 // A JSON POST to the hub that throws with the hub's own message when it says no.
 const postJson = async (url: string, body?: unknown) => {
@@ -710,6 +711,9 @@ export const HomeView: React.FC<HomeViewProps> = ({ agents, pipelines, files, pr
           ))}
         </nav>
       )}
+
+      {/* All projects: every project in C:\AZI with its launchers (Reel: Studio, Music Maker, steps, videos) */}
+      <AllProjectsPanel />
 
       {/* Needs you: finished tasks to review, code updates to apply, recent errors */}
       {checked && prefs.needsYou && <section aria-label="Needs you" className={`rounded-xl border p-5 ${allClear ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10' : 'border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10'}`}>
